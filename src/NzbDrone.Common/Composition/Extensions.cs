@@ -24,12 +24,14 @@ namespace NzbDrone.Common.Composition.Extensions
         public static IContainer AutoAddServices(this IContainer container, List<string> assemblyNames)
         {
             var assemblies = AssemblyLoader.Load(assemblyNames);
+            var types = assemblies.SelectMany(assembly => assembly.GetImplementationTypes())
+                .Where(type => type.DeclaringType != typeof(ServiceHost)).ToArray();
 
-            container.RegisterMany(assemblies,
+            container.RegisterMany(types,
                 serviceTypeCondition: type => type.IsInterface && !string.IsNullOrWhiteSpace(type.FullName) && !type.FullName.StartsWith("System"),
                 reuse: Reuse.Singleton);
 
-            container.RegisterMany(assemblies,
+            container.RegisterMany(types,
                 serviceTypeCondition: type => !type.IsInterface && !string.IsNullOrWhiteSpace(type.FullName) && !type.FullName.StartsWith("System"),
                 reuse: Reuse.Transient);
 

@@ -14,6 +14,7 @@ namespace NzbDrone.Core.NarratorStats
                                             IHandle<NarratorDeletedEvent>,
                                             IHandle<BookAddedEvent>,
                                             IHandle<BookDeletedEvent>,
+        IHandle<LibraryIdentityChangedEvent>,
                                             IHandle<BookImportedEvent>,
                                             IHandle<BookEditedEvent>,
                                             IHandle<BookInfoRefreshedEvent>,
@@ -98,6 +99,11 @@ namespace NzbDrone.Core.NarratorStats
         }
 
         public void Handle(BookAddedEvent message)
+        {
+            InvalidateCache();
+        }
+
+        public void Handle(LibraryIdentityChangedEvent message)
         {
             InvalidateCache();
         }

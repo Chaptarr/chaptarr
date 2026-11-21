@@ -1,12 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Data;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
+using System.Reflection;
+using FluentMigrator;
 using System.Text.Json;
+using System.Threading.Tasks;
 using Dapper;
 using DryIoc;
 using DryIoc.Microsoft.DependencyInjection;
@@ -17,19 +22,28 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
 using NLog;
 using NLog.Extensions.Logging;
+using NzbDrone.Common.Cache;
 using NzbDrone.Common.Composition.Extensions;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Http;
+using NzbDrone.Common.Http.Dispatchers;
 using NzbDrone.Common.Instrumentation;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Common.Options;
+using NzbDrone.Common.TPL;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Extensions;
+using NzbDrone.Core.Datastore.Migration.Framework;
+using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.Pending;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Http;
+using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.MyAnonaMouse;
@@ -42,7 +56,9 @@ using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.SignalR;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using FileSystem = System.IO.Abstractions.FileSystem;
+using HttpClient = System.Net.Http.HttpClient;
 using PostgresOptions = NzbDrone.Core.Datastore.PostgresOptions;
 
 namespace NzbDrone.MatchBench
@@ -103,19 +119,6 @@ namespace NzbDrone.MatchBench
             public int? MetadataProfileId { get; set; }
             public int? AudiobookMetadataProfileId { get; set; }
             public int? EbookMetadataProfileId { get; set; }
-        }
-
-        private sealed class LibraryEditionRow
-        {
-            public int BookId { get; set; }
-            public string Title { get; set; } = string.Empty;
-            public bool Monitored { get; set; }
-            public bool ManualAdd { get; set; }
-            public bool IsEbook { get; set; }
-            public int? ReadingFormatId { get; set; }
-            public bool IsGraphicAudio { get; set; }
-            public string? AudioProductionType { get; set; }
-            public string? Narrator { get; set; }
         }
 
         private sealed class StoredIndexerRow
@@ -569,12 +572,231 @@ namespace NzbDrone.MatchBench
             }
         }
 
+        internal sealed class OfflineReplayHttpDispatcher : IHttpDispatcher
+        {
+            private readonly ConcurrentQueue<string> _blockedRequests = new();
+
+            public int BlockedRequestCount => _blockedRequests.Count;
+            public IReadOnlyList<string> BlockedRequests => _blockedRequests.ToArray();
+
+            public Task<HttpResponse> GetResponseAsync(HttpRequest request, CookieContainer cookies)
+            {
+                var destination = request?.Url?.Host ?? "unknown-host";
+                var method = request?.Method?.Method ?? "unknown-method";
+                _blockedRequests.Enqueue($"{method} {destination}");
+                throw new HttpRequestException("MatchBench decision replay blocks outbound HTTP requests.");
+            }
+        }
+
+        internal sealed class OfflineReplayIndexerHttpClient : NzbDrone.Common.Http.HttpClient, IIndexerHttpClient, IIndexerHttpClientFactory
+        {
+            public OfflineReplayIndexerHttpClient(IEnumerable<IHttpRequestInterceptor> requestInterceptors,
+                ICacheManager cacheManager, IRateLimitService rateLimitService, IHttpDispatcher dispatcher, Logger logger)
+                : base(requestInterceptors, cacheManager, rateLimitService, dispatcher, logger)
+            {
+            }
+
+            public IIndexerHttpClient GetClient(int? proxyId) => this;
+        }
+
+        internal sealed class ProductionSearchDecisionReplay
+        {
+            public List<DownloadDecision> Decisions { get; init; } = new();
+            public int BlockedExternalRequestCount { get; init; }
+            public IReadOnlyList<string> BlockedRequests { get; init; } = Array.Empty<string>();
+            public bool UsedSyntheticInput { get; init; }
+            public bool HasCompleteSourceData { get; init; } = true;
+            public int UnaccountedReportCount { get; init; }
+            public ProcessedDecisions? Processed { get; init; }
+            public bool Complete => BlockedExternalRequestCount == 0 && !UsedSyntheticInput && HasCompleteSourceData && UnaccountedReportCount == 0;
+        }
+
+        internal sealed class ProductionSearchInput
+        {
+            public Author Author { get; init; } = null!;
+            public Book TargetBook { get; init; } = null!;
+            public List<Book> AuthorCatalog { get; init; } = new();
+            public BookSearchCriteria Criteria { get; init; } = null!;
+            public bool IsSynthetic { get; init; }
+        }
+
+        private sealed class ProductionSearchInputLoader
+        {
+            private readonly IBookService _bookService;
+            private readonly IAuthorService _authorService;
+            private readonly ReleaseSearchService _searchService;
+            private readonly Dictionary<int, List<Book>> _authorCatalogById = new();
+
+            public ProductionSearchInputLoader(IServiceProvider services)
+            {
+                _bookService = services.GetRequiredService<IBookService>();
+                _authorService = services.GetRequiredService<IAuthorService>();
+                _searchService = services.GetRequiredService<ReleaseSearchService>();
+            }
+
+            public ProductionSearchInput Load(LibraryBookRow row, bool userInvokedSearch, bool interactiveSearch)
+            {
+                var isSynthetic = row.BookId <= 0;
+                Book targetBook;
+                Author author;
+                List<Book> authorCatalog;
+
+                if (isSynthetic)
+                {
+                    author = new Author { Id = row.AuthorId, Name = row.AuthorName };
+                    targetBook = BuildBook(row, author);
+                    authorCatalog = new List<Book> { targetBook };
+                }
+                else
+                {
+                    targetBook = _bookService.GetBook(row.BookId)
+                        ?? throw new InvalidOperationException($"Could not hydrate local book {row.BookId} for production search replay.");
+                    author = targetBook.Author ?? _authorService.GetAuthor(targetBook.AuthorId);
+                    targetBook.Author = author;
+
+                    if (!_authorCatalogById.TryGetValue(author.Id, out var cachedCatalog))
+                    {
+                        cachedCatalog = _bookService.GetBooksByAuthor(author.Id, onlyMonitoredEditions: true);
+                        _authorCatalogById[author.Id] = cachedCatalog;
+                    }
+
+                    authorCatalog = cachedCatalog;
+                }
+
+                var criteria = _searchService.CreateBookSearchCriteria(
+                    author, targetBook, authorCatalog, userInvokedSearch, interactiveSearch);
+
+                return new ProductionSearchInput
+                {
+                    Author = author,
+                    TargetBook = targetBook,
+                    AuthorCatalog = authorCatalog,
+                    Criteria = criteria,
+                    IsSynthetic = isSynthetic
+                };
+            }
+        }
+
+        internal static ProductionSearchDecisionReplay RunProductionSearchDecision(
+            ReleaseSearchService searchService,
+            IPrioritizeDownloadDecision prioritizer,
+            OfflineReplayHttpDispatcher networkGuard,
+            IReadOnlyCollection<ReleaseInfo> reports,
+            BookSearchCriteria criteria,
+            bool usedSyntheticInput = false,
+            bool hasCompleteSourceData = true)
+        {
+            return RunProductionDecision(
+                () => searchService.EvaluateSearchReports(reports?.ToList() ?? new List<ReleaseInfo>(), criteria),
+                prioritizer, networkGuard, usedSyntheticInput, hasCompleteSourceData);
+        }
+
+        private sealed class RssReplayInputs : IFetchAndParseRss, IMakeDownloadDecision
+        {
+            private readonly List<ReleaseInfo> _freshReports;
+            private readonly IMakeDownloadDecision _decisionMaker;
+            public List<ReleaseInfo> Reports { get; private set; } = new();
+            public List<DownloadDecision> Decisions { get; private set; } = new();
+
+            public RssReplayInputs(IReadOnlyCollection<ReleaseInfo> reports, IMakeDownloadDecision decisionMaker)
+            {
+                _freshReports = reports.ToList();
+                _decisionMaker = decisionMaker;
+            }
+
+            public Task<List<ReleaseInfo>> Fetch() => Task.FromResult(_freshReports);
+
+            public List<DownloadDecision> GetRssDecision(List<ReleaseInfo> reports, bool pushedRelease = false)
+                => GetRssDecision(reports, pushedRelease, null!);
+
+            public List<DownloadDecision> GetRssDecision(List<ReleaseInfo> reports, bool pushedRelease,
+                IReadOnlyDictionary<(int AuthorId, int BookId), DateTime> oldestPublishDates)
+            {
+                Reports = reports;
+                Decisions = _decisionMaker.GetRssDecision(reports, pushedRelease, oldestPublishDates);
+                return Decisions;
+            }
+
+            public List<DownloadDecision> GetSearchDecision(List<ReleaseInfo> reports, SearchCriteriaBase criteria)
+                => _decisionMaker.GetSearchDecision(reports, criteria);
+        }
+
+        internal sealed class ReplayDownloadService : IDownloadService
+        {
+            public List<RemoteBook> Planned { get; } = new();
+
+            public Task DownloadReport(RemoteBook remoteBook, int? downloadClientId)
+            {
+                Planned.Add(remoteBook);
+                return Task.CompletedTask;
+            }
+        }
+
+        internal static ProductionSearchDecisionReplay RunProductionRssDecision(
+            IMakeDownloadDecision decisionMaker,
+            IPrioritizeDownloadDecision prioritizer,
+            OfflineReplayHttpDispatcher networkGuard,
+            IReadOnlyCollection<ReleaseInfo> reports,
+            IPendingReleaseService pendingReleaseService,
+            IProcessDownloadDecisions processor,
+            bool hasCompleteSourceData = true)
+        {
+            var previousAttempts = networkGuard.BlockedRequestCount;
+            var inputs = new RssReplayInputs(reports, decisionMaker);
+            var rss = new RssSyncService(null!, null!, inputs, inputs, processor, pendingReleaseService, null!, Logger);
+            var processed = rss.Sync().GetAwaiter().GetResult();
+            var represented = inputs.Decisions.Select(decision => decision.RemoteBook?.Release).ToHashSet();
+            var blocked = networkGuard.BlockedRequests.Skip(previousAttempts).ToList();
+            return new ProductionSearchDecisionReplay
+            {
+                Decisions = prioritizer.PrioritizeDecisions(inputs.Decisions),
+                Processed = processed,
+                BlockedExternalRequestCount = blocked.Count,
+                BlockedRequests = blocked,
+                HasCompleteSourceData = hasCompleteSourceData,
+                UnaccountedReportCount = inputs.Reports.Count(report => !represented.Contains(report))
+            };
+        }
+
+        private static ProductionSearchDecisionReplay RunProductionDecision(
+            Func<List<DownloadDecision>> evaluate,
+            IPrioritizeDownloadDecision prioritizer,
+            OfflineReplayHttpDispatcher networkGuard,
+            bool usedSyntheticInput,
+            bool hasCompleteSourceData)
+        {
+            var previousAttempts = networkGuard.BlockedRequestCount;
+            var prioritized = prioritizer.PrioritizeDecisions(evaluate());
+            var blockedRequests = networkGuard.BlockedRequests.Skip(previousAttempts).ToList();
+
+            return new ProductionSearchDecisionReplay
+            {
+                Decisions = prioritized,
+                BlockedExternalRequestCount = blockedRequests.Count,
+                BlockedRequests = blockedRequests,
+                UsedSyntheticInput = usedSyntheticInput,
+                HasCompleteSourceData = hasCompleteSourceData
+            };
+        }
+
+        private static string DescribeReplayOutcome(ProductionSearchDecisionReplay replay)
+        {
+            if (!replay.Complete)
+            {
+                return $"decisions={replay.Decisions.Count} verdicts=withheld audit=INCOMPLETE";
+            }
+
+            var matched = replay.Decisions.Count(decision => decision.RemoteBook?.SearchCriteriaMatch?.IsMatch == true);
+            var approved = replay.Decisions.Count(decision => decision.Approved);
+            return $"decisions={replay.Decisions.Count} titleMatched={matched} approved={approved} rejected={replay.Decisions.Count - approved} audit=complete";
+        }
+
         public static int Main(string[] args)
         {
             var startupContext = new StartupContext(args);
             var flags = startupContext.Flags ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            if (!flags.Contains("matchbench") && !flags.Contains("prowlarrbench") && !flags.Contains("mambench") && !flags.Contains("libraryaudit"))
+            if (!flags.Contains("matchbench") && !flags.Contains("prowlarrbench") && !flags.Contains("releasereplay") && !flags.Contains("mambench") && !flags.Contains("libraryaudit"))
             {
                 PrintUsage();
                 return 2;
@@ -585,6 +807,11 @@ namespace NzbDrone.MatchBench
             if (flags.Contains("prowlarrbench"))
             {
                 return RunProwlarrBench(startupContext);
+            }
+
+            if (flags.Contains("releasereplay"))
+            {
+                return RunReleaseReplay(startupContext);
             }
 
             if (flags.Contains("mambench"))
@@ -750,7 +977,7 @@ namespace NzbDrone.MatchBench
         {
             var sourceAppData = GetArg(startupContext, "data") ??
                                 Environment.GetEnvironmentVariable("CHAPTARR_APPDATA") ??
-                                "/workspace/audioarrdata";
+                                "/config";
             var prefix = GetArg(startupContext, "prefix") ?? "/audiobooks";
             var limit = Math.Max(1, GetIntArg(startupContext, "limit", 250));
             var inputSource = (GetArg(startupContext, "source") ?? "bookfiles").Trim().ToLowerInvariant();
@@ -808,6 +1035,24 @@ namespace NzbDrone.MatchBench
                 return 2;
             }
 
+            if (RejectPostgresForSqliteSnapshot(startupContext, "libraryaudit"))
+            {
+                return 2;
+            }
+
+            if (live)
+            {
+                try
+                {
+                    ValidateLiveAuditSchema(Path.Combine(sourceAppData, "chaptarr.db"));
+                }
+                catch (Exception ex)
+                {
+                    System.Console.Error.WriteLine($"[libraryaudit] Live schema check failed: {ex.Message}. Use the isolated snapshot (omit /live).");
+                    return 2;
+                }
+            }
+
             using var workspace = PrepareAuditWorkspace(startupContext, sourceAppData, live);
             var dbPath = Path.Combine(workspace.AppData, "chaptarr.db");
 
@@ -819,7 +1064,7 @@ namespace NzbDrone.MatchBench
             System.Console.WriteLine($"[libraryaudit] source={inputSource}, prefix='{prefix}', limit={limit}, includeMissing={includeMissing}, includeUserSelected={includeUserSelected}, flows={string.Join(",", flows)}, strictness={string.Join(",", strictnessValues.Select(v => v?.ToString() ?? "current"))}, pathFallback={string.Join(",", pathFallbackValues.Select(v => v?.ToString() ?? "current"))}{selector}");
             System.Console.WriteLine($"[libraryaudit] appdata='{workspace.AppData}' ({(workspace.IsTemporary ? "snapshot" : "live")})");
 
-            using var host = BuildHost(workspace.StartupContext);
+            using var host = BuildHost(workspace.StartupContext, blockOutboundHttp: GetBoolArg(startupContext, "offline", false));
             using var scope = host.Services.CreateScope();
             var services = scope.ServiceProvider;
 
@@ -962,7 +1207,27 @@ namespace NzbDrone.MatchBench
             return 0;
         }
 
-        private static AuditWorkspace PrepareAuditWorkspace(StartupContext originalContext, string sourceAppData, bool live)
+        internal static void ValidateLiveAuditSchema(string databasePath)
+        {
+            var expected = typeof(NzbDroneMigrationBase).Assembly.GetTypes()
+                .Where(type => type.Namespace == "NzbDrone.Core.Datastore.Migration")
+                .Select(type => type.GetCustomAttribute<MigrationAttribute>()?.Version)
+                .Where(version => version.HasValue).Select(version => version!.Value).ToHashSet();
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = databasePath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false
+            }.ToString());
+            connection.Open();
+            var actual = connection.Query<long>("SELECT \"Version\" FROM \"VersionInfo\"").ToHashSet();
+            if (actual.Count == 0 || actual.Max() != expected.Max() || expected.Except(actual).Any())
+            {
+                throw new InvalidOperationException($"database schema is {actual.DefaultIfEmpty().Max()}, executable requires {expected.Max()} with every migration applied");
+            }
+        }
+
+        private static AuditWorkspace PrepareAuditWorkspace(StartupContext originalContext, string sourceAppData, bool live, string? sourceDatabasePath = null)
         {
             var sourceFull = Path.GetFullPath(sourceAppData);
             if (live)
@@ -979,7 +1244,7 @@ namespace NzbDrone.MatchBench
             var temp = Path.Combine(Path.GetTempPath(), "chaptarr-matchbench-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(temp);
 
-            SnapshotSqliteDatabase(Path.Combine(sourceFull, "chaptarr.db"), Path.Combine(temp, "chaptarr.db"), required: true);
+            SnapshotSqliteDatabase(sourceDatabasePath ?? Path.Combine(sourceFull, "chaptarr.db"), Path.Combine(temp, "chaptarr.db"), required: true);
             SnapshotSqliteDatabase(Path.Combine(sourceFull, "staging.db"), Path.Combine(temp, "staging.db"), required: false);
 
             var configPath = Path.Combine(sourceFull, "config.xml");
@@ -1048,10 +1313,10 @@ namespace NzbDrone.MatchBench
             var values = ExpandCsv(raw, "scan-local");
             if (values.Any(v => string.Equals(v, "all", StringComparison.OrdinalIgnoreCase)))
             {
-                return new List<string> { "scan-local", "scan-v5", "scan-scoped-rematch", "downloaded", "manual-download", "author-ready", "direct-default" };
+                return new List<string> { "scan-local", "scan-v5", "scan-scoped-rematch", "downloaded", "manual-download", "manual-preview", "author-ready", "direct-default" };
             }
 
-            var allowed = new HashSet<string>(new[] { "scan-local", "scan-v5", "scan-scoped-rematch", "downloaded", "manual-download", "author-ready", "direct-default" }, StringComparer.OrdinalIgnoreCase);
+            var allowed = new HashSet<string>(new[] { "scan-local", "scan-v5", "scan-scoped-rematch", "downloaded", "manual-download", "manual-preview", "author-ready", "direct-default" }, StringComparer.OrdinalIgnoreCase);
             return values
                 .Select(v => v.Trim().ToLowerInvariant())
                 .Where(v => allowed.Contains(v))
@@ -1157,6 +1422,7 @@ namespace NzbDrone.MatchBench
                 "scan-scoped-rematch" => MatchingContextPresets.ForScanScopedRematch(),
                 "downloaded" => MatchingContextPresets.ForDownloaded(false, targetBookIds, pathFallback),
                 "manual-download" => MatchingContextPresets.ForDownloaded(true, targetBookIds, pathFallback),
+                "manual-preview" => MatchingContextPresets.ForManualPreview(pathFallback, targetBookIds),
                 "author-ready" => MatchingContextPresets.ForAuthorReady(),
                 "direct-default" => MatchingContextPresets.ForDirectDefault(pathFallback),
                 _ => MatchingContextPresets.ForScanLocal(pathFallback)
@@ -3361,7 +3627,7 @@ FROM Books;")
 
             var dbPath = GetArg(startupContext, "db") ??
                          Environment.GetEnvironmentVariable("CHAPTARR_DB") ??
-                         "/workspace/audioarrdata/chaptarr.db";
+                         "/config/chaptarr.db";
 
             if (string.IsNullOrWhiteSpace(prowlarrUrl))
             {
@@ -3395,7 +3661,20 @@ FROM Books;")
                 return 2;
             }
 
-            System.Console.WriteLine($"[prowlarrbench] db='{dbPath}', sample={sample}, max={perBookMax}, queryMode='{queryMode}', worstCase={worstCase}");
+            var sourceAppData = GetArg(startupContext, "data") ?? Path.GetDirectoryName(Path.GetFullPath(dbPath)) ?? "/config";
+            if (RejectPostgresForSqliteSnapshot(new StartupContext("/prowlarrbench", $"/data={sourceAppData}"), "prowlarrbench"))
+            {
+                return 2;
+            }
+
+            using var workspace = PrepareAuditWorkspace(startupContext, sourceAppData, live: false, sourceDatabasePath: dbPath);
+            dbPath = Path.Combine(workspace.AppData, "chaptarr.db");
+            using var host = BuildHost(workspace.StartupContext, blockOutboundHttp: true);
+            using var scope = host.Services.CreateScope();
+            var services = scope.ServiceProvider;
+            var inputLoader = new ProductionSearchInputLoader(services);
+            System.Console.WriteLine($"[prowlarrbench] db snapshot='{dbPath}', sample={sample}, max={perBookMax}, queryMode='{queryMode}', worstCase={worstCase}");
+            System.Console.WriteLine("[prowlarrbench] Prowlarr responses are recall-only because the adapter does not preserve full production release metadata");
             System.Console.WriteLine("[prowlarrbench] categories are scoped per target: 3030 (audiobook) or 7000-7999 (ebook)");
             System.Console.WriteLine($"[prowlarrbench] indexers: {(indexerIds.Count == 0 ? "all" : string.Join(",", indexerIds))}");
 
@@ -3460,6 +3739,7 @@ FROM Books;")
                 return 1;
             }
 
+            var incompleteQueryBookCount = 0;
             foreach (var row in sampleBooks)
             {
                 if (row == null || row.BookTitle.IsNullOrWhiteSpace() || row.AuthorName.IsNullOrWhiteSpace())
@@ -3467,31 +3747,21 @@ FROM Books;")
                     continue;
                 }
 
-                var author = new NzbDrone.Core.Books.Author
+                var input = inputLoader.Load(row, userInvokedSearch: false, interactiveSearch: true);
+                var author = input.Author;
+                var book = input.TargetBook;
+                var criteria = input.Criteria;
+                var searchTitle = criteria.BookTitle;
+                if (input.IsSynthetic)
                 {
-                    Id = row.AuthorId,
-                    Name = row.AuthorName
-                };
-
-                var catalog = LoadAuthorCatalog(dbPath, row, author);
-                author.Books = catalog;
-                var book = catalog.First(candidate => candidate.Id == row.BookId);
-                var searchTitle = row.EditionTitle.IsNullOrWhiteSpace() ? row.BookTitle : row.EditionTitle!;
-                var criteria = new BookSearchCriteria
-                {
-                    Author = author,
-                    Books = new List<Book> { book },
-                    BookTitle = searchTitle,
-                    InteractiveSearch = true
-                };
-                var titleSpecification = new ReleaseTitleMatchSpecification(Logger);
-                var packSpecification = new MultiBookReleaseSpecification(Logger);
+                    System.Console.WriteLine("[prowlarrbench] input=synthetic author/title probe; catalog comes from the supplied case, not the database");
+                }
 
                 var queries = new List<(string Label, string Query)>();
                 if (useAuthorTitle)
                 {
-                    queries.Add(("title+author", $"{searchTitle} {row.AuthorName}".Trim()));
-                    queries.Add(("author+title", $"{row.AuthorName} {searchTitle}".Trim()));
+                    queries.Add(("title+author", $"{searchTitle} {author.Name}".Trim()));
+                    queries.Add(("author+title", $"{author.Name} {searchTitle}".Trim()));
                 }
 
                 if (useTitleOnly)
@@ -3532,121 +3802,283 @@ FROM Books;")
                 }
 
                 var all = rawResults.Values.Where(value => value.Result != null).ToList();
-                var allowed = all.Where(value => IsAllowedBookCategory(value.Result, row.MediaType)).ToList();
+                var allowed = all.Where(value => IsAllowedBookCategory(value.Result, book.MediaType)).ToList();
+                var categoryMatchCount = allowed.Count;
                 if (allowed.Count > perBookMax)
                 {
                     allowed = allowed.Take(perBookMax).ToList();
                 }
 
-                var evals = allowed
-                    .Select(entry =>
-                    {
-                        var r = entry.Result;
-                        var match = ReleaseTitleMatchScorer.FindBestMatch(r.Title, row.AuthorName, new[] { book }, r.Author, catalog);
-                        var remoteBook = new RemoteBook
-                        {
-                            Release = new ReleaseInfo
-                            {
-                                Title = r.Title,
-                                Author = r.Author,
-                                Guid = r.Guid,
-                                DownloadUrl = r.DownloadUrl,
-                                Indexer = r.Indexer,
-                                IndexerId = r.IndexerId,
-                                Size = r.Size,
-                                Categories = r.Categories?.Where(category => category != null).Select(category => category.Id).ToList(),
-                                PublishDate = DateTime.UtcNow
-                            },
-                            SearchCriteriaMatch = match,
-                            PackDetection = ReleasePackDetector.Detect(r.Title, book, catalog) ?? ReleasePackDetection.None()
-                        };
-
-                        var titleDecision = titleSpecification.IsSatisfiedBy(remoteBook, criteria);
-                        var packDecision = packSpecification.IsSatisfiedBy(remoteBook, criteria);
-
-                        return new
-                        {
-                            Result = r,
-                            entry.Sources,
-                            Match = match,
-                            PackDetection = remoteBook.PackDetection,
-                            TitleDecision = titleDecision,
-                            PackDecision = packDecision,
-                            Accepted = titleDecision.Accepted && packDecision.Accepted
-                        };
-                    })
-                    .ToList();
-
-                var titleMatched = evals.Where(e => e.Match != null).ToList();
-                var accepted = evals.Where(e => e.Accepted).ToList();
-                var rejectedTitleMatches = evals.Where(e => e.Match != null && !e.Accepted).ToList();
+                if (incompleteQueries.Count > 0)
+                {
+                    incompleteQueryBookCount++;
+                }
 
                 System.Console.WriteLine();
-                System.Console.WriteLine($"[prowlarrbench] {row.AuthorName} — {searchTitle} (book='{row.BookTitle}', localBookId={row.BookId})");
-                System.Console.WriteLine($"  results: total={all.Count} allowedCats={allowed.Count} titleMatched={titleMatched.Count} title+packAccepted={accepted.Count} rejectedTitleMatched={rejectedTitleMatches.Count} audit={(incompleteQueries.Count == 0 ? "complete" : "INCOMPLETE")}");
+                System.Console.WriteLine($"[prowlarrbench] {author.Name} — {searchTitle} (book='{book.Title}', localBookId={book.Id}, media={book.MediaType})");
+                System.Console.WriteLine($"  recall-only: Prowlarr's result DTO omits production release fields, so no production verdict or ranking is reported; matching catalog={(input.IsSynthetic ? "synthetic" : "hydrated snapshot")}");
+                System.Console.WriteLine($"  returned={all.Count} bookCategories={categoryMatchCount} shown={allowed.Count}{(categoryMatchCount > allowed.Count ? " (display-limited)" : string.Empty)} queryAudit={(incompleteQueries.Count == 0 ? "complete" : "INCOMPLETE")}");
+                if (input.IsSynthetic)
+                {
+                    System.Console.WriteLine("  INCOMPLETE: synthetic target has no hydrated database catalog/profile; this is a recall-only probe");
+                }
                 System.Console.WriteLine($"  query results: {string.Join(", ", queryResultCounts.Select(pair => $"{pair.Key}={pair.Value}"))}");
 
-                if (titleMatched.Count == 0 && allowed.Count > 0)
+                if (allowed.Count == 0 && all.Count > 0)
                 {
-                    System.Console.WriteLine("  sample allowed titles (no matches):");
-
-                    foreach (var entry in allowed.Take(3))
-                    {
-                        var r = entry.Result;
-                        var cats = string.Join(",", (r.Categories ?? new List<ProwlarrCategory>()).Where(c => c != null).Select(c => c.Id));
-                        System.Console.WriteLine($"    - {r.Title} (idx='{r.Indexer}', cats=[{cats}])");
-                    }
+                    System.Console.WriteLine("  no results in the target book media categories");
                 }
 
-                if (accepted.Count > 0)
+                if (allowed.Count > 0)
                 {
-                    System.Console.WriteLine("  accepted:");
-
-                    foreach (var e in accepted
-                                 .OrderBy(x => x.Match!.MeaningfulLeftoverCount)
-                                 .ThenByDescending(x => x.Result.Seeders)
-                                 .ThenByDescending(x => x.Result.Size))
+                    System.Console.WriteLine("  observed candidates:");
+                    foreach (var entry in allowed)
                     {
-                        var cats = string.Join(",", (e.Result.Categories ?? new List<ProwlarrCategory>()).Where(c => c != null).Select(c => c.Id));
-                        var leftovers = e.Match?.MeaningfulLeftovers?.Count > 0 ? $" leftovers=[{string.Join(", ", e.Match.MeaningfulLeftovers.Take(6))}]" : string.Empty;
-                        var packDetection = e.PackDetection;
-                        var pack = packDetection?.Verdict != ReleasePackDetectionVerdict.None ? $" pack={packDetection!.Verdict}:{packDetection.PackType}" : string.Empty;
-                        System.Console.WriteLine($"    - {e.Result.Title} (idx='{e.Result.Indexer}', queries=[{string.Join(",", e.Sources)}], seeders={e.Result.Seeders}, size={e.Result.Size}, cats=[{cats}]){leftovers}{pack}");
-                    }
-                }
-
-                if (rejectedTitleMatches.Count > 0)
-                {
-                    System.Console.WriteLine("  rejected-but-title-matched (top):");
-
-                    foreach (var e in rejectedTitleMatches
-                                 .OrderBy(x => x.Match!.MeaningfulLeftoverCount)
-                                 .ThenByDescending(x => x.Result.Seeders)
-                                 .ThenByDescending(x => x.Result.Size)
-                                 .Take(3))
-                    {
-                        var cats = string.Join(",", (e.Result.Categories ?? new List<ProwlarrCategory>()).Where(c => c != null).Select(c => c.Id));
-                        var leftovers = e.Match!.MeaningfulLeftovers?.Count > 0 ? $" leftovers=[{string.Join(", ", e.Match.MeaningfulLeftovers.Take(6))}]" : string.Empty;
-                        var reason = !e.TitleDecision.Accepted ? e.TitleDecision.Reason : e.PackDecision.Reason;
-                        var packDetection = e.PackDetection;
-                        var pack = packDetection?.Verdict != ReleasePackDetectionVerdict.None ? $" pack={packDetection!.Verdict}:{packDetection.PackType}" : string.Empty;
-                        System.Console.WriteLine($"    - {e.Result.Title} (idx='{e.Result.Indexer}', queries=[{string.Join(",", e.Sources)}], seeders={e.Result.Seeders}, size={e.Result.Size}, cats=[{cats}]){leftovers}{pack} reason='{reason}'");
+                        var result = entry.Result;
+                        var cats = string.Join(",", (result.Categories ?? new List<ProwlarrCategory>()).Where(c => c != null).Select(c => c.Id));
+                        System.Console.WriteLine($"    - {result.Title} (idx='{result.Indexer}', queries=[{string.Join(",", entry.Sources)}], seeders={result.Seeders}, cats=[{cats}])");
                     }
                 }
             }
 
-            return 0;
+            System.Console.WriteLine($"[prowlarrbench] incomplete query books={incompleteQueryBookCount}; all Prowlarr output is recall-only");
+            return incompleteQueryBookCount == 0 ? 0 : 1;
+        }
+
+        private static int RunReleaseReplay(StartupContext startupContext)
+        {
+            var dbPath = GetArg(startupContext, "db") ??
+                         Environment.GetEnvironmentVariable("CHAPTARR_DB") ??
+                         "/config/chaptarr.db";
+            var releasePath = GetArg(startupContext, "releases");
+            var bookIds = ParseTargetBookIds(GetArg(startupContext, "bookids"));
+            var interactiveSearch = GetBoolArg(startupContext, "interactive", true);
+            var rss = GetBoolArg(startupContext, "rss", false);
+
+            if (string.IsNullOrWhiteSpace(releasePath) || (!rss && bookIds.Count == 0))
+            {
+                System.Console.Error.WriteLine("[releasereplay] Provide /releases=<serialized-release-array.json> and either /bookids=1,2,... from the SQLite snapshot or /rss=true for an unscoped RSS batch.");
+                return 2;
+            }
+
+            if (rss && bookIds.Count > 0)
+            {
+                System.Console.Error.WriteLine("[releasereplay] RSS is unscoped; omit /bookids when using /rss=true.");
+                return 2;
+            }
+
+            var sourceAppData = GetArg(startupContext, "data") ?? Path.GetDirectoryName(Path.GetFullPath(dbPath)) ?? "/config";
+            var snapshotContext = new StartupContext("/releasereplay", $"/data={sourceAppData}");
+            if (RejectPostgresForSqliteSnapshot(snapshotContext, "releasereplay"))
+            {
+                return 2;
+            }
+
+            List<ReleaseInfo> reports;
+            try
+            {
+                var json = File.ReadAllText(releasePath);
+                reports = DeserializeTypedReleaseReports(json);
+            }
+            catch (Exception ex)
+            {
+                System.Console.Error.WriteLine($"[releasereplay] Could not read typed release reports: {ex.Message}");
+                return 2;
+            }
+
+            var missingByReport = reports.Select((release, index) =>
+            {
+                var missing = GetMissingReleaseSourceFields(release);
+                return (Index: index + 1, Release: release, Missing: missing);
+            }).ToList();
+            var completeSourceData = missingByReport.All(item => item.Missing.Count == 0);
+
+            using var workspace = PrepareAuditWorkspace(startupContext, sourceAppData, live: false, sourceDatabasePath: dbPath);
+            var snapshotDbPath = Path.Combine(workspace.AppData, "chaptarr.db");
+            var sampleBooks = rss ? new List<LibraryBookRow>() : LoadBooksByIds(snapshotDbPath, bookIds);
+            if (sampleBooks.Count != bookIds.Count)
+            {
+                var loadedIds = sampleBooks.Select(row => row.BookId).ToHashSet();
+                var missingIds = bookIds.Where(id => !loadedIds.Contains(id));
+                System.Console.Error.WriteLine($"[releasereplay] Missing local book id(s) in the SQLite snapshot: {string.Join(",", missingIds)}");
+                return 1;
+            }
+
+            using var host = BuildHost(workspace.StartupContext, blockOutboundHttp: true, recordDownloads: rss);
+            using var scope = host.Services.CreateScope();
+            var services = scope.ServiceProvider;
+            var inputLoader = new ProductionSearchInputLoader(services);
+            var searchService = services.GetRequiredService<ReleaseSearchService>();
+            var prioritizer = services.GetRequiredService<IPrioritizeDownloadDecision>();
+            var networkGuard = (OfflineReplayHttpDispatcher)services.GetRequiredService<IHttpDispatcher>();
+            var incompleteBookCount = 0;
+
+            System.Console.WriteLine(rss
+                ? $"[releasereplay] db snapshot='{snapshotDbPath}', mode=RSS, typedReports={reports.Count}, unscoped=true"
+                : $"[releasereplay] db snapshot='{snapshotDbPath}', books={sampleBooks.Count}, typedReports={reports.Count}, interactive={interactiveSearch}");
+            System.Console.WriteLine("[releasereplay] replay uses the production decision maker and prioritizer; outbound HTTP from decision processing is blocked");
+            System.Console.WriteLine("[releasereplay] SQLite snapshot replay cannot restore transient live queue, cache, or wall-clock state");
+
+            foreach (var item in missingByReport.Where(item => item.Missing.Count > 0))
+            {
+                System.Console.WriteLine($"[releasereplay] report #{item.Index} '{item.Release.Title ?? "<untitled>"}' is incomplete: missing {string.Join(", ", item.Missing)}");
+            }
+
+            if (rss)
+            {
+                // The offline snapshot has no live download-client queue to refresh.
+                ((NzbDrone.Core.Queue.QueueService)services.GetRequiredService<NzbDrone.Core.Queue.IQueueService>())
+                    .Handle(new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadRefreshedEvent(
+                        new List<NzbDrone.Core.Download.TrackedDownloads.TrackedDownload>()));
+
+                var replay = RunProductionRssDecision(
+                    services.GetRequiredService<IMakeDownloadDecision>(), prioritizer, networkGuard, reports,
+                    services.GetRequiredService<IPendingReleaseService>(), services.GetRequiredService<IProcessDownloadDecisions>(), completeSourceData);
+                System.Console.WriteLine();
+                System.Console.WriteLine("[releasereplay] RSS batch");
+                WriteReleaseReplayResult(replay, includeTargets: true);
+                System.Console.WriteLine();
+                System.Console.WriteLine($"[releasereplay] completed RSS batches={(replay.Complete ? 1 : 0)}, incomplete RSS batches={(replay.Complete ? 0 : 1)}, typedReports={reports.Count}, decisions={replay.Decisions.Count}, plannedGrabs={replay.Processed?.Grabbed.Count}, pending={replay.Processed?.Pending.Count}, downloads=0");
+                return replay.Complete ? 0 : 1;
+            }
+
+            foreach (var row in sampleBooks)
+            {
+                var input = inputLoader.Load(row, userInvokedSearch: true, interactiveSearch: interactiveSearch);
+                var replay = RunProductionSearchDecision(
+                    searchService,
+                    prioritizer,
+                    networkGuard,
+                    reports,
+                    input.Criteria,
+                    input.IsSynthetic,
+                    completeSourceData);
+                if (!replay.Complete)
+                {
+                    incompleteBookCount++;
+                }
+
+                System.Console.WriteLine();
+                System.Console.WriteLine($"[releasereplay] {input.Author.Name} — {input.Criteria.BookTitle} (book='{input.TargetBook.Title}', localBookId={input.TargetBook.Id}, media={input.TargetBook.MediaType})");
+                WriteReleaseReplayResult(replay);
+            }
+
+            System.Console.WriteLine();
+            System.Console.WriteLine($"[releasereplay] completed books={sampleBooks.Count - incompleteBookCount}, incomplete books={incompleteBookCount}, downloads=0");
+            return incompleteBookCount == 0 ? 0 : 1;
+        }
+
+        private static void WriteReleaseReplayResult(ProductionSearchDecisionReplay replay, bool includeTargets = false)
+        {
+            System.Console.WriteLine($"  {DescribeReplayOutcome(replay)}");
+            if (replay.BlockedExternalRequestCount > 0)
+            {
+                System.Console.WriteLine($"  offline guard blocked {replay.BlockedExternalRequestCount} decision-time HTTP request(s): {string.Join(", ", replay.BlockedRequests.Distinct())}");
+            }
+            if (replay.UnaccountedReportCount > 0)
+            {
+                System.Console.WriteLine($"  {replay.UnaccountedReportCount} input report(s) have no recorded decision; RSS completeness is not established");
+            }
+            if (!replay.HasCompleteSourceData)
+            {
+                System.Console.WriteLine("  source reports are incomplete; per-release outcomes are diagnostic only and accepted verdicts are withheld");
+            }
+
+            var rank = 0;
+            foreach (var decision in replay.Decisions)
+            {
+                var remoteBook = decision.RemoteBook;
+                var release = remoteBook?.Release;
+                if (release == null)
+                {
+                    continue;
+                }
+
+                var match = remoteBook?.SearchCriteriaMatch;
+                var leftovers = match?.MeaningfulLeftovers?.Count > 0 ? $" leftovers=[{string.Join(", ", match.MeaningfulLeftovers)}]" : string.Empty;
+                var targets = includeTargets
+                    ? $" targets=[{string.Join(", ", (remoteBook?.Books ?? new List<Book>()).Select(book => $"{remoteBook?.Author?.Name} — {book.Title} (localBookId={book.Id}, media={book.MediaType})"))}]"
+                    : string.Empty;
+                var reasons = string.Join("; ", decision.Rejections.Select(rejection => $"{rejection.Category}: {rejection.Reason}"));
+                if (!replay.Complete)
+                {
+                    System.Console.WriteLine($"    INCOMPLETE - {release.Title}{leftovers}{targets} recordedRejections=[{reasons}]");
+                    continue;
+                }
+
+                var status = decision.Approved ? "APPROVED" : "REJECTED";
+                if (decision.Approved)
+                {
+                    rank++;
+                    System.Console.WriteLine($"    #{rank} {status} - {release.Title}{leftovers}{targets} (indexer='{release.Indexer}', seeders={TorrentInfo.GetSeeders(release) ?? 0}, size={release.Size})");
+                }
+                else
+                {
+                    System.Console.WriteLine($"    {status} - {release.Title}{leftovers}{targets} rejections=[{reasons}]");
+                }
+            }
+        }
+
+        private static List<ReleaseInfo> DeserializeTypedReleaseReports(string json)
+        {
+            var root = JToken.Parse(json) as JArray
+                ?? throw new InvalidDataException("The release file must contain a JSON array.");
+            var serializer = Newtonsoft.Json.JsonSerializer.Create(NzbDrone.Common.Serializer.Json.GetSerializerSettings());
+            var reports = new List<ReleaseInfo>(root.Count);
+
+            foreach (var token in root)
+            {
+                if (token is not JObject reportObject)
+                {
+                    throw new InvalidDataException("Each release entry must be a JSON object.");
+                }
+
+                var protocolText = reportObject.Properties()
+                    .FirstOrDefault(property => property.Name.Equals("downloadProtocol", StringComparison.OrdinalIgnoreCase))?
+                    .Value?.ToString();
+                Enum.TryParse(protocolText, ignoreCase: true, out DownloadProtocol protocol);
+                var hasTorrentFields = reportObject.Properties().Any(property =>
+                    property.Name.Equals("magnetUrl", StringComparison.OrdinalIgnoreCase) ||
+                    property.Name.Equals("infoHash", StringComparison.OrdinalIgnoreCase) ||
+                    property.Name.Equals("seeders", StringComparison.OrdinalIgnoreCase) ||
+                    property.Name.Equals("peers", StringComparison.OrdinalIgnoreCase) ||
+                    property.Name.Equals("fileType", StringComparison.OrdinalIgnoreCase));
+                var reportType = protocol == DownloadProtocol.Torrent || hasTorrentFields
+                    ? typeof(TorrentInfo)
+                    : typeof(ReleaseInfo);
+                var report = token.ToObject(reportType, serializer) as ReleaseInfo
+                    ?? throw new InvalidDataException("A release entry could not be deserialized as ReleaseInfo or TorrentInfo.");
+                reports.Add(report);
+            }
+
+            return reports;
+        }
+
+        private static List<string> GetMissingReleaseSourceFields(ReleaseInfo release)
+        {
+            var missing = new List<string>();
+            if (release == null || string.IsNullOrWhiteSpace(release.Title)) missing.Add("title");
+            if (release == null || string.IsNullOrWhiteSpace(release.Guid)) missing.Add("guid");
+            if (release == null || string.IsNullOrWhiteSpace(release.Indexer)) missing.Add("indexer");
+            if (release == null || release.IndexerId <= 0) missing.Add("indexerId");
+            if (release == null || release.PublishDate == default) missing.Add("publishDate");
+            if (release == null || release.DownloadProtocol == DownloadProtocol.Unknown) missing.Add("downloadProtocol");
+            if (release == null || release.Size <= 0) missing.Add("size");
+            if (release == null || (string.IsNullOrWhiteSpace(release.DownloadUrl) && string.IsNullOrWhiteSpace((release as TorrentInfo)?.MagnetUrl))) missing.Add("downloadUrl");
+            return missing;
         }
 
         private static int RunMamBench(StartupContext startupContext)
         {
             var dbPath = GetArg(startupContext, "db") ??
                          Environment.GetEnvironmentVariable("CHAPTARR_DB") ??
-                         "/workspace/audioarrdata/chaptarr.db";
+                         "/config/chaptarr.db";
             var proxyUrl = GetArg(startupContext, "proxy");
             var bookIds = ParseTargetBookIds(GetArg(startupContext, "bookids"));
             var interactiveSearch = GetBoolArg(startupContext, "interactive", true);
             var indexerId = GetNullableIntArg(startupContext, "indexerid");
+            _mamRawDumpDir = GetArg(startupContext, "dumpraw");
+            _mamRawDumpSeq = 0;
 
             if (string.IsNullOrWhiteSpace(proxyUrl))
             {
@@ -3660,8 +4092,25 @@ FROM Books;")
                 return 2;
             }
 
+            var sourceAppData = GetArg(startupContext, "data") ?? Path.GetDirectoryName(Path.GetFullPath(dbPath)) ?? "/config";
+            if (RejectPostgresForSqliteSnapshot(new StartupContext("/mambench", $"/data={sourceAppData}"), "mambench"))
+            {
+                return 2;
+            }
+
+            using var workspace = PrepareAuditWorkspace(startupContext, sourceAppData, live: false, sourceDatabasePath: dbPath);
+            dbPath = Path.Combine(workspace.AppData, "chaptarr.db");
+            using var host = BuildHost(workspace.StartupContext, blockOutboundHttp: true);
+            using var scope = host.Services.CreateScope();
+            var services = scope.ServiceProvider;
+            var inputLoader = new ProductionSearchInputLoader(services);
+            var searchService = services.GetRequiredService<ReleaseSearchService>();
+            var prioritizer = services.GetRequiredService<IPrioritizeDownloadDecision>();
+            var networkGuard = (OfflineReplayHttpDispatcher)services.GetRequiredService<IHttpDispatcher>();
+
             StoredIndexerRow? storedIndexer;
             MyAnonaMouseSettings? settings;
+            IndexerDefinition? indexerDefinition;
             List<LibraryBookRow> sampleBooks;
 
             try
@@ -3681,6 +4130,7 @@ FROM Books;")
                 }
 
                 settings = JsonConvert.DeserializeObject<MyAnonaMouseSettings>(storedIndexer.Settings);
+                indexerDefinition = services.GetRequiredService<IIndexerFactory>().Get(storedIndexer.Id);
                 sampleBooks = LoadBooksByIds(dbPath, bookIds);
             }
             catch (Exception ex)
@@ -3692,6 +4142,12 @@ FROM Books;")
             if (settings == null || string.IsNullOrWhiteSpace(settings.MamId))
             {
                 System.Console.Error.WriteLine("[mambench] The selected native MAM indexer has no mam_id.");
+                return 1;
+            }
+
+            if (indexerDefinition == null)
+            {
+                System.Console.Error.WriteLine("[mambench] The selected native MAM indexer definition could not be loaded from the snapshot.");
                 return 1;
             }
 
@@ -3716,30 +4172,65 @@ FROM Books;")
             };
 
             var parser = new MyAnonaMouseJsonParser(settings);
-            var titleSpecification = new ReleaseTitleMatchSpecification(Logger);
-            var packSpecification = new MultiBookReleaseSpecification(Logger);
             var lastRequestUtc = DateTime.MinValue;
             var incompleteBookCount = 0;
 
-            System.Console.WriteLine($"[mambench] db='{dbPath}', indexer='{storedIndexer.Name}' ({storedIndexer.Id}), books={sampleBooks.Count}, interactive={interactiveSearch}");
-            System.Console.WriteLine("[mambench] transport=explicit-proxy, request spacing=2s (native indexer rate), downloads=disabled");
+            System.Console.WriteLine($"[mambench] db snapshot='{dbPath}', indexer='{storedIndexer.Name}' ({storedIndexer.Id}), books={sampleBooks.Count}, interactive={interactiveSearch}");
+            System.Console.WriteLine("[mambench] matching=production report evaluation + production prioritizer using snapshot data; transient live queue/cache/time state is not restored");
+            System.Console.WriteLine("[mambench] transport=explicit-proxy, request spacing=2s (native indexer rate), downloads=disabled; decision replay blocks secondary outbound HTTP");
+
+            // Raw-text probe: send one deliberately hand-written MAM query instead of the generated
+            // per-book tiers, so upstream text operators can be evaluated against live data. The request is
+            // still built by the production generator, so URL, payload shape, headers and cookies are identical.
+            var rawTextProbe = GetArg(startupContext, "text");
+            if (!string.IsNullOrWhiteSpace(rawTextProbe))
+            {
+                var probeRow = sampleBooks[0];
+                var probeInput = inputLoader.Load(probeRow, userInvokedSearch: true, interactiveSearch: interactiveSearch);
+                var probeCriteria = probeInput.Criteria;
+
+                var probeGenerator = new MyAnonaMouseRequestGenerator
+                {
+                    Settings = settings,
+                    Logger = Logger
+                };
+
+                var probeRequest = probeGenerator.GetJsonApiRequests(rawTextProbe, probeCriteria).First();
+
+                System.Console.WriteLine($"[mambench] RAW TEXT PROBE - one request only, text='{rawTextProbe}'");
+                System.Console.WriteLine($"[mambench] payload={System.Text.Encoding.UTF8.GetString(probeRequest.HttpRequest.ContentData ?? Array.Empty<byte>())}");
+
+                List<ReleaseInfo> probeReleases;
+                try
+                {
+                    probeReleases = FetchMamPage(http, parser, probeRequest);
+                }
+                catch (Exception ex)
+                {
+                    System.Console.Error.WriteLine($"[mambench] raw text probe failed: {ex.Message}");
+                    return 1;
+                }
+
+                System.Console.WriteLine($"[mambench] returned {probeReleases.Count} release(s)");
+                foreach (var release in probeReleases)
+                {
+                    var probeTorrent = release as TorrentInfo;
+                    var probeSeries = release.SeriesInfo == null
+                        ? string.Empty
+                        : string.Join(" | ", release.SeriesInfo.Select(entry => $"{entry.Name}#{entry.Position}"));
+                    System.Console.WriteLine($"    {release.Title}");
+                    System.Console.WriteLine($"        author='{release.Author ?? string.Empty}' narrator='{release.Narrator ?? string.Empty}' filetype='{probeTorrent?.FileType ?? string.Empty}' seeders={TorrentInfo.GetSeeders(release) ?? 0} series=[{probeSeries}]");
+                }
+
+                return 0;
+            }
 
             foreach (var row in sampleBooks)
             {
-                var author = LoadAuditAuthor(dbPath, row);
-                var catalog = LoadAuthorCatalog(dbPath, row, author);
-                author.Books = catalog;
-                var book = catalog.First(candidate => candidate.Id == row.BookId);
-                var searchTitle = row.EditionTitle.IsNullOrWhiteSpace() ? row.BookTitle : row.EditionTitle!;
-                var criteria = new BookSearchCriteria
-                {
-                    Author = author,
-                    Books = new List<Book> { book },
-                    BookTitle = searchTitle,
-                    BookYear = row.PublicationYear ?? 0,
-                    InteractiveSearch = interactiveSearch,
-                    UserInvokedSearch = true
-                };
+                var input = inputLoader.Load(row, userInvokedSearch: true, interactiveSearch: interactiveSearch);
+                var criteria = input.Criteria;
+                var book = input.TargetBook;
+                var searchTitle = criteria.BookTitle;
 
                 var generator = new MyAnonaMouseRequestGenerator
                 {
@@ -3750,6 +4241,7 @@ FROM Books;")
                 var releases = new List<ReleaseInfo>();
                 var tierCounts = new List<int>();
                 string? failure = null;
+                var truncatedTier = false;
 
                 for (var tierIndex = 0; tierIndex < chain.Tiers && failure == null; tierIndex++)
                 {
@@ -3771,8 +4263,22 @@ FROM Books;")
                                 lastRequestUtc = DateTime.UtcNow;
                                 tierReleases.AddRange(page);
 
-                                if (page.Count < 100 || tierReleases.Count >= 1000)
+                                foreach (var release in page)
                                 {
+                                    release.IndexerId = storedIndexer.Id;
+                                    release.Indexer = storedIndexer.Name;
+                                    release.DownloadProtocol = indexerDefinition.Protocol;
+                                    release.IndexerPriority = indexerDefinition.Priority;
+                                }
+
+                                if (page.Count < 100)
+                                {
+                                    break;
+                                }
+
+                                if (tierReleases.Count >= 1000)
+                                {
+                                    truncatedTier = true;
                                     break;
                                 }
                             }
@@ -3793,68 +4299,71 @@ FROM Books;")
                     }
                 }
 
-                var evaluations = releases
-                    .Select(release =>
-                    {
-                        var match = ReleaseTitleMatchScorer.FindBestMatch(release.Title, row.AuthorName, new[] { book }, release.Author, catalog);
-                        var remoteBook = new RemoteBook
-                        {
-                            Release = release,
-                            Author = author,
-                            Books = new List<Book> { book },
-                            SearchCriteriaMatch = match,
-                            PackDetection = ReleasePackDetector.Detect(release.Title, book, catalog) ?? ReleasePackDetection.None()
-                        };
-                        var titleDecision = titleSpecification.IsSatisfiedBy(remoteBook, criteria);
-                        var packDecision = packSpecification.IsSatisfiedBy(remoteBook, criteria);
-
-                        return new
-                        {
-                            Release = release,
-                            Match = match,
-                            PackDetection = remoteBook.PackDetection,
-                            TitleDecision = titleDecision,
-                            PackDecision = packDecision,
-                            Accepted = titleDecision.Accepted && packDecision.Accepted
-                        };
-                    })
-                    .ToList();
-
-                var accepted = evaluations.Where(item => item.Accepted).ToList();
-                var rejectedTitleMatches = evaluations.Where(item => item.Match != null && !item.Accepted).ToList();
+                var replay = RunProductionSearchDecision(
+                    searchService,
+                    prioritizer,
+                    networkGuard,
+                    releases,
+                    criteria,
+                    input.IsSynthetic,
+                    hasCompleteSourceData: failure == null && !truncatedTier);
+                var accepted = replay.Decisions.Where(decision => decision.Approved).ToList();
                 var stoppedOnUnusableTier = failure == null && releases.Count > 0 && accepted.Count == 0 && tierCounts.Count < chain.Tiers;
 
-                if (failure != null)
+                if (!replay.Complete)
                 {
                     incompleteBookCount++;
                 }
 
                 System.Console.WriteLine();
-                System.Console.WriteLine($"[mambench] {row.AuthorName} — {searchTitle} (book='{row.BookTitle}', localBookId={row.BookId}, media={row.MediaType})");
-                System.Console.WriteLine($"  tiers: configured={chain.Tiers}, executed={tierCounts.Count}, raw=[{string.Join(",", tierCounts)}], title+packAccepted={accepted.Count}, rejectedTitleMatched={rejectedTitleMatches.Count}, audit={(failure == null ? "complete" : $"INCOMPLETE ({failure})")}");
+                System.Console.WriteLine($"[mambench] {input.Author.Name} — {searchTitle} (book='{book.Title}', localBookId={book.Id}, media={book.MediaType})");
+                System.Console.WriteLine($"  tiers: configured={chain.Tiers}, executed={tierCounts.Count}, raw=[{string.Join(",", tierCounts)}], {DescribeReplayOutcome(replay)}");
+                if (failure != null)
+                {
+                    System.Console.WriteLine($"  request failure: {failure}");
+                }
+                if (truncatedTier)
+                {
+                    System.Console.WriteLine("  source results were truncated at the existing per-tier limit; production verdicts are withheld");
+                }
+                if (replay.BlockedExternalRequestCount > 0)
+                {
+                    System.Console.WriteLine($"  offline guard blocked {replay.BlockedExternalRequestCount} decision-time HTTP request(s): {string.Join(", ", replay.BlockedRequests.Distinct())}");
+                }
                 if (stoppedOnUnusableTier)
                 {
-                    System.Console.WriteLine("  warning: raw results stopped later native MAM tiers, but none passed title+pack matching");
+                    System.Console.WriteLine("  warning: raw results stopped later native MAM tiers, but none passed the production decision pipeline");
                 }
 
-                foreach (var item in accepted
-                             .OrderBy(entry => entry.Match?.MeaningfulLeftoverCount ?? int.MaxValue)
-                             .ThenByDescending(entry => TorrentInfo.GetSeeders(entry.Release) ?? 0))
+                var rank = 0;
+                foreach (var decision in replay.Decisions)
                 {
-                    var leftovers = item.Match?.MeaningfulLeftovers?.Count > 0 ? $" leftovers=[{string.Join(", ", item.Match.MeaningfulLeftovers.Take(6))}]" : string.Empty;
-                    var packDetection = item.PackDetection;
-                    var pack = packDetection?.Verdict != ReleasePackDetectionVerdict.None ? $" pack={packDetection!.Verdict}:{packDetection.PackType}" : string.Empty;
-                    var torrent = item.Release as TorrentInfo;
-                    var languages = item.Release.Languages?.Select(language => language?.ToString()).Where(language => !string.IsNullOrWhiteSpace(language)) ?? Enumerable.Empty<string>();
-                    System.Console.WriteLine($"    ACCEPT - {item.Release.Title} (seeders={TorrentInfo.GetSeeders(item.Release) ?? 0}, author='{item.Release.Author ?? ""}', narrator='{item.Release.Narrator ?? ""}', graphicAudio={item.Release.IsGraphicAudio}, fileType='{torrent?.FileType ?? ""}', language='{string.Join(",", languages)}'){leftovers}{pack}");
-                }
+                    var release = decision.RemoteBook?.Release;
+                    if (release == null)
+                    {
+                        continue;
+                    }
 
-                foreach (var item in rejectedTitleMatches.Take(5))
-                {
-                    var reason = !item.TitleDecision.Accepted ? item.TitleDecision.Reason : item.PackDecision.Reason;
-                    var packDetection = item.PackDetection;
-                    var pack = packDetection?.Verdict != ReleasePackDetectionVerdict.None ? $" pack={packDetection!.Verdict}:{packDetection.PackType}" : string.Empty;
-                    System.Console.WriteLine($"    REJECT - {item.Release.Title}{pack} reason='{reason}'");
+                    var match = decision.RemoteBook?.SearchCriteriaMatch;
+                    var leftovers = match?.MeaningfulLeftovers?.Count > 0 ? $" leftovers=[{string.Join(", ", match.MeaningfulLeftovers)}]" : string.Empty;
+                    var torrent = release as TorrentInfo;
+                    var reasons = string.Join("; ", decision.Rejections.Select(rejection => $"{rejection.Category}: {rejection.Reason}"));
+                    if (!replay.Complete)
+                    {
+                        System.Console.WriteLine($"    INCOMPLETE - {release.Title}{leftovers} recordedRejections=[{reasons}]");
+                        continue;
+                    }
+
+                    var status = decision.Approved ? "APPROVED" : "REJECTED";
+                    if (decision.Approved)
+                    {
+                        rank++;
+                        System.Console.WriteLine($"    #{rank} {status} - {release.Title} (seeders={TorrentInfo.GetSeeders(release) ?? 0}, author='{release.Author ?? ""}', narrator='{release.Narrator ?? ""}', graphicAudio={release.IsGraphicAudio}, fileType='{torrent?.FileType ?? ""}'){leftovers}");
+                    }
+                    else
+                    {
+                        System.Console.WriteLine($"    {status} - {release.Title}{leftovers} rejections=[{reasons}]");
+                    }
                 }
             }
 
@@ -3863,54 +4372,8 @@ FROM Books;")
             return incompleteBookCount == 0 ? 0 : 1;
         }
 
-        private static Author LoadAuditAuthor(string dbPath, LibraryBookRow row)
-        {
-            var author = new Author
-            {
-                Id = row.AuthorId,
-                Name = row.AuthorName,
-                MetadataProfileId = row.MetadataProfileId,
-                AudiobookMetadataProfileId = row.AudiobookMetadataProfileId,
-                EbookMetadataProfileId = row.EbookMetadataProfileId
-            };
-
-            var profileId = row.MediaType == BookMediaType.Ebook
-                ? row.EbookMetadataProfileId ?? row.MetadataProfileId
-                : row.AudiobookMetadataProfileId ?? row.MetadataProfileId;
-
-            if (!profileId.HasValue || profileId.Value <= 0)
-            {
-                return author;
-            }
-
-            using var conn = OpenReadonlySqlite(dbPath);
-            var profile = conn.QuerySingleOrDefault<MetadataProfile>(@"
-SELECT Id, Name, ProfileType, MinPopularity, SkipMissingDate, SkipMissingIsbn,
-       SkipPartsAndSets, SkipSeriesSecondary, SkipMissingIdentifierOmnibus,
-       SkipOmnibus, SkipMissingAsin, AllowedLanguages, MinPages
-FROM MetadataProfiles
-WHERE Id = @id", new { id = profileId.Value });
-            if (profile == null)
-            {
-                return author;
-            }
-
-            if (row.MediaType == BookMediaType.Ebook)
-            {
-                author.EbookMetadataProfile = profile;
-            }
-            else
-            {
-                author.AudiobookMetadataProfile = profile;
-            }
-
-            if (row.MetadataProfileId == profile.Id)
-            {
-                author.MetadataProfile = profile;
-            }
-
-            return author;
-        }
+        private static string? _mamRawDumpDir;
+        private static int _mamRawDumpSeq;
 
         private static List<ReleaseInfo> FetchMamPage(HttpClient http, MyAnonaMouseJsonParser parser, IndexerRequest request)
         {
@@ -3950,6 +4413,27 @@ WHERE Id = @id", new { id = profileId.Value });
             foreach (var header in response.Content.Headers)
             {
                 responseHeaders.Add(header.Key, string.Join(",", header.Value));
+            }
+
+            if (!string.IsNullOrWhiteSpace(_mamRawDumpDir))
+            {
+                // Dev-only capture: the request we sent and the body we got back, verbatim.
+                var seq = (++_mamRawDumpSeq).ToString("D3");
+                System.IO.Directory.CreateDirectory(_mamRawDumpDir);
+                System.IO.File.WriteAllText(
+                    System.IO.Path.Combine(_mamRawDumpDir, $"{seq}-request.txt"),
+                    $"{request.HttpRequest.Method} {request.Url.FullUri}\n" +
+                    string.Join("\n", request.HttpRequest.Headers
+                        .Where(h => !h.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase))
+                        .Select(h => $"{h.Key}: {h.Value}")) +
+                    $"\nCookie: [{string.Join(", ", request.HttpRequest.Cookies.Select(c => c.Key))} redacted]\n\n" +
+                    (request.HttpRequest.ContentData != null
+                        ? System.Text.Encoding.UTF8.GetString(request.HttpRequest.ContentData)
+                        : "<no body>"));
+                System.IO.File.WriteAllBytes(
+                    System.IO.Path.Combine(_mamRawDumpDir, $"{seq}-response-{(int)response.StatusCode}.json"),
+                    bytes);
+                System.Console.WriteLine($"[mambench] dumped raw request/response pair {seq} ({bytes.Length} bytes) to {_mamRawDumpDir}");
             }
 
             var nativeResponse = new NzbDrone.Common.Http.HttpResponse(request.HttpRequest, responseHeaders, bytes, response.StatusCode, response.Version);
@@ -4038,86 +4522,6 @@ WHERE b.Id IN @bookIds
             return bookIds.Where(rows.ContainsKey).Select(id => rows[id]).ToList();
         }
 
-        private static List<Book> LoadAuthorCatalog(string dbPath, LibraryBookRow target, Author author)
-        {
-            if (target.AuthorId <= 0 || !File.Exists(dbPath))
-            {
-                return new List<Book> { BuildBook(target, author) };
-            }
-
-            using var conn = new SqliteConnection($"Data Source={dbPath}");
-            conn.Open();
-
-            const string sql = @"
-SELECT
-  b.Id as BookId,
-  b.Title as BookTitle,
-  b.Subtitle as BookSubtitle,
-  b.OriginalTitle as OriginalTitle,
-  (SELECT e.Title FROM Editions e WHERE e.BookId = b.Id AND e.Monitored = 1 ORDER BY e.Id LIMIT 1) as EditionTitle,
-  b.SeriesName as SeriesName,
-  b.SeriesPosition as SeriesPosition,
-  b.PublicationYear as PublicationYear,
-  b.MediaType as MediaType,
-  b.AnyEditionOk as AnyEditionOk,
-  b.GoodreadsBookId as GoodreadsBookId,
-  b.GoodreadsWorkId as GoodreadsWorkId,
-  b.HardcoverBookId as HardcoverBookId,
-  b.OpenLibraryEditionId as OpenLibraryEditionId,
-  b.OpenLibraryWorkId as OpenLibraryWorkId,
-  b.GoogleBooksId as GoogleBooksId,
-  b.ASIN as Asin,
-  b.AudibleASIN as AudibleAsin,
-  a.Id as AuthorId,
-  a.Name as AuthorName,
-  a.MetadataProfileId as MetadataProfileId,
-  a.AudiobookMetadataProfileId as AudiobookMetadataProfileId,
-  a.EbookMetadataProfileId as EbookMetadataProfileId
-FROM Books b
-JOIN Authors a ON a.Id = b.AuthorId
-WHERE a.Id = @authorId AND b.Title IS NOT NULL AND trim(b.Title) != '';
-";
-
-            var books = conn.Query<LibraryBookRow>(sql, new { authorId = target.AuthorId })
-                .Select(row => BuildBook(row, author))
-                .ToList();
-
-            const string editionsSql = @"
-SELECT
-  e.BookId as BookId,
-  e.Title as Title,
-  e.Monitored as Monitored,
-  e.ManualAdd as ManualAdd,
-  e.IsEbook as IsEbook,
-  e.ReadingFormatId as ReadingFormatId,
-  e.IsGraphicAudio as IsGraphicAudio,
-  e.AudioProductionType as AudioProductionType,
-  e.Narrator as Narrator
-FROM Editions e
-JOIN Books b ON b.Id = e.BookId
-WHERE b.AuthorId = @authorId
-ORDER BY e.BookId, e.Monitored DESC, e.Id;";
-
-            var editionsByBook = conn.Query<LibraryEditionRow>(editionsSql, new { authorId = target.AuthorId })
-                .GroupBy(edition => edition.BookId)
-                .ToDictionary(group => group.Key, group => group.Select(BuildEdition).ToList());
-
-            foreach (var book in books)
-            {
-                if (editionsByBook.TryGetValue(book.Id, out var editions) && editions.Count > 0)
-                {
-                    book.Editions = editions;
-                }
-            }
-
-            if (books.All(book => book.Id != target.BookId))
-            {
-                books.Add(BuildBook(target, author));
-            }
-
-            return books;
-        }
-
         private static Book BuildBook(LibraryBookRow row, Author author)
         {
             return new Book
@@ -4148,21 +4552,6 @@ ORDER BY e.BookId, e.Monitored DESC, e.Id;";
                         Monitored = true
                     }
                 }
-            };
-        }
-
-        private static Edition BuildEdition(LibraryEditionRow row)
-        {
-            return new Edition
-            {
-                Title = row.Title,
-                Monitored = row.Monitored,
-                ManualAdd = row.ManualAdd,
-                IsEbook = row.IsEbook,
-                ReadingFormatId = row.ReadingFormatId,
-                IsGraphicAudio = row.IsGraphicAudio,
-                AudioProductionType = row.AudioProductionType,
-                Narrator = row.Narrator
             };
         }
 
@@ -4526,7 +4915,7 @@ ORDER BY e.BookId, e.Monitored DESC, e.Id;";
             }
         }
 
-        private static IHost BuildHost(StartupContext startupContext)
+        private static IHost BuildHost(StartupContext startupContext, bool blockOutboundHttp = false, bool recordDownloads = false)
         {
             var config = BuildConfiguration(startupContext);
 
@@ -4552,6 +4941,15 @@ ORDER BY e.BookId, e.Monitored DESC, e.Id;";
                         .AddStartupContext(startupContext);
 
                     c.Register<IBroadcastSignalRMessage, NoOpSignalRBroadcaster>(Reuse.Singleton);
+                    if (recordDownloads)
+                    {
+                        c.Register<IDownloadService, ReplayDownloadService>(Reuse.Singleton, ifAlreadyRegistered: IfAlreadyRegistered.Replace);
+                    }
+                    if (blockOutboundHttp)
+                    {
+                        c.Register<IHttpDispatcher, OfflineReplayHttpDispatcher>(Reuse.Singleton, ifAlreadyRegistered: IfAlreadyRegistered.Replace);
+                        c.Register<IIndexerHttpClientFactory, OfflineReplayIndexerHttpClient>(Reuse.Singleton, ifAlreadyRegistered: IfAlreadyRegistered.Replace);
+                    }
                 })
                 .ConfigureServices(services =>
                 {
@@ -4599,6 +4997,26 @@ ORDER BY e.BookId, e.Monitored DESC, e.Id;";
                 Logger.Warn(ex, "[matchbench] Failed to load config.xml; falling back to env-only config");
                 return new ConfigurationBuilder().AddEnvironmentVariables().Build();
             }
+        }
+
+        private static bool RejectPostgresForSqliteSnapshot(StartupContext startupContext, string mode)
+        {
+            var config = BuildConfiguration(startupContext);
+            var options = new PostgresOptions();
+            config.GetSection("Chaptarr:Postgres").Bind(options);
+            if (string.IsNullOrWhiteSpace(options.Host))
+            {
+                config.GetSection("Readarr:Postgres").Bind(options);
+                config.GetSection("Audioarr:Postgres").Bind(options);
+            }
+
+            if (!string.IsNullOrWhiteSpace(options.Host) || !string.IsNullOrWhiteSpace(config["PostgresHost"]))
+            {
+                System.Console.Error.WriteLine($"[{mode}] Refusing SQLite snapshot replay while PostgreSQL is configured; this mode only snapshots SQLite and cannot isolate PostgreSQL state.");
+                return true;
+            }
+
+            return false;
         }
 
         private static string? GetArg(StartupContext ctx, string key)
@@ -4728,7 +5146,7 @@ ORDER BY e.BookId, e.Monitored DESC, e.Id;";
             System.Console.WriteLine("  /requiretags=true|false  (default true)");
             System.Console.WriteLine();
             System.Console.WriteLine("Example:");
-            System.Console.WriteLine("  dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /matchbench /data=/workspace/audioarrdata /prefix=/audiobooks/SomeAuthor /limit=300 /repeat=3 /authorid=12");
+            System.Console.WriteLine("  dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /matchbench /data=/config /prefix=/audiobooks/SomeAuthor /limit=300 /repeat=3 /authorid=12");
             System.Console.WriteLine();
             System.Console.WriteLine("2) Library matching audit (real matcher, snapshot by default):");
             System.Console.WriteLine("  Required: /libraryaudit");
@@ -4743,20 +5161,26 @@ ORDER BY e.BookId, e.Monitored DESC, e.Id;";
             System.Console.WriteLine("  Sources: bookfiles replays exactly stored BookFiles tags/durations; staging replays ingest_queue; disk re-extracts tags from real files.");
             System.Console.WriteLine();
             System.Console.WriteLine("Example:");
-            System.Console.WriteLine("  dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /libraryaudit /data=/workspace/audioarrdata /source=bookfiles /prefix=/audiobooks/audiobooks/J.K.\\ Rowling /limit=50 /flow=all /strictness=all /pathfallback=all");
-            System.Console.WriteLine("  dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /libraryaudit /data=/workspace/audioarrdata /source=bookfiles /bookfileid=3081 /includemissing=true /flow=scan-local /ftstop=50");
+            System.Console.WriteLine("  dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /libraryaudit /data=/config /source=bookfiles /prefix=/audiobooks/Example\\ Author /limit=50 /flow=all /strictness=all /pathfallback=all");
+            System.Console.WriteLine("  dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /libraryaudit /data=/config /source=bookfiles /bookfileid=3081 /includemissing=true /flow=scan-local /ftstop=50");
             System.Console.WriteLine();
-            System.Console.WriteLine("3) Prowlarr search + title-matching audit (no grabs):");
+            System.Console.WriteLine("3) Prowlarr recall audit (no matching verdicts or grabs):");
             System.Console.WriteLine("  Required: /prowlarrbench and PROWLARR_API_KEY set (or /apikey=...)");
             System.Console.WriteLine("  Optional: /prowlarr=<url> (or PROWLARR_URL), /db=<path>, /sample=10, /max=60, /querymode=both|authorTitle|titleOnly, /indexerids=2,14, /worstcase=true|false, /bookids=1,2, /author=<name> /title=<title>, /cases='Author|Title[|SeriesPos];Author|Title|SeriesName|SeriesPos;...'");
             System.Console.WriteLine();
             System.Console.WriteLine("Example:");
-            System.Console.WriteLine("  PROWLARR_URL=http://192.0.2.10:9696 PROWLARR_API_KEY=*** dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /prowlarrbench /db=/workspace/audioarrdata/chaptarr.db /sample=10 /querymode=both");
+            System.Console.WriteLine("  PROWLARR_URL=http://192.0.2.10:9696 PROWLARR_API_KEY=*** dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /prowlarrbench /db=/config/chaptarr.db /sample=10 /querymode=both");
             System.Console.WriteLine();
-            System.Console.WriteLine("4) Native MyAnonaMouse request/parser + title/pack audit (search-only):");
+            System.Console.WriteLine("4) Native MyAnonaMouse request/parser + production decision audit (search-only):");
             System.Console.WriteLine("  Required: /mambench /db=<chaptarr.db> /bookids=1,2 /proxy=<http-proxy-url>");
             System.Console.WriteLine("  Optional: /indexerid=<native-MAM-indexer-id>, /interactive=true|false");
             System.Console.WriteLine("  Safety: refuses direct MAM traffic, uses native 2-second request spacing, and never calls a download URL.");
+            System.Console.WriteLine();
+            System.Console.WriteLine("5) Offline production release-decision replay:");
+            System.Console.WriteLine("  Required: /releasereplay /data=<appdata> /db=<chaptarr.db> /releases=<reports.json>");
+            System.Console.WriteLine("  Mode: /bookids=<local-book-ids> for targeted search (default), or /rss=true for one unscoped automatic RSS batch.");
+            System.Console.WriteLine("  Input: JSON array of serialized ReleaseInfo/TorrentInfo reports, including downloadProtocol and source metadata; optional /interactive=true|false.");
+            System.Console.WriteLine("  Safety: SQLite snapshot only; no outbound decision-time HTTP or grabs. Missing source fields or blocked enrichment make the replay incomplete.");
         }
     }
 }

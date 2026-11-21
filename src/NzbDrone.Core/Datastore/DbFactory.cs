@@ -37,7 +37,6 @@ namespace NzbDrone.Core.Datastore
         private readonly IMigrationController _migrationController;
         private readonly IConnectionStringFactory _connectionStringFactory;
         private readonly IDiskProvider _diskProvider;
-        private readonly IRestoreDatabase _restoreDatabaseService;
 
         static DbFactory()
         {
@@ -57,13 +56,11 @@ namespace NzbDrone.Core.Datastore
 
         public DbFactory(IMigrationController migrationController,
                          IConnectionStringFactory connectionStringFactory,
-                         IDiskProvider diskProvider,
-                         IRestoreDatabase restoreDatabaseService)
+                         IDiskProvider diskProvider)
         {
             _migrationController = migrationController;
             _connectionStringFactory = connectionStringFactory;
             _diskProvider = diskProvider;
-            _restoreDatabaseService = restoreDatabaseService;
         }
 
         public IDatabase Create(MigrationType migrationType = MigrationType.Main)
@@ -141,34 +138,7 @@ namespace NzbDrone.Core.Datastore
         {
             try
             {
-                var restoreInProgress = false;
-
-                try
-                {
-                    if (databaseType == DatabaseType.SQLite)
-                    {
-                        restoreInProgress = _restoreDatabaseService.Restore();
-                    }
-
-                    _migrationController.Migrate(connectionString, migrationContext, databaseType);
-
-                    if (restoreInProgress)
-                    {
-                        // Migration succeeded. From this point forward the candidate is the live
-                        // database; cleanup failure must not roll it back.
-                        restoreInProgress = false;
-                        _restoreDatabaseService.Commit();
-                    }
-                }
-                catch
-                {
-                    if (restoreInProgress)
-                    {
-                        _restoreDatabaseService.Rollback();
-                    }
-
-                    throw;
-                }
+                _migrationController.Migrate(MigrationConnectionString(connectionString, databaseType), migrationContext, databaseType);
             }
             catch (SqliteException e)
             {
@@ -197,7 +167,7 @@ namespace NzbDrone.Core.Datastore
 
                         try
                         {
-                            _migrationController.Migrate(connectionString, migrationContext, databaseType);
+                    _migrationController.Migrate(MigrationConnectionString(connectionString, databaseType), migrationContext, databaseType);
                             return;
                         }
                         catch (Exception ex)
@@ -226,7 +196,7 @@ namespace NzbDrone.Core.Datastore
         {
             try
             {
-                _migrationController.Migrate(connectionString, migrationContext, databaseType);
+                _migrationController.Migrate(MigrationConnectionString(connectionString, databaseType), migrationContext, databaseType);
             }
             catch (SqliteException e)
             {
@@ -253,13 +223,18 @@ namespace NzbDrone.Core.Datastore
                     Logger.Error("Unable to recreate logging database automatically. It will need to be removed manually.");
                 }
 
-                _migrationController.Migrate(connectionString, migrationContext, databaseType);
+                _migrationController.Migrate(MigrationConnectionString(connectionString, databaseType), migrationContext, databaseType);
             }
             catch (Exception e)
             {
                 throw new ChaptarrStartupException(e, "Error creating log database");
             }
         }
+
+        private static string MigrationConnectionString(string connectionString, DatabaseType databaseType) =>
+            databaseType == DatabaseType.SQLite
+                ? new SqliteConnectionStringBuilder(connectionString) { Pooling = false }.ToString()
+                : new NpgsqlConnectionStringBuilder(connectionString) { Pooling = false }.ToString();
 
         private static int GetPrimarySqliteErrorCode(SqliteException exception)
         {

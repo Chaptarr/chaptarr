@@ -110,11 +110,10 @@ namespace Chaptarr.Api.V1.Series
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                var authorProviderIds = request.SelectedBooks
-                    .Select(b => b?.ForeignAuthorId)
-                    .Where(id => !string.IsNullOrWhiteSpace(id))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
+                var selectedAuthors = request.SelectedBooks
+                    .Where(book => !string.IsNullOrWhiteSpace(book?.ForeignAuthorId))
+                    .ToLookup(book => book.ForeignAuthorId, StringComparer.OrdinalIgnoreCase);
+                var authorProviderIds = selectedAuthors.Select(group => group.Key).ToList();
 
                 if (authorProviderIds.Count == 0)
                 {
@@ -176,6 +175,8 @@ namespace Chaptarr.Api.V1.Series
 
                 foreach (var authorProviderId in authorProviderIds)
                 {
+                    monitoringConfig.AuthorName = selectedAuthors[authorProviderId]
+                        .Select(book => book.AuthorName).FirstOrDefault(name => !string.IsNullOrWhiteSpace(name));
                     var dbAuthor = await EnsureAuthorExistsAsync(authorProviderId, monitoringConfig, selectedMediaType);
                     if (dbAuthor == null)
                     {
@@ -561,6 +562,7 @@ namespace Chaptarr.Api.V1.Series
     {
         public string ForeignBookId { get; set; }
         public string ForeignAuthorId { get; set; }
+        public string AuthorName { get; set; }
     }
 
     public class AddSeriesResult

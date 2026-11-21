@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Common.Extensions;
@@ -20,7 +22,9 @@ namespace NzbDrone.Core.IndexerSearch
         Task<List<DownloadDecision>> BookSearch(int bookId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false);
         Task<List<DownloadDecision>> BookSearch(Book book, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false);
         Task<List<DownloadDecision>> BookSearch(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false);
-        Task<List<DownloadDecision>> AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch);
+        Task<BookSearchResult> BookSearchWithOutcome(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false);
+        Task<List<DownloadDecision>> AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, CancellationToken cancellationToken);
+        Task AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, Func<IReadOnlyList<Book>, Task> onSearchStarted, Func<Book, BookSearchResult, Exception, Task> onBookCompleted, CancellationToken cancellationToken = default);
     }
 
     public class ReleaseSearchService : ISearchForReleases
@@ -51,34 +55,90 @@ namespace NzbDrone.Core.IndexerSearch
             return await BookSearch(book, missingOnly, userInvokedSearch, interactiveSearch, allowUnmonitored);
         }
 
-        public async Task<List<DownloadDecision>> AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch)
+        public async Task<List<DownloadDecision>> AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, CancellationToken cancellationToken)
         {
             var downloadDecisions = new List<DownloadDecision>();
 
-            var author = _authorService.GetAuthor(authorId);
-
-            var decisions = await AuthorSearch(author, missingOnly, userInvokedSearch, interactiveSearch);
-            downloadDecisions.AddRange(decisions);
+            await AuthorSearch(authorId, missingOnly, userInvokedSearch, interactiveSearch, mediaType,
+                null,
+                (_, decisions, _) =>
+                {
+                    downloadDecisions.AddRange(decisions.Decisions);
+                    return Task.CompletedTask;
+                },
+                cancellationToken);
 
             return DeDupeDecisions(downloadDecisions);
         }
 
-        public async Task<List<DownloadDecision>> AuthorSearch(Author author, bool missingOnly, bool userInvokedSearch, bool interactiveSearch)
+        public async Task AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, Func<IReadOnlyList<Book>, Task> onSearchStarted, Func<Book, BookSearchResult, Exception, Task> onBookCompleted, CancellationToken cancellationToken = default)
+        {
+            var author = _authorService.GetAuthor(authorId);
+            await AuthorSearch(author, missingOnly, userInvokedSearch, interactiveSearch, mediaType, onSearchStarted, onBookCompleted, cancellationToken);
+        }
+
+        public async Task AuthorSearch(Author author, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType = null, Func<IReadOnlyList<Book>, Task> onSearchStarted = null, Func<Book, BookSearchResult, Exception, Task> onBookCompleted = null, CancellationToken cancellationToken = default)
         {
             var authorCatalog = GetAuthorCatalog(author, null);
             var books = authorCatalog
-                .Where(book => book.IsMonitoredWithAuthor())
+                .Where(book => (!mediaType.HasValue || book.MediaType == mediaType.Value) && book.IsMonitoredWithAuthor())
                 .ToList();
             books = FilterBooksByConfiguredMediaProfiles(author, books);
+            var orderedBooks = books.OrderBy(book => book.LastSearchTime ?? DateTime.MinValue).ToList();
 
-            if (books.Count == 0)
+            if (onSearchStarted != null)
             {
-                _logger.Debug("[RELEASE_SEARCH_SERVICE] Skipping author search for '{0}' because no monitored books have a configured quality profile for their media type", author?.Name ?? "NULL");
-                return new List<DownloadDecision>();
+                await onSearchStarted(orderedBooks.AsReadOnly());
             }
 
-            var searchSpec = Get<AuthorSearchCriteria>(author, books, authorCatalog, userInvokedSearch, interactiveSearch);
-            return await Dispatch(indexer => indexer.Fetch(searchSpec), searchSpec);
+            if (orderedBooks.Count == 0)
+            {
+                _logger.Debug("[RELEASE_SEARCH_SERVICE] Skipping author search for '{0}' because no monitored books have a configured quality profile for their media type", author?.Name ?? "NULL");
+                return;
+            }
+
+            foreach (var book in orderedBooks)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                BookSearchResult bookDecisions = new();
+                Exception searchException = null;
+                try
+                {
+                    bookDecisions = await BookSearchWithOutcome(book, authorCatalog, missingOnly, userInvokedSearch, interactiveSearch);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "Unable to search for book: [{0}]", book);
+                    searchException = ex;
+                }
+
+                if (onBookCompleted != null)
+                {
+                    try
+                    {
+                        await onBookCompleted(book, bookDecisions, searchException);
+                    }
+                    catch (Exception callbackException)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        _logger.Error(callbackException, "Unable to publish search results for book: [{0}]", book);
+
+                        try
+                        {
+                            await onBookCompleted(book, new BookSearchResult(), callbackException);
+                        }
+                        catch (Exception errorCallbackException)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            _logger.Error(errorCallbackException, "Unable to publish the failed search result for book: [{0}]", book);
+                            throw;
+                        }
+                    }
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         public Task<List<DownloadDecision>> BookSearch(Book book, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
@@ -88,11 +148,16 @@ namespace NzbDrone.Core.IndexerSearch
 
         public async Task<List<DownloadDecision>> BookSearch(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
         {
+            return (await BookSearchWithOutcome(book, authorCatalog, missingOnly, userInvokedSearch, interactiveSearch, allowUnmonitored)).Decisions;
+        }
+
+        public async Task<BookSearchResult> BookSearchWithOutcome(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
+        {
             _logger.Debug("[RELEASE_SEARCH_SERVICE] ===== BookSearch STARTED =====");
-            _logger.Debug("[RELEASE_SEARCH_SERVICE] Book: '{0}' (ID: {1}, AuthorId: {2})", book?.Title ?? "NULL", book?.Id ?? -1, book?.AuthorId ?? -1);
+            _logger.Debug("[RELEASE_SEARCH_SERVICE] Book: '{0}' (ID: {1}, AuthorId: {2}, MediaType: {3})", book?.Title ?? "NULL", book?.Id ?? -1, book?.AuthorId ?? -1, book?.MediaType);
             _logger.Debug("[RELEASE_SEARCH_SERVICE] Parameters: missingOnly={0}, userInvokedSearch={1}, interactiveSearch={2}", missingOnly, userInvokedSearch, interactiveSearch);
 
-            var author = book.Author?.Id == book.AuthorId ? book.Author : null;
+            var author = (interactiveSearch || allowUnmonitored) && book.Author?.Id == book.AuthorId ? book.Author : null;
             if (author == null)
             {
                 _logger.Debug("[RELEASE_SEARCH_SERVICE] Getting author with ID {0}...", book.AuthorId);
@@ -106,7 +171,7 @@ namespace NzbDrone.Core.IndexerSearch
                 _logger.Debug("[RELEASE_SEARCH_SERVICE] Skipping book search for '{0}' because the book or its author {1} side is not monitored",
                     book?.Title ?? "NULL",
                     book?.MediaType == BookMediaType.Ebook ? "ebook" : "audiobook");
-                return new List<DownloadDecision>();
+                return new BookSearchResult();
             }
 
             _logger.Debug("[RELEASE_SEARCH_SERVICE] Retrieved author: '{0}' (ID: {1})", author?.Name ?? "NULL", author?.Id ?? -1);
@@ -121,11 +186,23 @@ namespace NzbDrone.Core.IndexerSearch
                     book?.Title ?? "NULL",
                     author?.Name ?? "NULL",
                     book?.MediaType ?? BookMediaType.Audiobook);
-                return new List<DownloadDecision>();
+                return new BookSearchResult();
             }
 
             _logger.Debug("[RELEASE_SEARCH_SERVICE] Creating search criteria...");
-            var searchSpec = Get<BookSearchCriteria>(author, new List<Book> { book }, authorCatalog, userInvokedSearch, interactiveSearch, !allowUnmonitored);
+            var searchSpec = CreateBookSearchCriteria(author, book, authorCatalog, userInvokedSearch, interactiveSearch, !allowUnmonitored);
+
+            return new BookSearchResult
+            {
+                Decisions = await Dispatch(indexer => indexer.Fetch(searchSpec), searchSpec),
+                Indexers = searchSpec.IndexerStatistics
+            };
+        }
+
+        internal BookSearchCriteria CreateBookSearchCriteria(Author author, Book book, List<Book> authorCatalog,
+                                                             bool userInvokedSearch, bool interactiveSearch, bool monitoredBooksOnly = true)
+        {
+            var searchSpec = Get<BookSearchCriteria>(author, new List<Book> { book }, authorCatalog, userInvokedSearch, interactiveSearch, monitoredBooksOnly);
 
             // Search the same edition the API/UI displays: the single monitored edition.
             var selectedEdition = book.Editions?
@@ -141,8 +218,7 @@ namespace NzbDrone.Core.IndexerSearch
                 searchSpec.BookYear = book.ReleaseDate.Value.Year;
             }
 
-            var decisions = await Dispatch(indexer => indexer.Fetch(searchSpec), searchSpec);
-            return DeDupeDecisions(decisions);
+            return searchSpec;
         }
 
         internal static string GetSearchBookTitle(Book book, Edition selectedEdition)
@@ -193,11 +269,14 @@ namespace NzbDrone.Core.IndexerSearch
                 author?.AudiobookQualityProfileId.HasValue == true ? "YES" : "NO",
                 author?.EbookQualityProfileId.HasValue == true ? "YES" : "NO");
 
+            var mediaTypes = books.Select(book => book.MediaType).ToHashSet();
             var spec = new TSpec
             {
                 Books = books,
                 Author = author,
-                AuthorCatalog = GetAuthorCatalog(author, authorCatalog),
+                AuthorCatalog = GetAuthorCatalog(author, authorCatalog)
+                    .Where(book => mediaTypes.Contains(book.MediaType))
+                    .ToList(),
                 MonitoredBooksOnly = monitoredBooksOnly,
                 UserInvokedSearch = userInvokedSearch,
                 InteractiveSearch = interactiveSearch
@@ -225,12 +304,8 @@ namespace NzbDrone.Core.IndexerSearch
                 return authorCatalog;
             }
 
-            if (author?.Books?.Count > 0)
-            {
-                return author.Books;
-            }
-
-            return author?.Id > 0 ? _bookService.GetBooksByAuthor(author.Id) : new List<Book>();
+            // Cached author relationships can predate book monitoring or catalog changes.
+            return author?.Id > 0 ? _bookService.GetBooksByAuthor(author.Id, onlyMonitoredEditions: true) : new List<Book>();
         }
 
         private async Task<List<DownloadDecision>> Dispatch(Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction, SearchCriteriaBase criteriaBase)
@@ -256,23 +331,13 @@ namespace NzbDrone.Core.IndexerSearch
                 criteriaBase.Books != null ? string.Join(", ", criteriaBase.Books.Select(b => b.Title)) : "None",
                 string.Join(", ", indexers.Select(i => i.Definition.Name)));
 
+            var stopwatch = Stopwatch.StartNew();
             var tasks = indexers.Select(indexer => DispatchIndexer(searchAction, indexer, criteriaBase));
 
             var batch = await Task.WhenAll(tasks);
+            _logger.Debug("Indexer requests for {0} completed in {1} ms", criteriaBase, stopwatch.ElapsedMilliseconds);
 
             var reports = batch.SelectMany(x => x).ToList();
-
-            if (requestedMediaType.HasValue && criteriaBase?.Books?.Count == 1)
-            {
-                var originalCount = reports.Count;
-                reports = FilterReportsByRequestedMediaType(reports, requestedMediaType.Value);
-                var filteredOutCount = originalCount - reports.Count;
-
-                if (filteredOutCount > 0)
-                {
-                    _logger.Debug("Filtered {0} cross-media releases for requested media type {1}", filteredOutCount, requestedMediaType.Value);
-                }
-            }
 
             _logger.ProgressDebug("Total of {0} reports were found for {1} from {2} indexers", reports.Count, criteriaBase, indexers.Count);
 
@@ -308,7 +373,25 @@ namespace NzbDrone.Core.IndexerSearch
                 _bookService.UpdateLastSearchTime(criteriaBase.Books);
             }
 
-            return _makeDownloadDecision.GetSearchDecision(reports, criteriaBase).ToList();
+            return EvaluateSearchReports(reports, criteriaBase);
+        }
+
+        internal List<DownloadDecision> EvaluateSearchReports(List<ReleaseInfo> reports, SearchCriteriaBase criteriaBase)
+        {
+            var requestedMediaType = SearchMediaTypeHelper.GetRequestedMediaType(criteriaBase);
+            if (requestedMediaType.HasValue && criteriaBase?.Books?.Count == 1)
+            {
+                var originalCount = reports.Count;
+                reports = FilterReportsByRequestedMediaType(reports, requestedMediaType.Value);
+                var filteredOutCount = originalCount - reports.Count;
+
+                if (filteredOutCount > 0)
+                {
+                    _logger.Debug("Filtered {0} cross-media releases for requested media type {1}", filteredOutCount, requestedMediaType.Value);
+                }
+            }
+
+            return DeDupeDecisions(_makeDownloadDecision.GetSearchDecision(reports, criteriaBase).ToList());
         }
 
         private async Task<IList<ReleaseInfo>> DispatchIndexer(Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction, IIndexer indexer, SearchCriteriaBase criteriaBase)
@@ -319,6 +402,7 @@ namespace NzbDrone.Core.IndexerSearch
             }
             catch (Exception ex)
             {
+                criteriaBase.IndexerStatistics.RecordFailure(indexer.Definition.Id);
                 _logger.Error(ex, "Error while searching for {0}", criteriaBase);
             }
 
@@ -354,10 +438,10 @@ namespace NzbDrone.Core.IndexerSearch
             var torrentInfo = report as TorrentInfo;
             if (torrentInfo?.FileType.IsNotNullOrWhiteSpace() == true && IsMAMIndexer(report.Indexer))
             {
-                return QualityParser.ParseQualityFromFileType(torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer);
+                return QualityParser.ParseQualityFromFileType(torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer, QualityMediaTypeHelper.GetCategoryMediaType(report));
             }
 
-            return QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags);
+            return QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags, QualityMediaTypeHelper.GetCategoryMediaType(report));
         }
 
         private static bool IsMAMIndexer(string indexerName)

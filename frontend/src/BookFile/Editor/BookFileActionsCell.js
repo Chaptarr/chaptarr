@@ -2,10 +2,9 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import FileDetailsModal from 'BookFile/FileDetailsModal';
 import IconButton from 'Components/Link/IconButton';
-import ConfirmModal from 'Components/Modal/ConfirmModal';
 import TableRowCell from 'Components/Table/Cells/TableRowCell';
-import { icons, kinds } from 'Helpers/Props';
-import translate from 'Utilities/String/translate';
+import { icons } from 'Helpers/Props';
+import DeleteBookFilesModal from './DeleteBookFilesModal';
 import styles from './BookFileActionsCell.css';
 
 class BookFileActionsCell extends Component {
@@ -84,12 +83,9 @@ class BookFileActionsCell extends Component {
           id={id}
         />
 
-        <ConfirmModal
+        <DeleteBookFilesModal
           isOpen={isConfirmDeleteModalOpen}
-          kind={kinds.DANGER}
-          title={translate('DeleteBookFile')}
-          message={translate('DeleteBookFileMessageText', [path])}
-          confirmLabel={translate('Delete')}
+          fileIds={[id]}
           onConfirm={this.onConfirmDelete}
           onCancel={this.onConfirmDeleteModalClose}
         />

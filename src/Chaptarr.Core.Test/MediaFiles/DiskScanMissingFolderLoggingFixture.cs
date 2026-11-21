@@ -143,7 +143,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IAuthorService.GetAuthors))
+                if (targetMethod?.Name == nameof(IAuthorService.GetExistingAuthors))
                 {
                     return new List<Author>();
                 }

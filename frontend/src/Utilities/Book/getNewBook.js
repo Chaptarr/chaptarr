@@ -20,8 +20,6 @@ function getNewBook(book, payload, mediaType) {
       const bookToMonitor = book.foreignId || book.foreignBookId || book.hardcoverBookId || book.goodreadsBookId;
       book.author.addOptions.booksToMonitor = [bookToMonitor];
 
-      // The requested book row is always monitored for "Only This Book".
-      book.monitored = true;
     }
   }
 
@@ -36,26 +34,10 @@ function getNewBook(book, payload, mediaType) {
     searchForNewBook
   };
 
-  // Set media-type specific monitoring based on what's being added
-  if (mediaType === 'audiobook') {
-    book.audiobookMonitored = true;
-    book.ebookMonitored = false;
-  } else if (mediaType === 'ebook') {
-    book.audiobookMonitored = false;
-    book.ebookMonitored = true;
-  } else {
-    // Default behavior - add both (backwards compatible)
-    book.audiobookMonitored = true;
-    book.ebookMonitored = true;
-  }
-
-  book.monitored = book.audiobookMonitored || book.ebookMonitored;
-
-  // Keep the exact requested row monitored for "Only This Book".
-  if (payload.monitor === 'specificBook') {
-    book.monitored = true;
-    // Media-type specific monitoring was already set above
-  }
+  const monitored = payload.monitor !== 'none';
+  book.audiobookMonitored = monitored && mediaType !== 'ebook';
+  book.ebookMonitored = monitored && mediaType !== 'audiobook';
+  book.monitored = monitored;
 
   // CRITICAL: Preserve editions from search result
   // The backend AddBookService requires at least one monitored edition

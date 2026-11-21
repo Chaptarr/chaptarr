@@ -35,13 +35,6 @@ namespace NzbDrone.Core.Indexers.Gazelle
             return pageableRequests;
         }
 
-        public IndexerPageableRequestChain GetSearchRequests(AuthorSearchCriteria searchCriteria)
-        {
-            var pageableRequests = new IndexerPageableRequestChain();
-            pageableRequests.Add(GetRequest(string.Format("&authorname={0}", searchCriteria.AuthorQuery)));
-            return pageableRequests;
-        }
-
         private IEnumerable<IndexerRequest> GetRequest(string searchParameters)
         {
             Authenticate().GetAwaiter().GetResult();

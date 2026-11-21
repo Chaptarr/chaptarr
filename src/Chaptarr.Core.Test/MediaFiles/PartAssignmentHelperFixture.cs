@@ -12,6 +12,18 @@ namespace Chaptarr.Core.Test.MediaFiles
     public class PartAssignmentHelperFixture
     {
         [Test]
+        public void book_and_edition_integer_ids_must_not_share_a_part_group()
+        {
+            var rejectedPlaceholder = new LocalBook { Book = new Book { Id = 42 }, Path = "/downloads/01-missing.mp3", Part = 1 };
+            var valid = new LocalBook { Book = new Book { Id = 7 }, Edition = new Edition { Id = 42, BookId = 7 },
+                Path = "/downloads/02-valid.mp3", Part = 1 };
+            PartAssignmentHelper.NormalizeLocalBooksByEdition(new[] { rejectedPlaceholder, valid });
+            PartAssignmentHelper.NormalizeLocalBooksByEdition(new[] { valid });
+            Assert.That(valid.Part, Is.EqualTo(1));
+            Assert.That(valid.PartCount, Is.EqualTo(1));
+        }
+
+        [Test]
         public void should_keep_alternate_ebook_formats_as_single_part_files()
         {
             var files = new List<BookFile>

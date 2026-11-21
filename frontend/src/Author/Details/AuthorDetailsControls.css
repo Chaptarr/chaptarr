@@ -1,28 +1,21 @@
 .controlsContainer {
+  position: relative;
   display: flex;
   flex-direction: column;
-  width: 100%;
   margin-bottom: 20px;
   padding: 0;
+  width: 100%;
   gap: 10px;
-  position: relative;
 }
 
 .topRow {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(150px, 400px) auto;
+
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.leftControls {
-  display: flex;
-  align-items: center;
   gap: 15px;
-  flex: 1;
-  min-width: 0; /* Allow shrinking */
 }
 
 .syncAndToggle {
@@ -50,32 +43,26 @@
   flex: 0 0 auto; /* Don't shrink, stay on right */
 }
 
-/* When screen gets very narrow, wrap search bar to next row */
-@media (max-width: 600px) {
+/* Author details previously wrapped Library/All between the format selector
+   and a 250px-capped search field. Keep three full, ordered rows on phones. */
+
+@media (max-width: $breakpointSmall) {
   .topRow {
-    justify-content: space-between;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
   }
-  
-  .leftControls {
-    flex-wrap: wrap;
+
+  .syncAndToggle,
+  .syncAndToggle > div {
     width: 100%;
-    justify-content: space-between;
   }
-  
-  .leftControls > *:last-child {
-    /* Search bar takes full width on its own row */
-    width: 100%;
-    order: 2;
-    margin-top: 10px;
-  }
-  
+
   .rightControls {
-    flex-shrink: 0;
-    margin-left: auto;
+    justify-content: flex-start;
   }
 }
 
 .rootFolderMessage {
-  width: 100%;
   margin-top: 15px;
+  width: 100%;
 }

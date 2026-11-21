@@ -2,7 +2,7 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
-import { saveIndexer, setIndexerFieldValue, setIndexerValue, testIndexer, toggleAdvancedSettings, fetchProxies } from 'Store/Actions/settingsActions';
+import { fetchProxies, saveIndexer, setIndexerFieldValue, setIndexerValue, testIndexer, toggleAdvancedSettings } from 'Store/Actions/settingsActions';
 import createProviderSettingsSelector from 'Store/Selectors/createProviderSettingsSelector';
 import EditIndexerModalContent from './EditIndexerModalContent';
 
@@ -50,10 +50,16 @@ class EditIndexerModalContentConnector extends Component {
 
   onInputChange = ({ name, value }) => {
     this.props.setIndexerValue({ name, value });
+    if (name === 'proxyId') {
+      this.props.setIndexerValue({ name: 'supportsNarratorMetadata', value: undefined });
+    }
   };
 
   onFieldChange = ({ name, value }) => {
     this.props.setIndexerFieldValue({ name, value });
+    if (['baseUrl', 'apiPath', 'apiKey', 'narratorMetadataBaseUrl', 'narratorMetadataApiKey'].includes(name)) {
+      this.props.setIndexerValue({ name: 'supportsNarratorMetadata', value: undefined });
+    }
   };
 
   onSavePress = () => {
@@ -93,6 +99,7 @@ EditIndexerModalContentConnector.propTypes = {
   isTesting: PropTypes.bool.isRequired,
   item: PropTypes.object.isRequired,
   setIndexerValue: PropTypes.func.isRequired,
+  fetchProxies: PropTypes.func.isRequired,
   setIndexerFieldValue: PropTypes.func.isRequired,
   toggleAdvancedSettings: PropTypes.func.isRequired,
   saveIndexer: PropTypes.func.isRequired,

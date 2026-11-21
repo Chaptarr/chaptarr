@@ -1,239 +1,199 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
-using NzbDrone.Core.Books.Services;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.Parser;
+using NzbDrone.Core.Utilities;
+using NzbDrone.Core.MediaFiles;
 
 namespace NzbDrone.Core.CustomFormats
 {
     internal static class ReleaseNarratorEvidenceExtractor
     {
         private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
-        private static readonly Regex FullCastRegex = new Regex(@"\b(full\s*cast|cast\s*recording|dramati[sz]ed|graphic\s*audio)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout);
-        private static readonly Regex AdditionalNarratorCountRegex = new Regex(@"\+\s*(\d+)\s+(?:more|additional|other)\s+(?:narrators?|voices?|performers?)", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout);
-        private static readonly Regex[] ExplicitNarratorPatterns =
+        private static readonly Regex NarratorNote = new Regex(
+            TitleBracketCatalog.PairedSegmentPattern, RegexOptions.Compiled, RegexTimeout);
+
+        public static ReleaseNarratorEvidence Extract(CustomFormatInput input, IEnumerable<string> configuredNames = null)
         {
-            new Regex(@"(?:read by|narrated by|narrator[:\s]+)([^,\[\(]+?)(?=\s+-\s+|[,\[\(]|$)", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout)
-        };
-
-        private static readonly Regex[] UnlabelledNarratorPatterns =
-        {
-            new Regex(@"\[([^,\[\]]+)\]$", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout),
-            new Regex(@"-\s*([^,\-\[\(\)]+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout)
-        };
-
-        public static ReleaseNarratorEvidence Extract(CustomFormatInput input, Func<string, bool> includeUnlabelledCandidate = null)
-        {
-            var names = new List<string>();
-            var hasUnresolvedNames = false;
-
-            AddExtraction(ExtractNames(null, input?.Narrator), names, ref hasUnresolvedNames);
-
-            foreach (var field in input?.AudioProductionFields?.Where(field => !string.IsNullOrWhiteSpace(field)) ?? Enumerable.Empty<string>())
+            var known = DistinctNames((input?.PreferredNarratorNames ?? new List<string>()).Concat(configuredNames ?? Enumerable.Empty<string>()))
+                .Where(name => !AudioProductionDetector.ContainsIndicator(new[] { name })).ToList();
+            var names = AuthorNameMatcher.SplitCredits(input?.Narrator, known.Count > 0 ? known : null)
+                .Where(name => !AudioProductionDetector.ContainsIndicator(new[] { name })).ToList();
+            var narratorSpans = known.Count > 0 ? ReleaseTitleMatchScorer.TokenizeWithSpans(input?.Narrator ?? string.Empty) : null;
+            var fields = known.Count > 0 ? input?.AudioProductionFields?.Select(field =>
+                (Text: field, Spans: ReleaseTitleMatchScorer.TokenizeWithSpans(field ?? string.Empty))).ToList() : null;
+            foreach (var name in known.Where(name => !string.IsNullOrWhiteSpace(name)))
             {
-                foreach (var narratorText in ExtractExplicitNarratorTexts(field))
+                if (ContainsKnownNarratorName(new[] { name }, input?.Narrator, narratorSpans) ||
+                    fields?.Any(field =>
+                        AuthorNameMatcher.AuthorNamesExactlyMatch(AuthorNameMatcher.PrepareName(name), AuthorNameMatcher.PrepareName(input?.Author?.Name))
+                            ? NarratorNote.Matches(field.Text ?? string.Empty).Any(note => ContainsKnownNarratorName(new[] { name }, note.Groups["label"].Value))
+                            : ContainsKnownNarratorName(new[] { name }, field.Text, field.Spans)) == true)
                 {
-                    AddExtraction(ExtractNames(null, narratorText), names, ref hasUnresolvedNames);
-                }
-
-                foreach (var candidate in ExtractUnlabelledNarratorCandidates(field))
-                {
-                    // A trailing person-shaped token is only weak narrator evidence. When it is
-                    // the known author, it proves authorship rather than narration. Keep explicit
-                    // narrator fields and labels eligible so genuine self-narration still matches.
-                    if (IsKnownAuthor(candidate, input))
+                    if (!names.Any(observed => AuthorNameMatcher.AuthorNamesExactlyMatch(
+                        AuthorNameMatcher.PrepareName(observed), AuthorNameMatcher.PrepareName(name))))
                     {
-                        continue;
-                    }
-
-                    if (IsPlausibleUnlabelledNarrator(candidate) || includeUnlabelledCandidate?.Invoke(candidate) == true)
-                    {
-                        AddExtraction(ExtractNames(null, candidate), names, ref hasUnresolvedNames);
+                        names.Add(name);
                     }
                 }
             }
 
-            return new ReleaseNarratorEvidence
-            {
-                Names = names.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-                HasUnresolvedNames = hasUnresolvedNames
-            };
+            return new ReleaseNarratorEvidence { Names = DistinctNames(names) };
         }
 
         public static NarratorNameExtraction ExtractNames(IEnumerable<string> narratorNames, string narratorText)
         {
-            var names = new List<string>();
-            var textNames = new List<string>();
-            var explicitFullCast = false;
-            var additionalCount = 0;
-
-            if (narratorNames != null)
-            {
-                foreach (var name in narratorNames.Where(name => !string.IsNullOrWhiteSpace(name)))
-                {
-                    if (IsFullCastLabel(name))
-                    {
-                        explicitFullCast = true;
-                    }
-                    else
-                    {
-                        names.Add(name.Trim());
-                    }
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(narratorText))
-            {
-                explicitFullCast = explicitFullCast || IsFullCastLabel(narratorText);
-                additionalCount = ParseAdditionalNarratorCount(narratorText);
-
-                var cleaned = AdditionalNarratorCountRegex.Replace(narratorText, string.Empty);
-                var parts = cleaned
-                    .Split(new[] { ",", ";", "&", " + ", " and ", " with ", "/", "|" }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(part => part.Trim())
-                    .Where(part => !string.IsNullOrWhiteSpace(part));
-
-                foreach (var part in parts)
-                {
-                    if (IsFullCastLabel(part))
-                    {
-                        explicitFullCast = true;
-                    }
-                    else if (part.Length >= 2)
-                    {
-                        textNames.Add(part);
-                    }
-                }
-            }
-
-            names.AddRange(textNames);
-            names = names.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            var textCountHint = additionalCount > 0 ? textNames.Distinct(StringComparer.OrdinalIgnoreCase).Count() + additionalCount : textNames.Count;
-
+            var structured = DistinctNames((narratorNames ?? Enumerable.Empty<string>()).SelectMany(SplitCredits));
+            var names = structured.Count > 0 ? structured : DistinctNames(SplitCredits(narratorText));
+            var complete = structured.Count > 0 &&
+                (string.IsNullOrWhiteSpace(narratorText) || MatchesCast(structured, narratorText, requireAllMembers: false));
             return new NarratorNameExtraction
             {
                 Names = names,
-                ExplicitFullCast = explicitFullCast,
-                TotalCountHint = Math.Max(names.Count, textCountHint)
+                TotalCountHint = names.Count + (complete || names.Count == 0 ? 0 : 1)
             };
         }
 
-        public static string ExtractExplicitNarratorFromFields(IEnumerable<string> fields)
+        internal static IEnumerable<string> SplitCredits(string value) => AuthorNameMatcher.SplitCredits(value);
+
+        internal static string BuildNarratorIdentityKey(string narratorNames) => string.Join("|",
+            SplitCredits(narratorNames).Select(UnicodeComparisonNormalizer.NormalizeWords)
+                .Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal));
+
+        internal static bool TryGetCompleteCast(Edition edition, out IReadOnlyList<string> names, IEnumerable<string> knownCast = null)
         {
-            if (fields == null)
+            var structured = DistinctNames(edition?.NarratorCredits?.SelectMany(credit => SplitCredits(credit?.Name)));
+            if (structured.Count == 0)
             {
-                return null;
+                structured = DistinctNames(edition?.NarratorNames?.SelectMany(SplitCredits));
             }
 
-            return fields
-                .Where(field => !string.IsNullOrWhiteSpace(field))
-                .SelectMany(ExtractExplicitNarratorTexts)
-                .FirstOrDefault(narrator => !string.IsNullOrWhiteSpace(narrator));
-        }
-
-        private static void AddExtraction(NarratorNameExtraction extraction, List<string> names, ref bool hasUnresolvedNames)
-        {
-            if (extraction == null)
+            var hasStructuredCast = structured.Count > 0;
+            if (!hasStructuredCast)
             {
-                return;
+                structured = DistinctNames(knownCast);
             }
 
-            names.AddRange(extraction.Names);
-            hasUnresolvedNames = hasUnresolvedNames || extraction.TotalCountHint > extraction.Names.Count;
+            names = Array.Empty<string>();
+            if (structured.Count == 0 ||
+                (string.IsNullOrWhiteSpace(edition?.Narrator) && !hasStructuredCast) ||
+                (!string.IsNullOrWhiteSpace(edition?.Narrator) && !MatchesCast(structured, edition.Narrator, requireAllMembers: !hasStructuredCast)))
+            {
+                return false;
+            }
+
+            names = structured;
+            return true;
         }
 
-        private static IEnumerable<string> ExtractExplicitNarratorTexts(string field)
+        internal static IEnumerable<string> GetKnownNarratorNames(Edition edition)
         {
-            foreach (var pattern in ExplicitNarratorPatterns)
+            var structured = edition?.NarratorCredits?.Select(credit => credit?.Name)
+                .Concat(edition?.NarratorNames ?? Enumerable.Empty<string>()) ?? edition?.NarratorNames;
+            var names = DistinctNames(structured?.SelectMany(SplitCredits));
+            return names.Count > 0 ? names : SplitCredits(edition?.Narrator);
+        }
+
+        internal static bool ContainsKnownNarratorName(IEnumerable<string> knownNames, string text) =>
+            !string.IsNullOrWhiteSpace(text) &&
+            ContainsKnownNarratorName(knownNames, text, ReleaseTitleMatchScorer.TokenizeWithSpans(text));
+
+        private static bool ContainsKnownNarratorName(IEnumerable<string> knownNames, string text, IReadOnlyList<TitleTokenSpan> spans)
+        {
+            if (spans?.Count > 0 != true)
             {
-                var match = pattern.Match(field);
-                if (match.Success && match.Groups.Count > 1)
+                return false;
+            }
+            foreach (var name in (knownNames ?? Enumerable.Empty<string>()).Where(name => !string.IsNullOrWhiteSpace(name)))
+            {
+                var expected = AuthorNameMatcher.PrepareName(name);
+                for (var start = 0; start + expected.Tokens.Count <= spans.Count && expected.Tokens.Count > 0; start++)
                 {
-                    var narrator = match.Groups[1].Value.Trim();
-                    if (!string.IsNullOrWhiteSpace(narrator))
+                    var candidate = AuthorNameMatcher.PrepareName(text, spans, start, start + expected.Tokens.Count - 1);
+                    if (AuthorNameMatcher.AuthorNamesExactlyMatch(expected, candidate) &&
+                        AuthorNameMatcher.ContainsAuthorName(name, text))
                     {
-                        yield return narrator;
+                        return true;
                     }
                 }
             }
+
+            return false;
         }
 
-        private static IEnumerable<string> ExtractUnlabelledNarratorCandidates(string field)
+        internal static string RemoveKnownNarratorNotes(string title, IEnumerable<string> knownNames)
         {
-            foreach (var pattern in UnlabelledNarratorPatterns)
+            var names = (knownNames ?? Enumerable.Empty<string>()).Where(name => !string.IsNullOrWhiteSpace(name)).ToArray();
+            return NarratorNote.Replace(title ?? string.Empty, match =>
+                ContainsKnownNarratorName(names, match.Groups["label"].Value) ? " " : match.Value).Trim();
+        }
+
+        private static bool MatchesCast(IReadOnlyList<string> names, string text, bool requireAllMembers)
+        {
+            var available = names.ToList();
+            foreach (var part in AuthorNameMatcher.SplitCredits(text, names))
             {
-                var match = pattern.Match(field);
-                if (match.Success && match.Groups.Count > 1)
+                var candidate = AuthorNameMatcher.PrepareName(part);
+                var index = available.FindIndex(name =>
+                    AuthorNameMatcher.AuthorNamesExactlyMatch(AuthorNameMatcher.PrepareName(name), candidate));
+                if (index < 0)
                 {
-                    var candidate = match.Groups[1].Value.Trim();
-                    if (!string.IsNullOrWhiteSpace(candidate))
-                    {
-                        yield return candidate;
-                    }
+                    return false;
                 }
-            }
-        }
 
-        private static bool IsPlausibleUnlabelledNarrator(string candidate)
-        {
-            if (string.IsNullOrWhiteSpace(candidate) || IsFullCastLabel(candidate))
-            {
-                return false;
+                available.RemoveAt(index);
             }
 
-            var tokens = TextNormalizer.NormalizeAndTokenize(candidate);
-            return tokens.Count is >= 2 and <= 6 && candidate.Any(char.IsLetter);
+            return !requireAllMembers || available.Count == 0;
         }
 
-        private static bool IsKnownAuthor(string candidate, CustomFormatInput input)
+        private static List<string> DistinctNames(IEnumerable<string> names) => (names ?? Enumerable.Empty<string>())
+            .Where(name => !string.IsNullOrWhiteSpace(name)).Select(name => name.Trim())
+            .Distinct(NzbDrone.Core.Parser.Parser.NarratorNameComparer).ToList();
+
+        internal static bool ContainsCompleteCredit(string requiredCredit, string fieldValue)
         {
-            if (string.IsNullOrWhiteSpace(candidate) || input == null)
-            {
-                return false;
-            }
-
-            return new[] { input.Author?.Name, input.BookInfo?.AuthorName }
-                .Where(name => !string.IsNullOrWhiteSpace(name))
-                .Any(name => NarratorNameMatcher.IsMatch(candidate, name));
-        }
-
-        private static int ParseAdditionalNarratorCount(string narratorText)
-        {
-            var match = AdditionalNarratorCountRegex.Match(narratorText ?? string.Empty);
-            return match.Success && match.Groups.Count > 1 &&
-                   int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var count)
-                ? count
-                : 0;
-        }
-
-        private static bool IsFullCastLabel(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return false;
-            }
-
-            if (FullCastRegex.IsMatch(value))
+            var names = SplitCredits(requiredCredit).ToList();
+            if ((names.Count == 1 && AuthorNameMatcher.ContainsAuthorName(requiredCredit, fieldValue)) ||
+                (names.Count > 1 && ContainsKnownNarratorName(new[] { requiredCredit }, fieldValue)))
             {
                 return true;
             }
 
-            var collapsed = Regex.Replace(value.Trim().ToLowerInvariant(), @"[^\p{L}\p{N}]+", string.Empty);
-            return collapsed.Contains("fullcast");
+            var available = SplitCredits(fieldValue).ToList();
+            if (names.Count == 0 || names.Count > available.Count)
+            {
+                return false;
+            }
+
+            // Consume each observed credit once so one compatible person cannot prove a whole cast.
+            foreach (var name in names.OrderByDescending(name => UnicodeComparisonNormalizer.WordSpans(UnicodeComparisonNormalizer.NormalizeWords(name)).Count()))
+            {
+                var candidate = available.FirstOrDefault(candidate => AuthorNameMatcher.AuthorNamesMatch(name, candidate));
+                if (candidate == null)
+                {
+                    return false;
+                }
+
+                available.Remove(candidate);
+            }
+
+            return true;
         }
+
+
     }
 
     internal sealed class ReleaseNarratorEvidence
     {
         public List<string> Names { get; init; } = new List<string>();
-        public bool HasUnresolvedNames { get; init; }
     }
 
     internal sealed class NarratorNameExtraction
     {
         public List<string> Names { get; init; } = new List<string>();
-        public bool ExplicitFullCast { get; init; }
         public int TotalCountHint { get; init; }
     }
 }

@@ -1,4 +1,3 @@
-using System.Linq;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Profiles.Qualities;
 
@@ -72,15 +71,10 @@ namespace NzbDrone.Core.Qualities
         {
             if (profile.ConvertToQualityId.HasValue && profile.ConvertToQualityId.Value > 0)
             {
-                return IsQualityAllowed(profile, profile.ConvertToQualityId.Value) ? profile.ConvertToQualityId.Value : null;
+                return profile.IsQualityAllowed(profile.ConvertToQualityId.Value) ? profile.ConvertToQualityId.Value : null;
             }
 
             return null;
-        }
-
-        private static bool IsQualityAllowed(QualityProfile profile, int qualityId)
-        {
-            return profile?.Items?.Any(i => i.Allowed && i.GetQualities().Any(q => q.Id == qualityId)) == true;
         }
     }
 }

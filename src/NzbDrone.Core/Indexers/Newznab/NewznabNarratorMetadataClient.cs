@@ -2,13 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
-using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.MediaFiles;
 
 namespace NzbDrone.Core.Indexers.Newznab
 {
@@ -16,7 +18,8 @@ namespace NzbDrone.Core.Indexers.Newznab
     {
         Unknown = 0,
         Info = 1,
-        GetNfo = 2
+        GetNfo = 2,
+        Unsupported = 3
     }
 
     internal sealed class NewznabNarratorMetadata
@@ -49,89 +52,118 @@ namespace NzbDrone.Core.Indexers.Newznab
 
         private static readonly Regex NarratorLineRegex = new Regex(@"^(?:narration|narrator|narrated\s+by|read\s+by)\s*[:>]+\s*(.+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex LengthLineRegex = new Regex(@"^(?:length|duration|runtime)\s*[:>]+\s*(.+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-        private static readonly Regex GraphicAudioRegex = new Regex(@"\bgraphic\s*audio\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private readonly IIndexerHttpClient _httpClient;
         private readonly NewznabSettings _settings;
-        private readonly Logger _logger;
         private readonly int _indexerId;
         private readonly TimeSpan _rateLimit;
+        private readonly int? _proxyId;
         private readonly ICached<CacheEntry> _metadataCache;
         private readonly ICached<NewznabNfoEndpoint> _endpointCache;
 
-        public NewznabNarratorMetadataClient(IIndexerHttpClient httpClient, NewznabSettings settings, int indexerId, TimeSpan rateLimit, ICacheManager cacheManager, Logger logger)
+        public NewznabNarratorMetadataClient(IIndexerHttpClient httpClient, NewznabSettings settings, int indexerId, TimeSpan rateLimit, ICacheManager cacheManager, int? proxyId = null)
         {
             _httpClient = httpClient;
             _settings = settings;
             _indexerId = indexerId;
             _rateLimit = rateLimit;
+            _proxyId = proxyId;
             _metadataCache = cacheManager.GetCache<CacheEntry>(typeof(NewznabNarratorMetadataClient), "metadata");
             _endpointCache = cacheManager.GetCache<NewznabNfoEndpoint>(typeof(NewznabNarratorMetadataClient), "endpoint");
-            _logger = logger;
         }
 
-        public bool TryPopulate(ReleaseInfo release)
+        public bool? SupportsMetadata => _endpointCache.Find(BuildEndpointCacheKey()) switch
         {
-            if (release == null)
-            {
-                return false;
-            }
+            NewznabNfoEndpoint.Info or NewznabNfoEndpoint.GetNfo => true,
+            NewznabNfoEndpoint.Unsupported => false,
+            _ => null
+        };
 
-            // Avoid extra requests when the feed tells us no metadata exists.
-            if (release.HasNfo.HasValue && release.HasNfo.Value == false)
-            {
-                return false;
-            }
+        public void Test(IEnumerable<ReleaseInfo> releases)
+        {
+            var release = releases
+                .Where(r => r.HasNfo != false && ExtractReleaseId(r).IsNotNullOrWhiteSpace())
+                .OrderByDescending(r => r.HasNfo == true)
+                .FirstOrDefault();
 
-            // If we already have useful metadata, don't overwrite it.
-            if (!release.Narrator.IsNullOrWhiteSpace() && !release.Duration.IsNullOrWhiteSpace())
+            if (release != null)
+            {
+                TryPopulate(release, force: true);
+            }
+        }
+
+        public bool TryPopulate(ReleaseInfo release, bool force = false)
+        {
+            if (release == null || release.HasNfo == false)
             {
                 return false;
             }
 
             var releaseId = ExtractReleaseId(release);
-            if (releaseId.IsNullOrWhiteSpace())
-            {
-                return false;
-            }
-
             var baseUrl = GetEnhancedBaseUrl();
             var apiPath = _settings?.ApiPath;
-            var apiKey = GetEnhancedApiKey();
-            if (baseUrl.IsNullOrWhiteSpace() || apiPath.IsNullOrWhiteSpace())
+            if (releaseId.IsNullOrWhiteSpace() || baseUrl.IsNullOrWhiteSpace() || apiPath.IsNullOrWhiteSpace())
             {
                 return false;
             }
 
-            var cacheKey = BuildCacheKey(baseUrl, apiPath, releaseId);
-
-            if (TryGetCacheEntry(cacheKey, out var cached))
+            var endpointKey = BuildEndpointCacheKey();
+            var cacheKey = $"{endpointKey}|{releaseId}";
+            if (!force)
             {
-                if (cached.Metadata == null)
+                if (SupportsMetadata == false)
                 {
                     return false;
                 }
 
-                return Apply(release, cached.Metadata);
+                if (TryGetCacheEntry(cacheKey, out var cached))
+                {
+                    return cached.Metadata != null && Apply(release, cached.Metadata);
+                }
             }
 
-            var endpointKey = BuildEndpointCacheKey(baseUrl, apiPath);
-            var endpoint = DetermineEndpointHint(release, endpointKey);
-            var ok = TryFetchAndParseMetadata(baseUrl, apiPath, apiKey, releaseId, endpoint, out var metadata, out var resolvedEndpoint);
+            var first = DetermineEndpointHint(release, endpointKey) == NewznabNfoEndpoint.GetNfo
+                ? NewznabNfoEndpoint.GetNfo : NewznabNfoEndpoint.Info;
+            var second = first == NewznabNfoEndpoint.Info ? NewznabNfoEndpoint.GetNfo : NewznabNfoEndpoint.Info;
+            var unsupported = 0;
+            NewznabNarratorMetadata metadata = null;
 
-            if (!ok || metadata == null)
+            foreach (var endpoint in new[] { first, second })
             {
-                SetCacheEntry(cacheKey, metadata: null, NegativeCacheTtl);
-                return false;
+                var text = FetchNfoText(baseUrl, apiPath, GetEnhancedApiKey(), releaseId, endpoint, out var errorCode);
+                if (errorCode is 202 or 203)
+                {
+                    unsupported++;
+                    continue;
+                }
+
+                if (errorCode == 300)
+                {
+                    break;
+                }
+
+                if (text.IsNotNullOrWhiteSpace())
+                {
+                    _endpointCache.Set(endpointKey, endpoint, PositiveCacheTtl);
+                    metadata = ParseNfo(text);
+                    if (metadata != null || force)
+                    {
+                        break;
+                    }
+                }
             }
 
-            if (resolvedEndpoint != NewznabNfoEndpoint.Unknown)
+            if (unsupported == 2)
             {
-                _endpointCache.Set(endpointKey, resolvedEndpoint, PositiveCacheTtl);
+                _endpointCache.Set(endpointKey, NewznabNfoEndpoint.Unsupported, NegativeCacheTtl);
             }
 
-            SetCacheEntry(cacheKey, metadata, PositiveCacheTtl);
-            return Apply(release, metadata);
+            if (!force || metadata != null)
+            {
+                SetCacheEntry(cacheKey, metadata, metadata == null ? NegativeCacheTtl : PositiveCacheTtl);
+            }
+
+            return metadata != null && Apply(release, metadata);
         }
 
         private bool Apply(ReleaseInfo release, NewznabNarratorMetadata metadata)
@@ -191,14 +223,10 @@ namespace NzbDrone.Core.Indexers.Newznab
             }
         }
 
-        private string BuildCacheKey(string baseUrl, string apiPath, string releaseId)
+        private string BuildEndpointCacheKey()
         {
-            return $"{BuildEndpointCacheKey(baseUrl, apiPath)}|{releaseId}";
-        }
-
-        private string BuildEndpointCacheKey(string baseUrl, string apiPath)
-        {
-            return $"{_indexerId}|{baseUrl.TrimEnd('/').ToLowerInvariant()}|{apiPath.Trim('/').ToLowerInvariant()}";
+            var identity = $"{GetEnhancedBaseUrl()?.TrimEnd('/')}|{_settings?.ApiPath}|{GetEnhancedApiKey()}|{_proxyId}";
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
         }
 
         private string GetEnhancedBaseUrl()
@@ -241,250 +269,77 @@ namespace NzbDrone.Core.Indexers.Newznab
             return NewznabNfoEndpoint.Unknown;
         }
 
-        private bool TryFetchAndParseMetadata(string baseUrl, string apiPath, string apiKey, string releaseId, NewznabNfoEndpoint endpointHint, out NewznabNarratorMetadata metadata, out NewznabNfoEndpoint resolvedEndpoint)
-        {
-            metadata = null;
-
-            var nfoText = FetchNfoText(baseUrl, apiPath, apiKey, releaseId, endpointHint, out var firstResolved);
-            if (nfoText.IsNotNullOrWhiteSpace())
-            {
-                metadata = ParseNfo(nfoText);
-                if (metadata != null)
-                {
-                    resolvedEndpoint = firstResolved;
-                    return true;
-                }
-            }
-
-            // Controlled fallback: if the chosen endpoint returns no usable metadata, try the other endpoint once.
-            if (firstResolved == NewznabNfoEndpoint.Info)
-            {
-                var getNfoText = TryFetchGetNfo(baseUrl, apiPath, apiKey, releaseId, out _);
-                if (getNfoText.IsNotNullOrWhiteSpace())
-                {
-                    var parsed = ParseNfo(getNfoText);
-                    if (parsed != null)
-                    {
-                        metadata = parsed;
-                        resolvedEndpoint = NewznabNfoEndpoint.GetNfo;
-                        return true;
-                    }
-                }
-            }
-            else if (firstResolved == NewznabNfoEndpoint.GetNfo)
-            {
-                var infoText = TryFetchInfo(baseUrl, apiPath, apiKey, releaseId, out _);
-                if (infoText.IsNotNullOrWhiteSpace())
-                {
-                    var parsed = ParseNfo(infoText);
-                    if (parsed != null)
-                    {
-                        metadata = parsed;
-                        resolvedEndpoint = NewznabNfoEndpoint.Info;
-                        return true;
-                    }
-                }
-            }
-
-            resolvedEndpoint = firstResolved;
-            return false;
-        }
-
-        private string FetchNfoText(string baseUrl, string apiPath, string apiKey, string releaseId, NewznabNfoEndpoint endpointHint, out NewznabNfoEndpoint resolvedEndpoint)
-        {
-            resolvedEndpoint = endpointHint;
-
-            // Unknown: probe t=info first, then fallback to t=getnfo if "No such function".
-            if (endpointHint == NewznabNfoEndpoint.Unknown)
-            {
-                var infoText = TryFetchInfo(baseUrl, apiPath, apiKey, releaseId, out var infoErrorCode);
-
-                if (infoText != null)
-                {
-                    resolvedEndpoint = NewznabNfoEndpoint.Info;
-                    return infoText;
-                }
-
-                if (infoErrorCode == 202)
-                {
-                    var getNfoText = TryFetchGetNfo(baseUrl, apiPath, apiKey, releaseId, out var getNfoErrorCode);
-                    if (getNfoText != null)
-                    {
-                        resolvedEndpoint = NewznabNfoEndpoint.GetNfo;
-                        return getNfoText;
-                    }
-
-                    resolvedEndpoint = getNfoErrorCode == 202 ? NewznabNfoEndpoint.Unknown : NewznabNfoEndpoint.GetNfo;
-                    return null;
-                }
-
-                // Any other error (including "no nfo") - stop.
-                return null;
-            }
-
-            if (endpointHint == NewznabNfoEndpoint.Info)
-            {
-                var infoText = TryFetchInfo(baseUrl, apiPath, apiKey, releaseId, out var infoErrorCode);
-                if (infoText != null)
-                {
-                    resolvedEndpoint = NewznabNfoEndpoint.Info;
-                    return infoText;
-                }
-
-                if (infoErrorCode == 202)
-                {
-                    var getNfoText = TryFetchGetNfo(baseUrl, apiPath, apiKey, releaseId, out _);
-                    if (getNfoText != null)
-                    {
-                        resolvedEndpoint = NewznabNfoEndpoint.GetNfo;
-                        return getNfoText;
-                    }
-                }
-
-                return null;
-            }
-
-            // t=getnfo
-            var text = TryFetchGetNfo(baseUrl, apiPath, apiKey, releaseId, out var getNfoError);
-            if (text != null)
-            {
-                resolvedEndpoint = NewznabNfoEndpoint.GetNfo;
-                return text;
-            }
-
-            if (getNfoError == 202)
-            {
-                var infoText = TryFetchInfo(baseUrl, apiPath, apiKey, releaseId, out _);
-                if (infoText != null)
-                {
-                    resolvedEndpoint = NewznabNfoEndpoint.Info;
-                    return infoText;
-                }
-            }
-
-            return null;
-        }
-
-        private string TryFetchInfo(string baseUrl, string apiPath, string apiKey, string releaseId, out int? errorCode)
+        private string FetchNfoText(string baseUrl, string apiPath, string apiKey, string releaseId, NewznabNfoEndpoint endpoint, out int? errorCode)
         {
             errorCode = null;
-            var url = BuildApiUrl(baseUrl, apiPath, "info", releaseId, apiKey, includeRaw: false);
-
-            var response = ExecuteRequest(url);
-            if (response == null)
+            var getNfo = endpoint == NewznabNfoEndpoint.GetNfo;
+            var url = BuildApiUrl(baseUrl, apiPath, getNfo ? "getnfo" : "info", releaseId, apiKey, includeRaw: getNfo);
+            var request = new HttpRequest(url)
             {
+                RateLimitKey = _indexerId > 0 ? _indexerId.ToString(CultureInfo.InvariantCulture) : null,
+                RateLimit = _rateLimit,
+                LogHttpError = false,
+                SuppressHttpError = true
+            };
+            var response = _httpClient.Execute(request) ?? throw new InvalidOperationException("Indexer returned no NFO response");
+
+            // Newznab error documents may use either HTTP 200 or HTTP 400/404.
+            if ((!response.HasHttpError || response.StatusCode is System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.NotFound) &&
+                TryParseError(response, out var code))
+            {
+                errorCode = code;
                 return null;
+            }
+
+            if (response.HasHttpError)
+            {
+                throw new HttpException(response);
             }
 
             var contentType = response.Headers?.ContentType ?? string.Empty;
             var content = response.Content ?? string.Empty;
-
-            if (contentType.Contains("xml", StringComparison.OrdinalIgnoreCase) || content.TrimStart().StartsWith("<?xml", StringComparison.OrdinalIgnoreCase) || content.TrimStart().StartsWith("<", StringComparison.OrdinalIgnoreCase))
+            if (contentType.Contains("html", StringComparison.OrdinalIgnoreCase) ||
+                contentType.Contains("json", StringComparison.OrdinalIgnoreCase) ||
+                content.TrimStart().StartsWith("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase) ||
+                content.TrimStart().StartsWith("<html", StringComparison.OrdinalIgnoreCase))
             {
-                if (TryParseError(content, out var code))
-                {
-                    errorCode = code;
-                    return null;
-                }
-
-                if (TryExtractRssDescription(content, out var description))
-                {
-                    return description;
-                }
+                throw new InvalidOperationException("Indexer returned an unexpected NFO response format");
             }
 
-            // Plain text NFO
-            return content;
-        }
-
-        private string TryFetchGetNfo(string baseUrl, string apiPath, string apiKey, string releaseId, out int? errorCode)
-        {
-            errorCode = null;
-            var url = BuildApiUrl(baseUrl, apiPath, "getnfo", releaseId, apiKey, includeRaw: true);
-
-            var response = ExecuteRequest(url);
-            if (response == null)
+            if (contentType.Contains("xml", StringComparison.OrdinalIgnoreCase) || content.TrimStart().StartsWith("<", StringComparison.Ordinal))
             {
-                return null;
-            }
-
-            var content = response.Content ?? string.Empty;
-            var contentType = response.Headers?.ContentType ?? string.Empty;
-
-            if (contentType.Contains("xml", StringComparison.OrdinalIgnoreCase) || content.TrimStart().StartsWith("<?xml", StringComparison.OrdinalIgnoreCase))
-            {
-                if (TryParseError(content, out var code))
-                {
-                    errorCode = code;
-                    return null;
-                }
-
-                if (TryExtractRssDescription(content, out var description))
-                {
-                    return description;
-                }
+                return TryExtractRssDescription(content, out var description) ? description : null;
             }
 
             return content;
         }
 
-        private HttpResponse ExecuteRequest(string url)
-        {
-            try
-            {
-                var request = new HttpRequest(url)
-                {
-                    RateLimitKey = _indexerId > 0 ? _indexerId.ToString(CultureInfo.InvariantCulture) : null,
-                    RateLimit = _rateLimit,
-                    LogHttpError = false,
-                    SuppressHttpError = true
-                };
-
-                var response = _httpClient.Execute(request);
-                if (response == null)
-                {
-                    return null;
-                }
-
-                if (response.HasHttpError)
-                {
-                    return null;
-                }
-
-                return response;
-            }
-            catch (Exception ex)
-            {
-                _logger.Trace(ex, "Narrator metadata: failed to fetch extra metadata from indexer");
-                return null;
-            }
-        }
-
-        private static bool TryParseError(string xml, out int code)
+        private static bool TryParseError(HttpResponse response, out int code)
         {
             code = 0;
-
+            XDocument doc;
             try
             {
-                var doc = XDocument.Parse(xml);
-                var error = doc.Descendants("error").FirstOrDefault();
-                if (error == null)
-                {
-                    return false;
-                }
-
-                var codeAttr = error.Attribute("code")?.Value;
-                if (!int.TryParse(codeAttr, out code))
-                {
-                    code = 0;
-                }
-
-                return true;
+                doc = XDocument.Parse(response.Content ?? string.Empty);
             }
             catch
             {
                 return false;
             }
+
+            var error = doc.Root?.Name.LocalName == "error" ? doc.Root : null;
+            if (error == null)
+            {
+                return false;
+            }
+
+            int.TryParse(error.Attribute("code")?.Value, out code);
+            if (code is not (202 or 203 or 300))
+            {
+                NewznabRssParser.CheckError(doc, new IndexerResponse(new IndexerRequest(response.Request), response));
+            }
+
+            return true;
         }
 
         private static bool TryExtractRssDescription(string xml, out string description)
@@ -592,7 +447,7 @@ namespace NzbDrone.Core.Indexers.Newznab
 
             foreach (var line in lines)
             {
-                if (!isGraphicAudio && GraphicAudioRegex.IsMatch(line))
+                if (!isGraphicAudio && AudioProductionDetector.ContainsGraphicAudioBrand(line))
                 {
                     isGraphicAudio = true;
                 }
@@ -648,36 +503,46 @@ namespace NzbDrone.Core.Indexers.Newznab
             var colon = Regex.Match(normalized, @"^(\d{1,3}):(\d{1,2})(?::(\d{1,2}))?$");
             if (colon.Success)
             {
-                var hours = int.Parse(colon.Groups[1].Value, CultureInfo.InvariantCulture);
-                var minutes = int.Parse(colon.Groups[2].Value, CultureInfo.InvariantCulture);
-                return FormatDuration(hours * 60 + minutes);
+                return int.TryParse(colon.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var hours) &&
+                       int.TryParse(colon.Groups[2].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var minutes)
+                    ? FormatDuration(hours * 60 + minutes)
+                    : raw.Trim();
             }
 
             var hoursMatch = Regex.Match(normalized, @"(\d+)\s*(?:h|hr|hrs|hour|hours)");
             var minutesMatch = Regex.Match(normalized, @"(\d+)\s*(?:m|min|mins|minute|minutes)");
 
-            var totalMinutes = 0;
+            long totalMinutes = 0;
 
             if (hoursMatch.Success)
             {
-                totalMinutes += int.Parse(hoursMatch.Groups[1].Value, CultureInfo.InvariantCulture) * 60;
+                if (!int.TryParse(hoursMatch.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var hours))
+                {
+                    return raw.Trim();
+                }
+
+                totalMinutes += (long)hours * 60;
             }
 
             if (minutesMatch.Success)
             {
-                totalMinutes += int.Parse(minutesMatch.Groups[1].Value, CultureInfo.InvariantCulture);
+                if (!int.TryParse(minutesMatch.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var minutes))
+                {
+                    return raw.Trim();
+                }
+
+                totalMinutes += minutes;
             }
 
             if (totalMinutes > 0)
             {
-                return FormatDuration(totalMinutes);
+                return totalMinutes <= int.MaxValue ? FormatDuration((int)totalMinutes) : raw.Trim();
             }
 
             var minutesOnly = Regex.Match(normalized, @"^(\d+)\s*(?:min|mins|minute|minutes)$");
             if (minutesOnly.Success)
             {
-                totalMinutes = int.Parse(minutesOnly.Groups[1].Value, CultureInfo.InvariantCulture);
-                return FormatDuration(totalMinutes);
+                return null;
             }
 
             return raw.Trim();

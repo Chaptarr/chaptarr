@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Chaptarr.Http.REST;
 using NzbDrone.Core.Backup;
 
@@ -11,5 +12,7 @@ namespace Chaptarr.Api.V1.System.Backup
         public BackupType Type { get; set; }
         public long Size { get; set; }
         public DateTime Time { get; set; }
+        public List<string> IncludedComponents { get; set; }
+        public List<string> OmittedComponents { get; set; }
     }
 }

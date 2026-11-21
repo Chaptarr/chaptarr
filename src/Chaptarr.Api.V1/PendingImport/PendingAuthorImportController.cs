@@ -13,6 +13,7 @@ using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Validation;
 using NzbDrone.SignalR;
 using Chaptarr.Http;
+using Chaptarr.Http.Extensions;
 using Chaptarr.Http.REST;
 using Chaptarr.Api.V1.ProviderIds;
 using NzbDrone.Http.REST.Attributes;
@@ -52,10 +53,7 @@ namespace Chaptarr.Api.V1.PendingImport
 
         protected override PendingAuthorImportResource GetResourceById(int id)
         {
-            return _pendingImportService.GetAll()
-                .Where(p => p.Id == id)
-                .Select(p => p.ToResource())
-                .FirstOrDefault();
+            return _pendingImportService.Get(id).ToResource();
         }
 
         [HttpGet]
@@ -64,6 +62,14 @@ namespace Chaptarr.Api.V1.PendingImport
             return _pendingImportService.GetAll()
                 .Select(p => p.ToResource())
                 .ToList();
+        }
+
+        [HttpGet("paged")]
+        public PagingResource<PendingAuthorImportResource> GetPaged([FromQuery] PagingRequestResource paging)
+        {
+            var pagingResource = new PagingResource<PendingAuthorImportResource>(paging);
+            var pagingSpec = pagingResource.MapToPagingSpec<PendingAuthorImportResource, PendingAuthorImport>();
+            return pagingSpec.ApplyToPage(_pendingImportService.GetPaged, model => model.ToResource());
         }
 
         [HttpGet("author/exists/{providerId}")]
@@ -115,7 +121,7 @@ namespace Chaptarr.Api.V1.PendingImport
                     Pending = true,
                     PendingId = pending.Id,
                     Status = pending.OverallStatus.ToString(),
-                    AuthorName = pending.AuthorName,
+                    AuthorName = pending.DisplayAuthorName(),
                     NextAttempt = pending.NextAttemptAt,
                     AttemptCount = pending.AttemptCount
                 }));
@@ -308,10 +314,18 @@ namespace Chaptarr.Api.V1.PendingImport
 
         [HttpDelete("{id}")]
         [ProducesResponseType(typeof(ApiMessageResource), 200)]
-        public ActionResult<ApiMessageResource> Cancel(int id)
+        public ActionResult<ApiMessageResource> Cancel(int id, [FromQuery] bool delete = false)
         {
-            _pendingImportService.Cancel(id);
-            return Ok(new ApiMessageResource { Message = "Pending import cancelled" });
+            if (delete)
+            {
+                _pendingImportService.Delete(id);
+            }
+            else
+            {
+                _pendingImportService.Cancel(id);
+            }
+
+            return Ok(new ApiMessageResource { Message = delete ? "Pending import deleted" : "Pending import cancelled" });
         }
 
     }

@@ -14,6 +14,24 @@ namespace Chaptarr.Core.Test.History
     [TestFixture]
     public class HistoryResourceMapperFixture
     {
+        [TestCase("NarratorEvidenceFields")]
+        [TestCase("narratorEvidenceFields")]
+        [TestCase("NARRATOREVIDENCEFIELDS")]
+        public void internal_narrator_text_should_be_filtered_without_mutating_history(string key)
+        {
+            var data = new Dictionary<string, string> { [key] = "private tracker description", ["Narrator"] = "Scott Brick", ["futureMetadata"] = "preserved" };
+            var history = new EntityHistory { Data = data };
+            var resource = history.ToResource(new StubCustomFormatCalculationService());
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.Data.Keys, Does.Not.Contain(key));
+                Assert.That(resource.Data["Narrator"], Is.EqualTo("Scott Brick"));
+                Assert.That(resource.Data["futureMetadata"], Is.EqualTo("preserved"));
+                Assert.That(history.Data, Is.SameAs(data));
+                Assert.That(history.Data[key], Is.EqualTo("private tracker description"));
+            });
+        }
+
         private sealed class StubCustomFormatCalculationService : ICustomFormatCalculationService
         {
             public int EntityHistoryCalls { get; private set; }

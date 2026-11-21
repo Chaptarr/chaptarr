@@ -133,8 +133,8 @@ namespace Chaptarr.Core.Test.Api
 
             public List<int> RemovedIds { get; }
 
-            public bool DownloadAlreadyImported(string downloadId) => throw new NotImplementedException();
             public DownloadHistory GetLatestDownloadHistoryItem(string downloadId) => throw new NotImplementedException();
+            public List<DownloadHistory> GetLatestDownloadHistoryItems(IEnumerable<string> downloadIds) => throw new NotImplementedException();
             public DownloadHistory GetLatestGrab(string downloadId) => throw new NotImplementedException();
 
             public PagingSpec<DownloadHistory> CurrentlyIgnored(PagingSpec<DownloadHistory> pagingSpec)
@@ -219,6 +219,7 @@ namespace Chaptarr.Core.Test.Api
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();

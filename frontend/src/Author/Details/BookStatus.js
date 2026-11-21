@@ -4,6 +4,7 @@ import QueueDetails from 'Activity/Queue/QueueDetails';
 import BookQuality from 'Book/BookQuality';
 import Icon from 'Components/Icon';
 import Label from 'Components/Label';
+import labelStyles from 'Components/Label.css';
 import ProgressBar from 'Components/ProgressBar';
 import { icons, kinds, sizes } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
@@ -61,6 +62,7 @@ function BookStatus(props) {
     return (
       <div className={styles.center}>
         <BookQuality
+          className={labelStyles.wrapping}
           title={quality.quality.name}
           size={bookFile.size}
           quality={quality}
@@ -75,6 +77,7 @@ function BookStatus(props) {
     return (
       <div className={styles.center}>
         <Label
+          className={labelStyles.wrapping}
           title={translate('NotMonitored')}
           kind={kinds.WARNING}
         >
@@ -88,6 +91,7 @@ function BookStatus(props) {
     return (
       <div className={styles.center}>
         <Label
+          className={labelStyles.wrapping}
           title={translate('BookAvailableButMissing')}
           kind={kinds.DANGER}
         >
@@ -100,10 +104,11 @@ function BookStatus(props) {
   return (
     <div className={styles.center}>
       <Label
-        title={translate('FutureRelease')}
+        className={labelStyles.wrapping}
+        title={translate('NotAvailable')}
         kind={kinds.INFO}
       >
-        {translate('FutureRelease')}
+        {translate('NotAvailable')}
       </Label>
     </div>
   );

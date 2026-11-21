@@ -112,10 +112,14 @@ export default function createHandleActions(handlers, defaultState, section) {
 
       if (section === baseSection) {
         const newState = getSectionState(state, payloadSection);
-        newState.pendingChanges = {};
-
-        if (newState.hasOwnProperty('saveError')) {
-          newState.saveError = null;
+        if (payload.names) {
+          newState.pendingChanges = { ...newState.pendingChanges };
+          payload.names.forEach((name) => delete newState.pendingChanges[name]);
+        } else {
+          newState.pendingChanges = {};
+          if (newState.hasOwnProperty('saveError')) {
+            newState.saveError = null;
+          }
         }
 
         return updateSectionState(state, payloadSection, newState);

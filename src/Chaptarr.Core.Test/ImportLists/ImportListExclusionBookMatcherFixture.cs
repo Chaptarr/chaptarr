@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.ImportLists.Exclusions;
 
 namespace Chaptarr.Core.Test.ImportLists
@@ -47,11 +48,12 @@ namespace Chaptarr.Core.Test.ImportLists
         }
 
         [Test]
-        public void lookup_ids_should_include_legacy_raw_ids_and_isbns()
+        public void lookup_ids_should_include_only_legacy_goodreads_raw_ids_and_explicit_isbns()
         {
             var book = new Book
             {
                 HardcoverBookId = "hc:123",
+                GoodreadsWorkId = "gr:456",
                 ASIN = "az:B00TEST123",
                 ISBN10 = "0123456789",
                 ISBN13 = "9780123456789"
@@ -62,11 +64,42 @@ namespace Chaptarr.Core.Test.ImportLists
             Assert.Multiple(() =>
             {
                 Assert.That(result, Does.Contain("hc:123"));
-                Assert.That(result, Does.Contain("123"));
+                Assert.That(result, Does.Not.Contain("123"));
+                Assert.That(result, Does.Contain("456"));
                 Assert.That(result, Does.Contain("az:B00TEST123"));
-                Assert.That(result, Does.Contain("B00TEST123"));
+                Assert.That(result, Does.Not.Contain("B00TEST123"));
                 Assert.That(result, Does.Contain("0123456789"));
                 Assert.That(result, Does.Contain("9780123456789"));
+            });
+        }
+
+        [TestCase("gr:123", "123", true)]
+        [TestCase("hc:123", "123", false)]
+        [TestCase("gb:123", "123", false)]
+        [TestCase("az:123", "123", false)]
+        [TestCase("ol:123", "123", false)]
+        [TestCase("hc:123", "hc:123", true)]
+        [TestCase("gr:123", "hc:123", false)]
+        [TestCase("HC:123", "hc:123", true)]
+        [TestCase("9780123456789", "9780123456789", true)]
+        public void exclusion_callers_should_share_provider_provenance(string providerId, string exclusionId, bool expected)
+        {
+            var exclusion = new ImportListExclusion { ForeignId = exclusionId, MediaType = BookMediaType.Audiobook };
+            var book = new Book { MediaType = BookMediaType.Audiobook, RemoteProviderIds = new HashSet<string> { providerId } };
+            if (!providerId.Contains(":"))
+            {
+                book.RemoteProviderIds = null;
+                book.ISBN13 = providerId;
+            }
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(ImportListSyncService.MatchesExclusionId(providerId, exclusionId), Is.EqualTo(expected));
+                Assert.That(ImportListExclusionBookMatcher.AppliesToProviderId(exclusion, providerId, book.MediaType), Is.EqualTo(expected));
+                Assert.That(ImportListExclusionBookMatcher.AppliesToBook(exclusion, book), Is.EqualTo(expected));
+                book.MediaType = BookMediaType.Ebook;
+                Assert.That(ImportListExclusionBookMatcher.AppliesToBook(exclusion, book), Is.False);
+                Assert.That(ImportListExclusionBookMatcher.AppliesToProviderId(exclusion, providerId, book.MediaType), Is.False);
             });
         }
 

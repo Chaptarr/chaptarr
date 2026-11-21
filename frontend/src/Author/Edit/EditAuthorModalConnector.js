@@ -10,13 +10,17 @@ const mapDispatchToProps = {
 
 class EditAuthorModalConnector extends Component {
 
-  //
-  // Listeners
+  componentDidUpdate(prevProps) {
+    if (prevProps.isOpen && !this.props.isOpen) {
+      this.props.clearPendingChanges({ section: 'authors' });
+    }
+  }
 
-  onModalClose = () => {
-    this.props.clearPendingChanges({ section: 'author' });
-    this.props.onModalClose();
-  };
+  componentWillUnmount() {
+    if (this.props.isOpen) {
+      this.props.clearPendingChanges({ section: 'authors' });
+    }
+  }
 
   //
   // Render
@@ -25,13 +29,13 @@ class EditAuthorModalConnector extends Component {
     return (
       <EditAuthorModal
         {...this.props}
-        onModalClose={this.onModalClose}
       />
     );
   }
 }
 
 EditAuthorModalConnector.propTypes = {
+  isOpen: PropTypes.bool.isRequired,
   onModalClose: PropTypes.func.isRequired,
   clearPendingChanges: PropTypes.func.isRequired
 };

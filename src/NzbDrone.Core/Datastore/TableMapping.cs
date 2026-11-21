@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using Dapper;
 using NzbDrone.Common.Reflection;
@@ -69,6 +70,7 @@ namespace NzbDrone.Core.Datastore
                   .Ignore(i => i.Priority);
 
             Mapper.Entity<IndexerDefinition>("Indexers").RegisterModel()
+                  .Ignore(i => i.SupportsNarratorMetadata)
                   .Ignore(x => x.ImplementationName)
                   .Ignore(i => i.Enable)
                   .Ignore(i => i.Protocol);
@@ -110,6 +112,7 @@ namespace NzbDrone.Core.Datastore
                   .Ignore(s => s.Books)
                   .Ignore(s => s.Series)
                   .Ignore(s => s.RemoteProviderIds)
+                  .Ignore(s => s.ProviderIdsChanged)
                   .Ignore(s => s.RemoteMetadataETag)
                   .Ignore(s => s.MetadataBookCount)
                   .HasOne(a => a.AudiobookQualityProfile, a => a.AudiobookQualityProfileId ?? 0)
@@ -123,6 +126,7 @@ namespace NzbDrone.Core.Datastore
             Mapper.Entity<AuthorSyncQueue>("AuthorSyncQueue").RegisterModel();
             Mapper.Entity<ProviderAlias>("ProviderAliasIndex").RegisterModel();
 
+            Mapper.Entity<PendingNotificationItem>("PendingNotificationItems").RegisterModel();
             Mapper.Entity<PendingAuthorImport>("PendingAuthorImport").RegisterModel();
             Mapper.Entity<ImportListBookIdentityCache>("ImportListBookIdentityCache").RegisterModel();
             Mapper.Entity<PendingImport>("PendingImport").RegisterModel();
@@ -166,6 +170,7 @@ namespace NzbDrone.Core.Datastore
                 .Ignore(x => x.ForeignEditionId)
                 .Ignore(x => x.NarratorName)
                 .Ignore(x => x.RemoteProviderIds)
+                .Ignore(x => x.ProviderIdsChanged)
                 // Legacy field removed from schema; use AudiobookMonitored/EbookMonitored
                 .Ignore(x => x.Monitored)
                 .LazyLoad(x => x.LazyBookFiles,
@@ -189,6 +194,8 @@ namespace NzbDrone.Core.Datastore
                           b => b.Id > 0);
 
             Mapper.Entity<Edition>("Editions").RegisterModel()
+                .Ignore(e => e.RemoteProviderIds)
+                .Ignore(e => e.ProviderIdsChanged)
                 .Ignore(e => e.NarratorCredits)
                 .HasOne(e => e.LazyBook, e => e.BookId);
 
@@ -262,6 +269,9 @@ namespace NzbDrone.Core.Datastore
             RegisterEmbeddedConverter();
             RegisterProviderSettingConverter();
 
+            // SQLite NUMERIC columns can return different numeric storage types in one result.
+            SqlMapper.AddTypeMap(typeof(decimal), DbType.Decimal, useGetFieldValue: true);
+            SqlMapper.AddTypeMap(typeof(decimal?), DbType.Decimal, useGetFieldValue: true);
             SqlMapper.RemoveTypeMap(typeof(DateTime));
             SqlMapper.AddTypeHandler(new DapperUtcConverter());
             SqlMapper.AddTypeHandler(new DapperTimeSpanConverter());

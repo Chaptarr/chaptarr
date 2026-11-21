@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using NzbDrone.Common.Messaging;
+using NzbDrone.Core.MediaFiles;
 
 namespace NzbDrone.Core.Books.Events
 {
@@ -8,6 +9,7 @@ namespace NzbDrone.Core.Books.Events
     {
         public Author Author { get; private set; }
         public bool DeleteFiles { get; private set; }
+        public List<BookFile> DeletedBookFiles { get; private set; }
         public bool AddImportListExclusion { get; private set; }
         public bool PreserveRetainedFileHistory { get; private set; }
         public IReadOnlyCollection<int> RetainedBookFileIds { get; private set; }
@@ -19,10 +21,12 @@ namespace NzbDrone.Core.Books.Events
             bool addImportListExclusion,
             bool preserveRetainedFileHistory = false,
             IEnumerable<int> retainedBookFileIds = null,
-            IReadOnlyDictionary<int, string> retainedBookFileEditionIds = null)
+            IReadOnlyDictionary<int, string> retainedBookFileEditionIds = null,
+            List<BookFile> deletedBookFiles = null)
         {
             Author = author;
             DeleteFiles = deleteFiles;
+            DeletedBookFiles = deletedBookFiles;
             AddImportListExclusion = addImportListExclusion;
             PreserveRetainedFileHistory = preserveRetainedFileHistory;
             RetainedBookFileIds = (retainedBookFileIds ?? Enumerable.Empty<int>())

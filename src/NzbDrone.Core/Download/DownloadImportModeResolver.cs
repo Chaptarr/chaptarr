@@ -1,4 +1,3 @@
-using System;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Download.History;
@@ -11,7 +10,7 @@ namespace NzbDrone.Core.Download
     {
         ImportMode Resolve(ImportMode requestedMode, DownloadClientItem downloadClientItem);
         DownloadImportPolicy ResolvePolicy(ImportMode requestedMode, DownloadClientItem downloadClientItem);
-        bool ShouldPreserveDownloadClientItem(DownloadClientItem downloadClientItem);
+        bool ShouldPreserveDownloadClientItem(DownloadClientItem downloadClientItem, int fallbackIndexerId = 0, bool includeUnmanaged = true);
     }
 
     public class DownloadImportPolicy
@@ -76,41 +75,12 @@ namespace NzbDrone.Core.Download
             return new DownloadImportPolicy(effectiveMode, false);
         }
 
-        public bool ShouldPreserveDownloadClientItem(DownloadClientItem downloadClientItem)
+        public bool ShouldPreserveDownloadClientItem(DownloadClientItem downloadClientItem, int fallbackIndexerId = 0, bool includeUnmanaged = true)
         {
-            return GetPreserveReason(downloadClientItem) != null;
+            return GetPreserveReason(downloadClientItem, fallbackIndexerId, includeUnmanaged) != null;
         }
 
-        private DownloadHistory GetLatestGrab(string downloadId)
-        {
-            var grab = _downloadHistoryService.GetLatestGrab(downloadId);
-
-            if (grab != null)
-            {
-                return grab;
-            }
-
-            // Some download clients normalize torrent hashes differently (upper vs lower). Try common variants.
-            var upper = downloadId.ToUpperInvariant();
-            if (!upper.Equals(downloadId, StringComparison.Ordinal))
-            {
-                grab = _downloadHistoryService.GetLatestGrab(upper);
-                if (grab != null)
-                {
-                    return grab;
-                }
-            }
-
-            var lower = downloadId.ToLowerInvariant();
-            if (!lower.Equals(downloadId, StringComparison.Ordinal))
-            {
-                grab = _downloadHistoryService.GetLatestGrab(lower);
-            }
-
-            return grab;
-        }
-
-        private string GetPreserveReason(DownloadClientItem downloadClientItem)
+        private string GetPreserveReason(DownloadClientItem downloadClientItem, int fallbackIndexerId = 0, bool includeUnmanaged = true)
         {
             if (downloadClientItem == null ||
                 downloadClientItem.DownloadClientInfo?.Protocol != DownloadProtocol.Torrent ||
@@ -121,16 +91,22 @@ namespace NzbDrone.Core.Download
 
             var downloadId = downloadClientItem.DownloadId;
             var downloadClientId = downloadClientItem.DownloadClientInfo?.Id ?? 0;
-            var grab = GetLatestGrab(downloadId);
+            var grab = _downloadHistoryService.GetLatestGrab(downloadId);
+            if (grab?.ShouldKeepSeeding() == true)
+            {
+                return "Preserve torrents was enabled when this torrent was grabbed";
+            }
+
+            var indexerId = grab?.IndexerId > 0 ? grab.IndexerId : fallbackIndexerId;
 
             // Tier 1: per-indexer protection for downloads Chaptarr grabbed.
-            if (grab?.IndexerId > 0 && ShouldNeverMoveForIndexer(grab.IndexerId))
+            if (indexerId > 0 && ShouldNeverMoveForIndexer(indexerId))
             {
-                return $"the indexer is configured to keep seeding permanently (IndexerId={grab.IndexerId})";
+                return $"Preserve torrents is enabled on the indexer (IndexerId={indexerId})";
             }
 
             // Tier 2: per-download-client protection for unmanaged downloads (no grab history).
-            if (grab == null && downloadClientId > 0 && ShouldCopyUnmanagedForClient(downloadClientId))
+            if (includeUnmanaged && grab == null && downloadClientId > 0 && ShouldCopyUnmanagedForClient(downloadClientId))
             {
                 return $"the download client is configured to preserve unmanaged downloads (DownloadClientId={downloadClientId})";
             }

@@ -12,20 +12,13 @@ namespace NzbDrone.Core.Datastore
 {
     public interface IIngestQueueRepository
     {
-        /// <summary>
-        /// Begin a command-scoped ingest session for result reporting.
-        /// This does not clear history; it records a "start" timestamp so GetImportResults(commandId)
-        /// can return only results created during the current command execution.
-        /// </summary>
-        void BeginSession(int commandId);
-
         void InsertBatch(List<IngestQueueItem> items);
         List<IngestQueueItem> GetQueuedItems(int limit = 100);
         List<IngestQueueItem> GetQueuedItemsUnderPath(string pathPrefix, int limit = 100, int afterId = 0);
         int GetActiveCountUnderPath(string pathPrefix);
         List<IngestQueueStatusCount> GetActiveStatusCountsUnderPath(string pathPrefix);
         List<IngestQueueItem> GetActiveItemsUnderPath(string pathPrefix, int limit = 20);
-        List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0);
+        List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0, bool includeCompleted = false);
         List<IngestQueueItem> GetActiveItemsForSweepUnderPath(string pathPrefix, int limit = 1000, int afterId = 0);
         /// <summary>
         /// Recover orphaned in-progress claims that have exceeded a lease timeout.
@@ -46,24 +39,14 @@ namespace NzbDrone.Core.Datastore
         void UpdateBatchStatus(List<int> ids, string status);
         void RequeueInProgress(List<int> ids, string error = null);
         int GetQueueCount();
-        /// <summary>
-        /// Re-queue previously completed items that were marked as unmapped/failed so they can be retried.
-        /// Intended for manual rescans after config changes (e.g., metadata server URL fixed).
-        /// </summary>
-        int RequeueFailedOrUnmappedUnderPath(string pathPrefix);
-        /// <summary>
-        /// Re-queue completed Failed items only when their paths were observed during the current root scan.
-        /// Unmapped items remain manual-only; observed-path scoping avoids retrying files that no longer exist.
-        /// </summary>
-        int RequeueFailedPaths(IEnumerable<string> paths);
         int PurgeUnderPath(string pathPrefix);
         int PurgePaths(IEnumerable<string> paths);
-        void PurgeOldCompleted(int daysToKeep = 14);
+        int PurgeCompletedResults(IEnumerable<int> resultIds);
         
         // Result tracking methods
         void RecordImportResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null);
         void CompleteItemWithResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null, string statusError = null);
-        List<ImportResult> GetImportResults(int? commandId = null);
+        List<ImportResult> GetImportResults(IReadOnlyCollection<string> paths = null);
     }
 
         public class IngestQueueRepository : IIngestQueueRepository
@@ -75,53 +58,6 @@ namespace NzbDrone.Core.Datastore
             {
                 _dbContext = dbContext;
                 _logger = logger;
-            }
-
-            public void BeginSession(int commandId)
-            {
-                if (commandId <= 0)
-                {
-                    return;
-                }
-
-                using (var conn = _dbContext.OpenConnection())
-                {
-                    try
-                    {
-                        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                        var key = $"command:{commandId}:started_at";
-                        var resultsKey = $"command:{commandId}:results_start_id";
-                        var maxResultId = conn.ExecuteScalar<long?>("SELECT MAX(id) FROM import_results") ?? 0;
-
-                        // Keep the original start time for this command if called multiple times.
-                        conn.Execute(@"
-                            INSERT INTO staging_metadata (key, value, updated_at)
-                            VALUES (@key, @value, @updatedAt)
-                            ON CONFLICT(key) DO NOTHING;
-                        ", new
-                        {
-                            key,
-                            value = now.ToString(),
-                            updatedAt = now
-                        });
-
-                        // Also track the import_results high-water mark to avoid same-second cross-command bleed.
-                        conn.Execute(@"
-                            INSERT INTO staging_metadata (key, value, updated_at)
-                            VALUES (@key, @value, @updatedAt)
-                            ON CONFLICT(key) DO NOTHING;
-                        ", new
-                        {
-                            key = resultsKey,
-                            value = maxResultId.ToString(),
-                            updatedAt = now
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Debug(ex, "[STAGING-DB] Failed to BeginSession for commandId={0}", commandId);
-                    }
-                }
             }
 
         public void InsertBatch(List<IngestQueueItem> items)
@@ -365,36 +301,17 @@ namespace NzbDrone.Core.Datastore
         }
 
 
-        public List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0)
+        public List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0, bool includeCompleted = false)
         {
-            if (limit <= 0)
-            {
-                limit = 1000;
-            }
-
-            using (var conn = _dbContext.OpenConnection())
-            {
-                try
-                {
-                    var sql = @"
-                        SELECT id, path, mtime_ns as MtimeNs, size_bytes as SizeBytes,
-                               tags_json as TagsJson, duration_seconds as DurationSeconds, status, attempts, err,
-                               created_at as CreatedAt, updated_at as UpdatedAt
-                        FROM ingest_queue
-                        WHERE status IN ('queued', 'in_progress')
-                          AND id > @afterId
-                        ORDER BY id
-                        LIMIT @limit;
-                    ";
-
-                    return conn.Query<IngestQueueItem>(sql, new { limit, afterId }).ToList();
-                }
-                catch (Exception ex)
-                {
-                    _logger.Debug(ex, "[STAGING-DB] Failed to GetActiveItems afterId={0}", afterId);
-                    return new List<IngestQueueItem>();
-                }
-            }
+            using var conn = _dbContext.OpenConnection();
+            return conn.Query<IngestQueueItem>(@"
+                SELECT id, path, mtime_ns as MtimeNs, size_bytes as SizeBytes,
+                       tags_json as TagsJson, duration_seconds as DurationSeconds, status, attempts, err,
+                       created_at as CreatedAt, updated_at as UpdatedAt
+                FROM ingest_queue
+                WHERE (@includeCompleted OR status IN ('queued', 'in_progress')) AND id > @afterId
+                ORDER BY id LIMIT @limit;",
+                new { limit = limit > 0 ? limit : 1000, afterId, includeCompleted }).ToList();
         }
 
         public List<IngestQueueItem> GetActiveItemsForSweepUnderPath(string pathPrefix, int limit = 1000, int afterId = 0)
@@ -759,129 +676,6 @@ namespace NzbDrone.Core.Datastore
             }
         }
 
-            public int RequeueFailedOrUnmappedUnderPath(string pathPrefix)
-            {
-                if (string.IsNullOrWhiteSpace(pathPrefix))
-                {
-                    return 0;
-                }
-
-                using (var conn = _dbContext.OpenConnection())
-                {
-                    try
-                    {
-                        var normalizedPrefix = pathPrefix.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                        var prefixForward = normalizedPrefix + "/";
-                        var prefixBack = normalizedPrefix + "\\";
-                        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
-                        var updated = conn.Execute(@"
-                            UPDATE ingest_queue
-                            SET status = 'queued',
-                                attempts = 0,
-                                err = NULL,
-                                updated_at = @now
-                            WHERE status IN ('done', 'error')
-                              AND (
-                                path = @prefix
-                                OR substr(path, 1, length(@prefixForward)) = @prefixForward
-                                OR substr(path, 1, length(@prefixBack)) = @prefixBack
-                              )
-                              AND (
-                                (
-                                  SELECT r.outcome
-                                  FROM import_results r
-                                  WHERE r.queue_item_id = ingest_queue.id
-                                  ORDER BY r.id DESC
-                                  LIMIT 1
-                                ) IN ('unmapped', 'failed')
-                                OR NOT EXISTS (
-                                  SELECT 1
-                                  FROM import_results r
-                                  WHERE r.queue_item_id = ingest_queue.id
-                                )
-                              );
-                        ", new { prefix = normalizedPrefix, prefixForward, prefixBack, now });
-
-                        if (updated > 0)
-                        {
-                            _logger.Debug("[STAGING-DB] Re-queued {0} previously failed/unmapped items under '{1}'", updated, normalizedPrefix);
-                        }
-
-                        return updated;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Debug(ex, "[STAGING-DB] Failed to requeue items under prefix='{0}'", pathPrefix);
-                        return 0;
-                    }
-                }
-            }
-
-            public int RequeueFailedPaths(IEnumerable<string> paths)
-            {
-                var uniquePaths = (paths ?? Enumerable.Empty<string>())
-                    .Where(path => !string.IsNullOrWhiteSpace(path))
-                    .Distinct(PathEqualityComparer.Instance)
-                    .ToList();
-
-                if (uniquePaths.Count == 0)
-                {
-                    return 0;
-                }
-
-                using (var conn = _dbContext.OpenConnection())
-                using (var transaction = conn.BeginTransaction())
-                {
-                    try
-                    {
-                        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                        var updated = 0;
-
-                        foreach (var pathBatch in uniquePaths.Chunk(500))
-                        {
-                            updated += conn.Execute(@"
-                                UPDATE ingest_queue
-                                SET status = 'queued',
-                                    err = NULL,
-                                    updated_at = @now
-                                WHERE status IN ('done', 'error')
-                                  AND path IN @paths
-                                  AND (
-                                    SELECT r.outcome
-                                    FROM import_results r
-                                    WHERE r.queue_item_id = ingest_queue.id
-                                    ORDER BY r.id DESC
-                                    LIMIT 1
-                                  ) = 'failed';
-                            ", new { paths = pathBatch.ToArray(), now }, transaction);
-                        }
-
-                        transaction.Commit();
-
-                        if (updated > 0)
-                        {
-                            _logger.Debug("[STAGING-DB] Re-queued {0} failed items observed in the current root scan", updated);
-                        }
-
-                        return updated;
-                    }
-                    catch (Exception ex)
-                    {
-                        try
-                        {
-                            transaction.Rollback();
-                        }
-                        catch
-                        {
-                        }
-
-                        _logger.Debug(ex, "[STAGING-DB] Failed to requeue failed items observed in the current root scan");
-                        return 0;
-                    }
-                }
-            }
-
         public int PurgeUnderPath(string pathPrefix)
         {
             if (string.IsNullOrWhiteSpace(pathPrefix))
@@ -998,45 +792,42 @@ namespace NzbDrone.Core.Datastore
             return deletedQueueTotal;
         }
 
-        public void PurgeOldCompleted(int daysToKeep = 14)
+        public int PurgeCompletedResults(IEnumerable<int> resultIds)
         {
-            using (var conn = _dbContext.OpenConnection())
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var ids = resultIds.Distinct().ToArray();
+            if (ids.Length == 0)
             {
-                var cutoff = DateTimeOffset.UtcNow.AddDays(-daysToKeep).ToUnixTimeSeconds();
-                
-                int deletedResults;
-                int deletedQueue;
-
-                using (var transaction = conn.BeginTransaction())
-                {
-                    // Must delete child rows first; import_results.queue_item_id references ingest_queue.id.
-                    deletedResults = conn.Execute(@"
-                        DELETE FROM import_results
-                        WHERE queue_item_id IN (
-                            SELECT id
-                            FROM ingest_queue
-                            WHERE status = 'done' AND updated_at < @cutoff
-                        );
-                    ", new { cutoff }, transaction);
-
-                    deletedQueue = conn.Execute(@"
-                        DELETE FROM ingest_queue
-                        WHERE status = 'done' AND updated_at < @cutoff;
-                    ", new { cutoff }, transaction);
-
-                    transaction.Commit();
-                }
-
-                if (deletedQueue > 0 || deletedResults > 0)
-                {
-                    _logger.Info("Purged {0} completed items and {1} results older than {2} days", deletedQueue, deletedResults, daysToKeep);
-                    
-                    // VACUUM periodically to reclaim space
-                    conn.Execute("VACUUM;");
-                }
+                return 0;
             }
+
+            var deleted = 0;
+            using var conn = _dbContext.OpenConnection();
+            foreach (var batch in ids.Chunk(900))
+            {
+                using var transaction = conn.BeginTransaction();
+                // A new attempt may have started since the summary was read. Only retire the
+                // completed attempt whose outcome was verified in the main database.
+                var queueIds = conn.Query<int>(@"
+                    SELECT q.id FROM ingest_queue q
+                    JOIN import_results r ON r.queue_item_id = q.id
+                    WHERE q.status = 'done' AND r.id IN @batch
+                      AND NOT EXISTS (SELECT 1 FROM import_results newer
+                                      WHERE newer.queue_item_id = q.id AND newer.id > r.id);
+                ", new { batch }, transaction).ToArray();
+                if (queueIds.Length > 0)
+                {
+                    conn.Execute("DELETE FROM import_results WHERE queue_item_id IN @queueIds;", new { queueIds }, transaction);
+                    deleted += conn.Execute("DELETE FROM ingest_queue WHERE id IN @queueIds;", new { queueIds }, transaction);
+                }
+
+                transaction.Commit();
+            }
+
+            _logger.Debug("[STAGING-DB] Released {0} completed items from {1} verified results in {2}ms", deleted, ids.Length, stopwatch.ElapsedMilliseconds);
+            return deleted;
         }
-        
+
         public void RecordImportResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null)
         {
             using (var conn = _dbContext.OpenConnection())
@@ -1113,65 +904,32 @@ namespace NzbDrone.Core.Datastore
             }, transaction);
         }
         
-            public List<ImportResult> GetImportResults(int? commandId = null)
+            public List<ImportResult> GetImportResults(IReadOnlyCollection<string> paths = null)
             {
                 using (var conn = _dbContext.OpenConnection())
                 {
-                    // Filter by command session marker (if available) so a scan doesn't reuse stale import_results rows.
-                    long? resultsStartId = null;
-                    long? startedAt = null;
-                    if (commandId.HasValue && commandId.Value > 0)
-                    {
-                        try
-                        {
-                            var resultsKey = $"command:{commandId.Value}:results_start_id";
-                            var resultsRaw = conn.ExecuteScalar<string>("SELECT value FROM staging_metadata WHERE key = @key", new { key = resultsKey });
-                            if (long.TryParse(resultsRaw, out var parsedResultsId))
-                            {
-                                resultsStartId = parsedResultsId;
-                            }
-
-                            var key = $"command:{commandId.Value}:started_at";
-                            var raw = conn.ExecuteScalar<string>("SELECT value FROM staging_metadata WHERE key = @key", new { key });
-                            if (long.TryParse(raw, out var parsed))
-                            {
-                                startedAt = parsed;
-                        }
-                    }
-                    catch
-                    {
-                        startedAt = null;
-                    }
-                }
-
+                    var results = new List<ImportResultRaw>();
                     var sql = @"
-                        SELECT id, queue_item_id as QueueItemId, path, 
-                               outcome, book_id as BookId, author_id as AuthorId, 
-                               quality, error_message as ErrorMessage, created_at as CreatedAt
-                        FROM import_results
-                        /**where**/
-                        ORDER BY created_at DESC
-                        LIMIT 1000;
-                    ";
-
-                    var p = new DynamicParameters();
-                    if (resultsStartId.HasValue)
+                        SELECT r.id, r.queue_item_id as QueueItemId, r.path,
+                               r.outcome, r.book_id as BookId, r.author_id as AuthorId,
+                               r.quality, r.error_message as ErrorMessage, r.created_at as CreatedAt
+                        FROM ingest_queue q
+                        JOIN import_results r ON r.queue_item_id = q.id
+                        WHERE q.status = 'done'
+                          AND r.id = (SELECT MAX(latest.id) FROM import_results latest WHERE latest.queue_item_id = q.id)
+                          /**paths**/;";
+                    if (paths == null)
                     {
-                        sql = sql.Replace("/**where**/", "WHERE id > @resultsStartId");
-                        p.Add("resultsStartId", resultsStartId.Value);
-                    }
-                    else if (startedAt.HasValue)
-                    {
-                        sql = sql.Replace("/**where**/", "WHERE created_at >= @startedAt");
-                        p.Add("startedAt", startedAt.Value);
+                        results = conn.Query<ImportResultRaw>(sql.Replace("/**paths**/", string.Empty)).ToList();
                     }
                     else
-                {
-                    sql = sql.Replace("/**where**/", string.Empty);
-                }
+                    {
+                        foreach (var batch in paths.Distinct(PathEqualityComparer.Instance).Chunk(900))
+                        {
+                            results.AddRange(conn.Query<ImportResultRaw>(sql.Replace("/**paths**/", "AND q.path IN @batch"), new { batch }));
+                        }
+                    }
 
-                var results = conn.Query<ImportResultRaw>(sql, p).ToList();
-                
                 // Convert outcome string to enum
                 return results.Select(r => new ImportResult
                 {

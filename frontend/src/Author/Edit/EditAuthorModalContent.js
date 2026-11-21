@@ -19,7 +19,7 @@ import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import Popover from 'Components/Tooltip/Popover';
 import { icons, inputTypes, kinds, tooltipPositions } from 'Helpers/Props';
-import { coerceFolderType, FolderType } from 'Helpers/Props/folderTypes';
+import { supportsAuthorMediaType } from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
 import monitorNewItemsOptions, {
   normalizeMonitorNewItemsOption
 } from 'Utilities/Author/monitorNewItemsOptions';
@@ -89,6 +89,7 @@ class EditAuthorModalContent extends Component {
       item,
       isSaving,
       saveError,
+      hasConflictingMonitoringPolicies,
       showMetadataProfile,
       originalPath,
       isWindows,
@@ -109,9 +110,8 @@ class EditAuthorModalContent extends Component {
       ebookQualityProfileId,
       audiobookMetadataProfileId,
       ebookMetadataProfileId,
-      path,
-      audiobookPath,
-      ebookPath,
+      audiobookFolder,
+      ebookFolder,
       audiobookRootFolderPath,
       ebookRootFolderPath,
       tags,
@@ -125,26 +125,9 @@ class EditAuthorModalContent extends Component {
       selectedMediaType
     } = this.state;
 
-    const supportsMediaType = (rootFolderPath, mediaType) => {
-      if (!rootFolderPath) {
-        return false;
-      }
-
-      const rootFolder = (rootFolders || []).find((folder) => folder.path === rootFolderPath);
-      if (!rootFolder) {
-        return false;
-      }
-
-      const folderType = coerceFolderType(rootFolder.folderType);
-
-      return folderType === FolderType.Mixed ||
-        (mediaType === 'audiobook' && folderType === FolderType.Audiobook) ||
-        (mediaType === 'ebook' && folderType === FolderType.Ebook);
-    };
-
     const canSyncMonitoredAcrossFormats =
-      supportsMediaType(audiobookRootFolderPath?.value, 'audiobook') &&
-      supportsMediaType(ebookRootFolderPath?.value, 'ebook');
+      supportsAuthorMediaType(rootFolders || [], audiobookRootFolderPath?.value, 'audiobook') &&
+      supportsAuthorMediaType(rootFolders || [], ebookRootFolderPath?.value, 'ebook');
 
     const isSyncMonitoredAcrossFormatsChecked = syncMonitoredAcrossFormats?.value === true;
     const syncMonitoredAcrossFormatsDisabled = !canSyncMonitoredAcrossFormats && !isSyncMonitoredAcrossFormatsChecked;
@@ -176,7 +159,7 @@ class EditAuthorModalContent extends Component {
               <FormInputGroup
                 type={inputTypes.CHECK}
                 name="syncMonitoredAcrossFormats"
-                helpText={syncMonitoredAcrossFormatsHelpText}
+                helpText={hasConflictingMonitoringPolicies ? translate('AuthorSyncNewMonitoringConflict') : syncMonitoredAcrossFormatsHelpText}
                 isDisabled={syncMonitoredAcrossFormatsDisabled}
                 {...(syncMonitoredAcrossFormats || { value: false })}
                 onChange={onInputChange}
@@ -309,9 +292,9 @@ class EditAuthorModalContent extends Component {
 
                   <FormInputGroup
                     type={inputTypes.PATH}
-                    name="audiobookPath"
-                    helpText={translate('AudiobookPathHelpText')}
-                    {...(audiobookPath || { value: item.audiobookRootFolderPath?.value ? `${item.audiobookRootFolderPath.value}/${authorName}` : '' })}
+                    name="audiobookFolder"
+                    helpText={audiobookFolder?.value ? translate('AudiobookPathHelpText') : translate('AuthorFolderSuggestion', { path: `${item.audiobookRootFolderPath?.value || ''}/${authorName}` })}
+                    {...(audiobookFolder || { value: '' })}
                     onChange={onInputChange}
                   />
                 </FormGroup>
@@ -448,9 +431,9 @@ class EditAuthorModalContent extends Component {
 
                   <FormInputGroup
                     type={inputTypes.PATH}
-                    name="ebookPath"
-                    helpText={translate('EbookPathHelpText')}
-                    {...(ebookPath || { value: item.ebookRootFolderPath?.value ? `${item.ebookRootFolderPath.value}/${authorName}` : '' })}
+                    name="ebookFolder"
+                    helpText={ebookFolder?.value ? translate('EbookPathHelpText') : translate('AuthorFolderSuggestion', { path: `${item.ebookRootFolderPath?.value || ''}/${authorName}` })}
+                    {...(ebookFolder || { value: '' })}
                     onChange={onInputChange}
                   />
                 </FormGroup>
@@ -488,6 +471,7 @@ class EditAuthorModalContent extends Component {
 
           <SpinnerButton
             isSpinning={isSaving}
+            isDisabled={hasConflictingMonitoringPolicies}
             onPress={this.onSavePress}
           >
             {translate('Save')}
@@ -496,7 +480,9 @@ class EditAuthorModalContent extends Component {
 
         <MoveAuthorModal
           originalPath={originalPath}
-          destinationPath={path.value}
+          destinationPath={this.props.pathChanges[0]?.destinationPath}
+          pathChanges={this.props.pathChanges}
+          sharedFolder={this.props.sharedFolder}
           isOpen={this.state.isConfirmMoveModalOpen}
           onSavePress={this.onSavePress}
           onMoveAuthorPress={this.onMoveAuthorPress}
@@ -508,11 +494,14 @@ class EditAuthorModalContent extends Component {
 }
 
 EditAuthorModalContent.propTypes = {
+  pathChanges: PropTypes.arrayOf(PropTypes.object).isRequired,
+  sharedFolder: PropTypes.bool.isRequired,
   authorId: PropTypes.number.isRequired,
   authorName: PropTypes.string.isRequired,
   item: PropTypes.object.isRequired,
   isSaving: PropTypes.bool.isRequired,
   saveError: PropTypes.object,
+  hasConflictingMonitoringPolicies: PropTypes.bool,
   showMetadataProfile: PropTypes.bool.isRequired,
   isPathChanging: PropTypes.bool.isRequired,
   originalPath: PropTypes.string.isRequired,

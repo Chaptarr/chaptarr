@@ -12,6 +12,10 @@ using NzbDrone.Core.ImportLists.Exceptions;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Profiles.Metadata;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.RootFolders;
+using NzbDrone.Core.Tags;
 
 namespace NzbDrone.Core.ImportLists
 {
@@ -30,8 +34,17 @@ namespace NzbDrone.Core.ImportLists
         public abstract IImportListRequestGenerator GetRequestGenerator();
         public abstract IParseImportListResponse GetParser();
 
-        public HttpImportListBase(IHttpClient httpClient, IImportListStatusService importListStatusService, IConfigService configService, IParsingService parsingService, Logger logger)
-            : base(importListStatusService, configService, parsingService, logger)
+        public HttpImportListBase(IHttpClient httpClient,
+            IImportListStatusService importListStatusService,
+            IConfigService configService,
+            IParsingService parsingService,
+            Lazy<IQualityProfileService> qualityProfileService,
+            Lazy<IMetadataProfileService> metadataProfileService,
+            Lazy<ITagService> tagService,
+            IRootFolderService rootFolderService,
+            IRootFolderSettingsResolver rootFolderSettingsResolver,
+            Logger logger)
+            : base(importListStatusService, configService, parsingService, qualityProfileService, metadataProfileService, tagService, rootFolderService, rootFolderSettingsResolver, logger)
         {
             _httpClient = httpClient;
         }

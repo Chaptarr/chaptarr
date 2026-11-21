@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using Microsoft.Data.Sqlite;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Threading;
 using DryIoc;
 using DryIoc.Microsoft.DependencyInjection;
 using Microsoft.AspNetCore.Hosting;
@@ -15,6 +17,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
 using NLog;
 using Npgsql;
+using NzbDrone.Common;
 using NzbDrone.Common.Composition.Extensions;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
@@ -23,7 +26,9 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Common.Options;
+using NzbDrone.Common.Processes;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Extensions;
 using NzbDrone.Core.Http;
 using NzbDrone.Core.Lifecycle;
@@ -50,6 +55,29 @@ namespace NzbDrone.Host
 
         public static void Start(string[] args, Action<IHostBuilder> trayCallback = null)
         {
+            if (GetApplicationMode(new StartupContext(args)) == ApplicationModes.Service)
+            {
+                ServiceHost.Run(new HostBuilder().UseWindowsService(),
+                    (configureLifetime, stoppingToken) => StartCore(args, trayCallback, false, configureLifetime, stoppingToken));
+            }
+            else
+            {
+                StartCore(args, trayCallback, false);
+            }
+        }
+
+        private static void StartCore(string[] args, Action<IHostBuilder> trayCallback, bool recoveryAttempt,
+            Action<IHostBuilder> configureLifetime = null, CancellationToken stoppingToken = default)
+        {
+            if (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            IAppFolderInfo restoreFolders = null;
+            FileStream appDataLock = null;
+            Action restart = null;
+            Action restartAfterRecovery = recoveryAttempt ? null : () => StartCore(args, trayCallback, true, configureLifetime, stoppingToken);
             try
             {
                 Logger.Info("Starting Chaptarr - {0} - Version {1}",
@@ -62,6 +90,21 @@ namespace NzbDrone.Host
                 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
                 var appMode = GetApplicationMode(startupContext);
+                if (appMode is ApplicationModes.Service or ApplicationModes.Interactive)
+                {
+                    var folders = new AppFolderInfo(startupContext);
+                    var processProvider = new ProcessProvider(Logger);
+                    appDataLock = SingleInstancePolicy.AcquireAppData(folders, startupContext, processProvider, () =>
+                    {
+                        var existingConfig = GetConfiguration(startupContext);
+                        var port = existingConfig.GetValue<int?>("Chaptarr:Server:Port") ?? existingConfig.GetValue("Port", 8789);
+                        BrowserService.LaunchWebUI(processProvider, port, RuntimeInfo.IsUserInteractive, Logger);
+                    }, Logger);
+                    NzbDrone.Core.Backup.BackupService.CleanupWorkingFolder(folders);
+                    restoreFolders = folders;
+                    DatabaseRestorationService.PrepareConfiguration(restoreFolders);
+                }
+
                 var config = GetConfiguration(startupContext);
 
                 switch (appMode)
@@ -70,7 +113,9 @@ namespace NzbDrone.Host
                         {
                             Logger.Debug("Service selected");
 
-                            CreateConsoleHostBuilder(args, startupContext).UseWindowsService().Build().Run();
+                            var builder = CreateConsoleHostBuilder(args, startupContext);
+                            configureLifetime(builder);
+                            restart = RunHost(builder.Build(), restartAfterRecovery);
                             break;
                         }
 
@@ -84,7 +129,7 @@ namespace NzbDrone.Host
                                 trayCallback(builder);
                             }
 
-                            builder.Build().Run();
+                            restart = RunHost(builder.Build(), restartAfterRecovery);
                             break;
                         }
 
@@ -131,24 +176,87 @@ namespace NzbDrone.Host
                         }
                 }
             }
-            catch (InvalidConfigFileException ex)
+            catch (Exception ex)
             {
-                throw new ChaptarrStartupException(ex);
+                var recoveredConfiguration = restoreFolders != null && DatabaseRestorationService.AbortConfiguration(restoreFolders);
+                if (recoveredConfiguration && restartAfterRecovery != null && !stoppingToken.IsCancellationRequested)
+                {
+                    Logger.Error(ex, "The restored configuration could not start; restarting with the original configuration");
+                    restart = restartAfterRecovery;
+                }
+                else if (ex is InvalidConfigFileException or AccessDeniedConfigFileException)
+                {
+                    throw new ChaptarrStartupException(ex);
+                }
+
+                else if (ex is TerminateApplicationException)
+                {
+                    Logger.Info(ex.Message);
+                    LogManager.Configuration = null;
+                }
+                else
+                {
+                    throw;
+                }
             }
-            catch (AccessDeniedConfigFileException ex)
+            finally
             {
-                throw new ChaptarrStartupException(ex);
-            }
-            catch (TerminateApplicationException ex)
-            {
-                Logger.Info(ex.Message);
-                LogManager.Configuration = null;
+                try
+                {
+                    // Release database resources before allowing another process to restore this instance.
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    NpgsqlConnection.ClearAllPools();
+                }
+                finally
+                {
+                    appDataLock?.Dispose();
+                }
             }
 
-            // Make sure there are no lingering database connections
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            NpgsqlConnection.ClearAllPools();
+            restart?.Invoke();
+        }
+
+        private static Action RunHost(IHost host, Action restartAfterRecovery = null)
+        {
+            var restore = host.Services.GetRequiredService<IRestoreDatabase>();
+            var applicationStopping = host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
+            var lifetime = host.Services.GetServices<IHostedService>().OfType<AppLifetime>().SingleOrDefault();
+            try
+            {
+                host.Run();
+            }
+            catch (Exception ex)
+            {
+                restore.Rollback();
+                if (ex is OperationCanceledException && applicationStopping.IsCancellationRequested)
+                {
+                    return null;
+                }
+                if (!restore.RecoveryCompleted || restartAfterRecovery == null)
+                {
+                    throw;
+                }
+                Logger.Error(ex, "Restore failed; restarting with the recovered original stores");
+                return restartAfterRecovery;
+            }
+            finally
+            {
+                // Run disposes the failed host before rollback, releasing initialization and listener resources.
+                restore.Rollback();
+            }
+
+            if (restore.CommitFailed && restore.RecoveryCompleted)
+            {
+                if (restartAfterRecovery != null)
+                {
+                    Logger.Error("Restore finalization failed; restarting with the recovered original stores");
+                }
+
+                return restartAfterRecovery;
+            }
+
+            return lifetime == null ? null : lifetime.RestartIfPending;
         }
 
         public static IHostBuilder CreateConsoleHostBuilder(string[] args, StartupContext context)
@@ -183,8 +291,7 @@ namespace NzbDrone.Host
                         .AddImportServices()
                         .AddNamingPatternServices()
                         // .AddHardcoverServices() // Removed - using V5 API via BookInfoProxy
-                        .AddStartupContext(context)
-                        .Resolve<IEventAggregator>().PublishEvent(new ApplicationStartingEvent());
+                        .AddStartupContext(context);
                 })
                 .ConfigureServices(services =>
                 {

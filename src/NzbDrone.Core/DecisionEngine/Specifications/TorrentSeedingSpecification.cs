@@ -18,7 +18,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         }
 
         public SpecificationPriority Priority => SpecificationPriority.Default;
-        public RejectionType Type => RejectionType.Temporary; // Changed to Temporary for soft filtering
+        public RejectionType Type => RejectionType.Permanent;
 
         public Decision IsSatisfiedBy(RemoteBook remoteBook, SearchCriteriaBase searchCriteria)
         {

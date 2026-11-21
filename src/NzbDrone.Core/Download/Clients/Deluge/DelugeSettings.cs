@@ -67,14 +67,14 @@ namespace NzbDrone.Core.Download.Clients.Deluge
         [FieldDefinition(100, Label = "Category", Type = FieldType.Select, SelectOptionsProviderAction = "getCategories", Hidden = HiddenType.Hidden)]
         public string MusicCategory { get; set; }
 
-        [FieldDefinition(7, Label = "Audiobook Post-Import Category", Type = FieldType.Select, SelectOptionsProviderAction = "getCategories", Advanced = true, HelpText = "After import, move audiobook torrents to this category and leave them there. Chaptarr will not delete torrents in this category. Leave blank if you want Chaptarr to delete torrents after seeding is done.")]
+        [FieldDefinition(7, Label = "Audiobook Post-Import Category", Type = FieldType.Select, SelectOptionsProviderAction = "getCategories", Advanced = true, HelpText = "DownloadClientDelugePostImportCategoryHelpText")]
         public string AudiobookImportedCategory
         {
             get => _audiobookImportedCategory ?? MusicImportedCategory;
             set => _audiobookImportedCategory = value;
         }
 
-        [FieldDefinition(8, Label = "Ebook Post-Import Category", Type = FieldType.Select, SelectOptionsProviderAction = "getCategories", Advanced = true, HelpText = "After import, move ebook torrents to this category and leave them there. Chaptarr will not delete torrents in this category. Leave blank if you want Chaptarr to delete torrents after seeding is done.")]
+        [FieldDefinition(8, Label = "Ebook Post-Import Category", Type = FieldType.Select, SelectOptionsProviderAction = "getCategories", Advanced = true, HelpText = "DownloadClientDelugePostImportCategoryHelpText")]
         public string EbookImportedCategory
         {
             get => _ebookImportedCategory ?? MusicImportedCategory;

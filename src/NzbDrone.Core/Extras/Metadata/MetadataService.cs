@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using NLog;
+using NzbDrone.Common;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
@@ -13,6 +14,7 @@ using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.Extras.Metadata.Files;
 using NzbDrone.Core.Extras.Others;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaCover;
 
 namespace NzbDrone.Core.Extras.Metadata
 {
@@ -25,6 +27,7 @@ namespace NzbDrone.Core.Extras.Metadata
         private readonly IDiskTransferService _diskTransferService;
         private readonly IDiskProvider _diskProvider;
         private readonly IHttpClient _httpClient;
+        private readonly IConfigService _configService;
         private readonly IMediaFileAttributeService _mediaFileAttributeService;
         private readonly IMetadataFileService _metadataFileService;
         private readonly IBookService _bookService;
@@ -42,7 +45,7 @@ namespace NzbDrone.Core.Extras.Metadata
                                IMetadataFileService metadataFileService,
                                IBookService bookService,
                                Logger logger)
-            : base(configService, diskProvider, diskTransferService, logger)
+            : base(configService, diskProvider, diskTransferService, recycleBinProvider, logger)
         {
             _metadataFactory = metadataFactory;
             _cleanMetadataService = cleanMetadataService;
@@ -51,6 +54,7 @@ namespace NzbDrone.Core.Extras.Metadata
             _diskTransferService = diskTransferService;
             _diskProvider = diskProvider;
             _httpClient = httpClient;
+            _configService = configService;
             _mediaFileAttributeService = mediaFileAttributeService;
             _metadataFileService = metadataFileService;
             _bookService = bookService;
@@ -133,90 +137,58 @@ namespace NzbDrone.Core.Extras.Metadata
             return files;
         }
 
-        public override IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<BookFile> bookFiles)
+        public override IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<RenamedBookFile> bookFiles)
         {
             var metadataFiles = _metadataFileService.GetFilesByAuthor(author.Id);
             var movedFiles = new List<MetadataFile>();
-            var distinctTrackFilePaths = bookFiles.DistinctBy(s => Path.GetDirectoryName(s.Path)).ToList();
 
-            // TODO: Move EpisodeImage and EpisodeMetadata metadata files, instead of relying on consumers to do it
-            // (Xbmc's EpisodeImage is more than just the extension)
             foreach (var consumer in _metadataFactory.GetAvailableProviders())
             {
-                foreach (var filePath in distinctTrackFilePaths)
-                {
-                    var metadataFilesForConsumer = GetMetadataFilesForConsumer(consumer, metadataFiles)
-                        .Where(m => m.BookId == filePath.Edition.BookId)
-                        .Where(m => m.Type == MetadataType.BookImage || m.Type == MetadataType.BookMetadata)
-                        .ToList();
-
-                    foreach (var metadataFile in metadataFilesForConsumer)
+                // Resolve every original before mutating tracking; a later destination must not
+                // claim a sidecar already moved for another copy of the same book.
+                var consumerFiles = GetMetadataFilesForConsumer(consumer, metadataFiles)
+                    .Where(extra => extra.Type == MetadataType.BookImage || extra.Type == MetadataType.BookMetadata)
+                    .ToList();
+                var plans = consumerFiles
+                    .SelectMany(extra => bookFiles.Select(move => new
                     {
-                        var newFileName = consumer.GetFilenameAfterMove(author, Path.GetDirectoryName(filePath.Path), metadataFile);
-                        var preferredBase = ExtraFilePathHelper.GetPreferredBasePath(author, filePath);
-                        var existingFileName = ExtraFilePathHelper.ResolveFullPath(author, metadataFile.RelativePath, _diskProvider.FileExists, preferredBase);
+                        Extra = extra,
+                        Move = move,
+                        Source = ResolveRenameSource(extra, move),
+                        Destination = extra.BookFileId.HasValue
+                            ? consumer.GetFilenameAfterMove(author, move.BookFile, extra)
+                            : consumer.GetFilenameAfterMove(author, Path.GetDirectoryName(move.BookFile.Path), extra)
+                    }))
+                    .Where(plan => plan.Source != null)
+                    .ToList();
 
-                        if (newFileName.PathNotEquals(existingFileName))
-                        {
-                            try
-                            {
-                                _diskProvider.MoveFile(existingFileName, newFileName);
+                WarnUnresolvedRenameSources(consumerFiles, bookFiles, plans.Select(plan => plan.Extra.Id).ToHashSet());
 
-                                if (!ExtraFilePathHelper.TryGetRelativePath(author, newFileName, out var relativePath, out _, preferredBase))
-                                {
-                                    throw new NotParentException("Unable to resolve metadata file path '{0}' under any author base path", newFileName);
-                                }
-
-                                metadataFile.RelativePath = relativePath;
-                                movedFiles.Add(metadataFile);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.Warn(ex, "Unable to move metadata file after rename: {0}", existingFileName);
-                            }
-                        }
-                    }
-                }
-
-                foreach (var bookFile in bookFiles)
+                foreach (var group in plans.GroupBy(plan => plan.Source, PathEqualityComparer.Instance))
                 {
-                    var metadataFilesForConsumer = GetMetadataFilesForConsumer(consumer, metadataFiles).Where(m => m.BookFileId == bookFile.Id).ToList();
+                    var destinations = group.Select(plan => plan.Destination).Distinct(PathEqualityComparer.Instance).ToList();
+                    var rows = group.Select(plan => plan.Extra.Id).Distinct().Count();
+                    var plan = group.First();
+                    var remainingMedia = _diskProvider.GetFiles(Path.GetDirectoryName(plan.Source), false)
+                        .Any(path => MediaFileExtensions.AllExtensions.Contains(Path.GetExtension(path)));
 
-                    foreach (var metadataFile in metadataFilesForConsumer)
+                    // A fixed-name sidecar may still serve an unmoved file despite its producer ID.
+                    // Ambiguous/shared sources remain intact; cleanup must not force them to move.
+                    if (destinations.Count != 1 || rows != 1 || remainingMedia)
                     {
-                        var newFileName = consumer.GetFilenameAfterMove(author, bookFile, metadataFile);
-                        var preferredBase = ExtraFilePathHelper.GetPreferredBasePath(author, bookFile);
-                        var existingFileName = ExtraFilePathHelper.ResolveFullPath(author, metadataFile.RelativePath, _diskProvider.FileExists, preferredBase);
-
-                        if (newFileName.PathNotEquals(existingFileName))
-                        {
-                            try
-                            {
-                                _diskProvider.MoveFile(existingFileName, newFileName);
-
-                                if (!ExtraFilePathHelper.TryGetRelativePath(author, newFileName, out var relativePath, out _, preferredBase))
-                                {
-                                    throw new NotParentException("Unable to resolve metadata file path '{0}' under any author base path", newFileName);
-                                }
-
-                                metadataFile.RelativePath = relativePath;
-                                movedFiles.Add(metadataFile);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.Warn(ex, "Unable to move metadata file after rename: {0}", existingFileName);
-                            }
-                        }
+                        _logger.Warn("Keeping shared or ambiguous sidecar after rename: {0}", plan.Source);
+                        continue;
                     }
+
+                    movedFiles.AddIfNotNull(RelocateFile(author, plan.Move, plan.Extra, plan.Source,
+                        plan.Destination, _metadataFileService.Upsert));
                 }
             }
-
-            _metadataFileService.Upsert(movedFiles);
 
             return movedFiles;
         }
 
-        public override ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly)
+        public override ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly, bool replaceExisting)
         {
             return null;
         }
@@ -494,7 +466,13 @@ namespace NzbDrone.Core.Extras.Metadata
             {
                 if (image.Url.StartsWith("http"))
                 {
-                    _httpClient.DownloadFile(image.Url, fullPath);
+                    if (!MediaCoverUrlSafetyPolicy.TryGetSafeImageUrl(image.Url, _configService, out var safeUrl, out var reason))
+                    {
+                        _logger.Warn("Skipping unsafe metadata image for {0}: {1}", author, reason);
+                        return false;
+                    }
+
+                    _httpClient.DownloadFile(safeUrl, fullPath);
                 }
                 else if (_diskProvider.FileExists(image.Url))
                 {
@@ -574,12 +552,12 @@ namespace NzbDrone.Core.Extras.Metadata
 
         private bool IsTrackedTextFileCurrent(MetadataFile metadata, string path)
         {
-            return HasTrackedHash(metadata) && _diskProvider.ReadAllText(path).SHA256Hash() == GetTrackedFileHash(metadata);
+            return MetadataFileHash.IsCurrent(metadata, path, _diskProvider, binary: false);
         }
 
         private bool IsTrackedBinaryFileCurrent(MetadataFile metadata, string path)
         {
-            return HasTrackedHash(metadata) && GetBinaryFileHash(path) == GetTrackedFileHash(metadata);
+            return MetadataFileHash.IsCurrent(metadata, path, _diskProvider, binary: true);
         }
 
         private string GetBinaryFileHash(string path)
@@ -612,27 +590,9 @@ namespace NzbDrone.Core.Extras.Metadata
             return sourceHash.IsNullOrWhiteSpace() ? fileHash : fileHash + ":" + sourceHash;
         }
 
-        private static string GetTrackedFileHash(MetadataFile metadata)
-        {
-            if (!HasTrackedHash(metadata))
-            {
-                return null;
-            }
+        private static string GetTrackedFileHash(MetadataFile metadata) => MetadataFileHash.FileHash(metadata);
 
-            var separatorIndex = metadata.Hash.IndexOf(':');
-            return separatorIndex > -1 ? metadata.Hash.Substring(0, separatorIndex) : metadata.Hash;
-        }
-
-        private static string GetTrackedSourceHash(MetadataFile metadata)
-        {
-            if (!HasTrackedHash(metadata))
-            {
-                return null;
-            }
-
-            var separatorIndex = metadata.Hash.IndexOf(':');
-            return separatorIndex > -1 ? metadata.Hash.Substring(separatorIndex + 1) : null;
-        }
+        private static string GetTrackedSourceHash(MetadataFile metadata) => MetadataFileHash.SourceHash(metadata);
 
         private static bool HasTrackedHash(MetadataFile metadata)
         {

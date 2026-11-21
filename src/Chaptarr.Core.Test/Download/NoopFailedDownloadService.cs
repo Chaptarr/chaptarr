@@ -19,9 +19,6 @@ namespace Chaptarr.Core.Test.Download
         {
         }
 
-        public void MarkAsFailed(TrackedDownload trackedDownload, string reason, bool skipRedownload = false)
-        {
-        }
 
         public void Check(TrackedDownload trackedDownload)
         {

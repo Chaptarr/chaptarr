@@ -31,6 +31,7 @@ class FilterMenuContent extends Component {
                 key={filter.key}
                 filterKey={filter.key}
                 selectedFilterKey={selectedFilterKey}
+                title={typeof filter.title === 'function' ? filter.title() : filter.title}
                 onPress={onFilterSelect}
               >
                 {typeof filter.label === 'function' ? filter.label() : filter.label}

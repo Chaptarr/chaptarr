@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Dapper;
 using NLog;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
@@ -15,10 +16,18 @@ namespace NzbDrone.Core.Books
         List<Series> FindById(List<string> providerIds, BookMediaType mediaType);
         List<Series> GetByAuthorId(int authorId);
         List<Series> GetAllSeriesWithoutBooks();
+        bool DeleteIfUnlinked(int seriesId);
     }
 
     public class SeriesRepository : BasicRepository<Series>, ISeriesRepository
     {
+        public bool DeleteIfUnlinked(int seriesId)
+        {
+            using var connection = _database.OpenConnection();
+            return connection.Execute(@"DELETE FROM ""Series"" WHERE ""Id"" = @seriesId
+                AND NOT EXISTS (SELECT 1 FROM ""SeriesBookLink"" WHERE ""SeriesId"" = @seriesId)", new { seriesId }) != 0;
+        }
+
         private readonly ISeriesBookLinkRepository _linkRepository;
         private readonly Logger _logger;
 

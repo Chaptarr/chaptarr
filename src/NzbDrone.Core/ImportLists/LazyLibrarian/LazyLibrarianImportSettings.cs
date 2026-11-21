@@ -8,12 +8,13 @@ namespace NzbDrone.Core.ImportLists.LazyLibrarianImport
     {
         public LazyLibrarianImportSettingsValidator()
         {
+            this.AddDualMediaRules();
             RuleFor(c => c.BaseUrl).IsValidUrl();
             RuleFor(c => c.ApiKey).NotEmpty();
         }
     }
 
-    public class LazyLibrarianImportSettings : IImportListSettings
+    public class LazyLibrarianImportSettings : DualMediaImportListSettings
     {
         private static readonly LazyLibrarianImportSettingsValidator Validator = new LazyLibrarianImportSettingsValidator();
 
@@ -23,12 +24,12 @@ namespace NzbDrone.Core.ImportLists.LazyLibrarianImport
         }
 
         [FieldDefinition(0, Label = "Url")]
-        public string BaseUrl { get; set; }
+        public override string BaseUrl { get; set; }
 
         [FieldDefinition(1, Label = "API Key", Privacy = PrivacyLevel.ApiKey)]
         public string ApiKey { get; set; }
 
-        public NzbDroneValidationResult Validate()
+        public override NzbDroneValidationResult Validate()
         {
             return new NzbDroneValidationResult(Validator.Validate(this));
         }

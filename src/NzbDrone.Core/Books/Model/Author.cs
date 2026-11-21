@@ -6,13 +6,14 @@ using Equ;
 
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Qualities;
 
 namespace NzbDrone.Core.Books
 {
-    public class Author : Entity<Author>
+    public class Author : ProviderIdentityEntity<Author>
     {
         public Author()
         {
@@ -97,11 +98,6 @@ namespace NzbDrone.Core.Books
         public string OpenLibraryAuthorId { get; set; }
         public string GoogleBooksAuthorId { get; set; }
 
-        // Optional in-memory provider ID sets from upstream metadata payloads (not persisted).
-        // Used for robust matching when an entity gains new provider IDs upstream.
-        [MemberwiseEqualityIgnore]
-        [JsonIgnore]
-        public HashSet<string> RemoteProviderIds { get; set; }
         [MemberwiseEqualityIgnore]
         [JsonIgnore]
         public string RemoteMetadataETag { get; set; }
@@ -134,6 +130,25 @@ namespace NzbDrone.Core.Books
         public List<Book> Books { get; set; }
         [MemberwiseEqualityIgnore]
         public List<Series> Series { get; set; }
+
+        [MemberwiseEqualityIgnore]
+        [JsonIgnore]
+        public string SearchName { get; set; }
+
+        protected override string IdentityScope => "author";
+        protected override IEnumerable<string> GetIdentityIds() => AuthorIdentity.GetProviderIdentityTokens(this);
+
+        public override IEnumerable<string> PrepareForPersistence(IReadOnlyCollection<string> fields)
+        {
+            foreach (var field in base.PrepareForPersistence(fields)) yield return field;
+            if (fields == null || fields.Contains(nameof(Name)) || fields.Contains(nameof(SearchName)))
+            {
+                SearchName = StringSuperNormalizer.NormalizeForFts(Name);
+                yield return nameof(SearchName);
+            }
+        }
+
+        internal Author ShallowClone() => (Author)MemberwiseClone();
 
         public override string ToString()
         {
@@ -179,7 +194,7 @@ namespace NzbDrone.Core.Books
             AudnexusAuthorId = other.AudnexusAuthorId;
             OpenLibraryAuthorId = other.OpenLibraryAuthorId;
             GoogleBooksAuthorId = other.GoogleBooksAuthorId;
-            RemoteProviderIds = CloneProviderIds(other.RemoteProviderIds);
+            RemoteProviderIds = Book.CloneProviderIds(other.RemoteProviderIds);
 
             // Standard identifiers
             ISNI = other.ISNI ?? ISNI;
@@ -215,12 +230,6 @@ namespace NzbDrone.Core.Books
                 Name = link.Name,
                 Url = link.Url
             }).ToList() ?? new List<Links>();
-        }
-
-        private static HashSet<string> CloneProviderIds(HashSet<string> source)
-        {
-            var values = source?.Where(id => !id.IsNullOrWhiteSpace()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            return values?.Count > 0 ? values : null;
         }
 
         private static Ratings CloneRatings(Ratings ratings)
@@ -273,6 +282,8 @@ namespace NzbDrone.Core.Books
         public override void ApplyChanges(Author other)
         {
             Path = other.Path;
+            AudiobookPath = other.AudiobookPath ?? AudiobookPath;
+            EbookPath = other.EbookPath ?? EbookPath;
 
             // Don't overwrite quality profiles if they're already set
             // Quality profiles from metadata sources are always null/0
@@ -325,7 +336,7 @@ namespace NzbDrone.Core.Books
                 EbookTags = other.EbookTags;
             }
 
-            Tags = (AudiobookTags ?? new HashSet<int>()).Concat(EbookTags ?? new HashSet<int>()).ToHashSet();
+            Tags = GetCombinedTags();
             AddOptions = other.AddOptions;
             AudiobookRootFolderPath = other.AudiobookRootFolderPath;
             EbookRootFolderPath = other.EbookRootFolderPath;
@@ -359,6 +370,11 @@ namespace NzbDrone.Core.Books
             LastSelectedMediaType = other.LastSelectedMediaType;
         }
 
+        public HashSet<int> GetCombinedTags()
+        {
+            return (AudiobookTags ?? Enumerable.Empty<int>()).Concat(EbookTags ?? Enumerable.Empty<int>()).ToHashSet();
+        }
+
         public HashSet<int> GetTagsForMediaType(BookMediaType mediaType)
         {
             if (AudiobookTags == null && EbookTags == null)
@@ -388,9 +404,33 @@ namespace NzbDrone.Core.Books
             return null;
         }
 
+        public bool HasMediaTypeSettings(BookMediaType mediaType) => mediaType == BookMediaType.Audiobook
+            ? AudiobookQualityProfileId.GetValueOrDefault() > 0 && AudiobookMetadataProfileId.GetValueOrDefault() > 0
+            : EbookQualityProfileId.GetValueOrDefault() > 0 && EbookMetadataProfileId.GetValueOrDefault() > 0;
+
+        public bool HasConfiguredMediaSettings(BookMediaType mediaType) => mediaType == BookMediaType.Audiobook
+            ? HasConfiguredMediaSettings(AudiobookQualityProfileId, AudiobookRootFolderPath)
+            : HasConfiguredMediaSettings(EbookQualityProfileId, EbookRootFolderPath);
+
+        public static bool HasConfiguredMediaSettings(int? qualityProfileId, string rootFolderPath) =>
+            qualityProfileId > 0 && !string.IsNullOrWhiteSpace(rootFolderPath);
+
+        public List<string> GetScanPaths(string mediaType)
+        {
+            var paths = AudiobookPath.IsNullOrWhiteSpace() && EbookPath.IsNullOrWhiteSpace()
+                ? new[] { Path }
+                : new[] { mediaType == "ebook" ? null : AudiobookPath, mediaType == "audiobook" ? null : EbookPath };
+            return paths.Where(path => path.IsNotNullOrWhiteSpace()).Distinct(NzbDrone.Common.PathEqualityComparer.Instance).ToList();
+        }
+
         public QualityProfile GetQualityProfileForQuality(Quality quality)
         {
-            if (GetEffectiveMediaTypeForQuality(quality) == BookMediaType.Ebook)
+            return GetQualityProfileForMediaType(GetEffectiveMediaTypeForQuality(quality));
+        }
+
+        public QualityProfile GetQualityProfileForMediaType(BookMediaType mediaType)
+        {
+            if (mediaType == BookMediaType.Ebook)
             {
                 return EbookQualityProfileId.HasValue ? EbookQualityProfile?.Value : null;
             }

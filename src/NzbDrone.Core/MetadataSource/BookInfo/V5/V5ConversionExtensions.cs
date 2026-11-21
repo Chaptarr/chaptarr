@@ -247,8 +247,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo.V5
 
             if (pseudonyms.Count > 20)
             {
-                _logger.Warn($"Author {authorName ?? "Unknown"} has {pseudonyms.Count} pseudonyms, truncating to 20...");
-                return pseudonyms.GetRange(0, 20);
+                _logger.Warn($"Author {authorName ?? "Unknown"} has {pseudonyms.Count} pseudonyms; this signals an upstream identity defect. Keeping every spelling.");
             }
 
             return pseudonyms;

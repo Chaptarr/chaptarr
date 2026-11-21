@@ -24,9 +24,8 @@ namespace Chaptarr.Core.Test.Parser
         {
             var author = new Author { Name = row.TargetAuthor };
             var targetBook = BuildBook(row, author);
-            var authorCatalog = BuildAuthorCatalog(row, author, targetBook);
 
-            var result = ReleasePackDetector.Detect(row.ReleaseTitle, targetBook, authorCatalog);
+            var result = ReleasePackDetector.Detect(row.ReleaseTitle, targetBook);
             var expectedVerdict = ParseVerdict(row);
 
             Assert.That(result.Verdict, Is.EqualTo(expectedVerdict),
@@ -110,36 +109,6 @@ namespace Chaptarr.Core.Test.Parser
             };
         }
 
-        private static List<Book> BuildAuthorCatalog(ReleasePackScorecardRow row, Author author, Book targetBook)
-        {
-            var catalog = new List<Book> { targetBook };
-
-            foreach (var catalogBook in row.AuthorCatalog ?? Enumerable.Empty<ReleasePackScorecardBookRow>())
-            {
-                catalog.Add(new Book
-                {
-                    Id = catalogBook.BookId,
-                    Title = catalogBook.Title,
-                    MediaType = ParseMediaType(catalogBook.MediaType),
-                    HardcoverBookId = catalogBook.HardcoverWorkId,
-                    Author = author,
-                    SeriesName = catalogBook.SeriesName,
-                    SeriesPosition = catalogBook.SeriesPosition,
-                    Editions = new List<Edition>
-                    {
-                        new Edition
-                        {
-                            Id = catalogBook.BookId,
-                            Title = string.IsNullOrWhiteSpace(catalogBook.EditionTitle) ? catalogBook.Title : catalogBook.EditionTitle,
-                            Monitored = true
-                        }
-                    }
-                });
-            }
-
-            return catalog;
-        }
-
         private static BookMediaType ParseMediaType(string mediaType)
         {
             if (Enum.TryParse<BookMediaType>(mediaType, ignoreCase: true, out var parsed))
@@ -178,18 +147,7 @@ namespace Chaptarr.Core.Test.Parser
             public string TargetSeriesPosition { get; set; }
             public string ExpectedVerdict { get; set; }
             public string Notes { get; set; }
-            public List<ReleasePackScorecardBookRow> AuthorCatalog { get; set; }
         }
 
-        public sealed class ReleasePackScorecardBookRow
-        {
-            public int BookId { get; set; }
-            public string Title { get; set; }
-            public string EditionTitle { get; set; }
-            public string MediaType { get; set; }
-            public string HardcoverWorkId { get; set; }
-            public string SeriesName { get; set; }
-            public string SeriesPosition { get; set; }
-        }
     }
 }

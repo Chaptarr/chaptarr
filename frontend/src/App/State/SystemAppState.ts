@@ -8,6 +8,13 @@ export type UpdateAppState = AppSectionState<Update>;
 interface SystemAppState {
   updates: UpdateAppState;
   status: SystemStatusAppState;
+  backupStatus: AppSectionItemState<{
+    pendingRestore: boolean;
+    canCancelRestore: boolean;
+    restoreFailed: boolean;
+    scheduleDisabled: boolean;
+    databaseBackupUnavailableReason?: string;
+  }>;
 }
 
 export default SystemAppState;

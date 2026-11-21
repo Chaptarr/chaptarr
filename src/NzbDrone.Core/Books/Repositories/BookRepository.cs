@@ -21,39 +21,45 @@ namespace NzbDrone.Core.Books
 		    public interface IBookRepository : IBasicRepository<Book>
 		    {
 		        List<Book> GetBooks(int authorId);
+        List<Book> GetImportListBookIdentities();
+                List<int> GetLibraryBookIds(IEnumerable<int> bookIds = null) => throw new NotImplementedException();
                 // Tolerant lookup for drifting snapshots; unlike Get, missing rows are expected.
                 IEnumerable<Book> FindExisting(IEnumerable<int> ids) => throw new NotImplementedException();
 		        List<Book> GetLastBooks(IEnumerable<int> authorIds);
 		        List<Book> GetNextBooks(IEnumerable<int> authorIds);
 		        List<Book> GetBooksByAuthorId(int authorId);
+        IReadOnlySet<BookMediaType> GetMediaTypesByAuthor(int authorId) => throw new NotImplementedException();
 		        List<Book> GetBooksForRefresh(int authorId, IEnumerable<string> providerIds);
 		        List<Book> GetBooksByFileIds(IEnumerable<int> fileIds);
-		        Book FindByTitle(int authorId, string title);
+
 		        Book FindByIsbn(string isbn);
 		        Book FindByAsin(string asin);
 		        Book FindByProviderIds(string hardcoverBookId = null, string goodreadsBookId = null, string openLibraryWorkId = null);
 		        Book FindByProviderIdAndMediaType(string provider, string providerId, BookMediaType mediaType);
 		        List<Book> FindAllByProviderIdAndMediaType(string provider, string providerId, BookMediaType mediaType);
-		        Book FindBySlug(string titleSlug);
+        Dictionary<string, List<int>> FindIdsByProviderIds(string provider, IEnumerable<string> ids) => throw new NotImplementedException();
+		        List<Book> FindBySlug(string titleSlug);
+        List<Book> FindTitleSlugConflicts(IEnumerable<string> slugs, IDbConnection connection = null, IDbTransaction transaction = null);
 		        List<BookSearchTarget> GetMissingBookSearchTargets(BookMediaType? mediaType, int? authorId) => throw new NotImplementedException();
 		        List<BookSearchTarget> GetCutoffUnmetSearchTargets(List<QualitiesBelowCutoff> qualitiesBelowCutoff, BookMediaType? mediaType, int? authorId) => throw new NotImplementedException();
 		        PagingSpec<Book> BooksWithoutFiles(PagingSpec<Book> pagingSpec);
 		        PagingSpec<Book> BooksWhereCutoffUnmet(PagingSpec<Book> pagingSpec, List<QualitiesBelowCutoff> qualitiesBelowCutoff);
 	        List<Book> BooksBetweenDates(DateTime startDate, DateTime endDate, bool includeUnmonitored);
 	        List<Book> AuthorBooksBetweenDates(Author author, DateTime startDate, DateTime endDate, bool includeUnmonitored);
-        void SetMonitoredFlat(Book book, bool monitored);
         void SetMonitored(IEnumerable<int> ids, bool monitored);
-        void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored);
+        void SetMonitoring(IList<Book> books) => throw new NotImplementedException();
+        void UpdateManyAtomic(IList<Book> books, Action<IDbConnection, IDbTransaction> writeRelated);
+        void DeleteManyAtomic(IEnumerable<int> ids, IEnumerable<int> deletedFileIds = null);
         List<Book> GetAuthorBooksWithFiles(Author author);
         List<Book> GetBooksBySeries(int seriesId);
 	        void UpdateMonitoringByAuthorAndMediaType(int authorId, BookMediaType mediaType, bool monitored, IEnumerable<int> exceptBookIds = null);
             void SetAuthorId(Book book) => throw new NotImplementedException();
             void SetAuthorId(IList<Book> books) => throw new NotImplementedException();
 	        BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null);
-	        BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null) => GetBookBuckets(sortKey, sortDirection, includeUnmonitored, mediaType, downloaded);
+	        BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null, bool? library = null) => GetBookBuckets(sortKey, sortDirection, includeUnmonitored, mediaType, downloaded);
 	        PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null);
-	        PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null) => GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded);
-	        List<int> GetBookIds(bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null) => throw new NotImplementedException();
+	        PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null, bool? library = null) => GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded);
+	        List<int> GetBookIds(bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null, bool? library = null) => throw new NotImplementedException();
 	    }
 
     public class BookRepository : BasicRepository<Book>, IBookRepository
@@ -72,6 +78,47 @@ namespace NzbDrone.Core.Books
                 .ToList();
         }
 
+        public void UpdateManyAtomic(IList<Book> books, Action<IDbConnection, IDbTransaction> writeRelated)
+        {
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            var updated = base.UpdateMany(books, connection, transaction);
+            if (updated != books.Count)
+            {
+                throw new ModelConflictException(typeof(Book), 0, "Books changed before their update could be saved.");
+            }
+
+            writeRelated(connection, transaction);
+            transaction.Commit();
+        }
+
+        public void DeleteManyAtomic(IEnumerable<int> ids, IEnumerable<int> deletedFileIds = null)
+        {
+            var bookIds = ids.Distinct().ToArray();
+            if (bookIds.Length == 0) return;
+
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            foreach (var deletedFiles in (deletedFileIds ?? Enumerable.Empty<int>()).Distinct().Chunk(SqliteVariableLimit.MaxParameters))
+            {
+                var filePredicate = _database.DatabaseType == DatabaseType.PostgreSQL ? "= ANY(@ids)" : "IN @ids";
+                connection.Execute($"DELETE FROM \"BookFiles\" WHERE \"Id\" {filePredicate}", new { ids = deletedFiles }, transaction);
+            }
+            foreach (var chunk in bookIds.Chunk(_database.DatabaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters : bookIds.Length))
+            {
+                var predicate = _database.DatabaseType == DatabaseType.PostgreSQL ? "= ANY(@ids)" : "IN @ids";
+                var editions = $"SELECT \"Id\" FROM \"Editions\" WHERE \"BookId\" {predicate}";
+                var parameters = new { ids = chunk };
+                // Only files confirmed by the deletion executor can lose their records.
+                // Anything left must remain visible even when its book is removed.
+                connection.Execute($"UPDATE \"BookFiles\" SET \"EditionId\" = 0 WHERE \"EditionId\" IN ({editions})", parameters, transaction);
+                connection.Execute($"DELETE FROM \"Editions\" WHERE \"BookId\" {predicate}", parameters, transaction);
+                base.DeleteMany(chunk, connection, transaction);
+            }
+
+            transaction.Commit();
+        }
+
         public void SetAuthorId(Book book)
         {
             if (book == null)
@@ -79,7 +126,7 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            SetFields(book, b => b.AuthorId);
+            SetAuthorId(new List<Book> { book });
         }
 
         public void SetAuthorId(IList<Book> books)
@@ -90,7 +137,12 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            SetFields(safeBooks, b => b.AuthorId);
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            var writer = new LibraryIdentityWriter(connection, transaction, _database.DatabaseType, null);
+            foreach (var group in safeBooks.GroupBy(book => book.AuthorId))
+                writer.ReassignBooks(group.Select(book => book.Id).ToArray(), group.Key);
+            transaction.Commit();
         }
 
         public IEnumerable<Book> FindExisting(IEnumerable<int> ids)
@@ -98,9 +150,49 @@ namespace NzbDrone.Core.Books
             return FindMany(ids);
         }
 
+        public List<Book> GetImportListBookIdentities()
+        {
+            // This snapshot resolves ownership only. Import-list writes reload their selected rows.
+            return _database.Query<Book>(@"SELECT ""Id"", ""AuthorId"", ""MediaType"", ""Title"",
+                ""HardcoverBookId"", ""GoodreadsWorkId"", ""OpenLibraryWorkId"", ""ProviderIds"",
+                ""GoodreadsBookId"", ""OpenLibraryEditionId"", ""GoogleBooksId"", ""ASIN"", ""AudibleASIN"", ""ISBN10"", ""ISBN13""
+                FROM ""Books""").ToList();
+        }
+
         public List<Book> GetBooks(int authorId)
         {
             return Query(s => s.AuthorId == authorId);
+        }
+
+        public List<int> GetLibraryBookIds(IEnumerable<int> bookIds = null)
+        {
+            var requestedBookIds = bookIds?.Distinct().ToArray();
+            if (requestedBookIds != null && requestedBookIds.Length == 0)
+            {
+                return new List<int>();
+            }
+
+            var databaseType = _database.DatabaseType;
+            var bookIdPredicate = requestedBookIds == null ? null : databaseType == DatabaseType.PostgreSQL ? "= ANY(@BookIds)" : "IN @BookIds";
+            var sql = $@"SELECT b.""Id"" FROM ""Books"" b WHERE {BuildLibraryBookClause("b", bookIdPredicate)}";
+
+            if (requestedBookIds == null)
+            {
+                return _database.Query<int>(sql).ToList();
+            }
+
+            if (databaseType == DatabaseType.PostgreSQL)
+            {
+                return _database.Query<int>(sql, new { BookIds = requestedBookIds }).ToList();
+            }
+
+            var matchingBookIds = new List<int>();
+            foreach (var batch in requestedBookIds.Chunk(SqliteVariableLimit.MaxParameters))
+            {
+                matchingBookIds.AddRange(_database.Query<int>(sql, new { BookIds = batch }).ToList());
+            }
+
+            return matchingBookIds;
         }
 
 	        public List<Book> GetLastBooks(IEnumerable<int> authorIds)
@@ -192,6 +284,47 @@ namespace NzbDrone.Core.Books
 	                return Query(outer);
 	            }
 	        }
+
+        public Dictionary<string, List<int>> FindIdsByProviderIds(string provider, IEnumerable<string> ids)
+        {
+            var columns = provider switch
+            {
+                "hc" => new[] { "HardcoverBookId" },
+                "gr" => new[] { "GoodreadsWorkId" },
+                "ol" => new[] { "OpenLibraryEditionId", "OpenLibraryWorkId" },
+                "gb" => new[] { "GoogleBooksId" },
+                "az" => new[] { "ASIN", "AudibleASIN" },
+                _ => Array.Empty<string>()
+            };
+            var values = ids.Distinct().ToArray();
+            var result = values.ToDictionary(id => id, _ => new List<int>());
+            if (columns.Length == 0 || values.Length == 0)
+            {
+                return result;
+            }
+
+            using var connection = _database.OpenConnection();
+            foreach (var chunk in values.Chunk(_database.DatabaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters : values.Length))
+            {
+                var inClause = _database.DatabaseType == DatabaseType.PostgreSQL ? "= ANY(@ids)" : "IN @ids";
+                // Separate indexed branches avoid a media-type scan; both formats are needed by the lookup response.
+                var sql = string.Join(" UNION ", columns.Select(column =>
+                    $"SELECT \"Id\", \"{column}\" AS \"ProviderId\" FROM \"Books\" WHERE \"{column}\" {inClause}"));
+                foreach (var match in connection.Query<(int Id, string ProviderId)>(sql, new { ids = chunk }))
+                {
+                    result[match.ProviderId].Add(match.Id);
+                }
+            }
+
+            return result;
+        }
+
+        public IReadOnlySet<BookMediaType> GetMediaTypesByAuthor(int authorId)
+        {
+            using var connection = _database.OpenConnection();
+            return connection.Query<BookMediaType>(
+                "SELECT DISTINCT \"MediaType\" FROM \"Books\" WHERE \"AuthorId\" = @authorId", new { authorId }).ToHashSet();
+        }
 
         public List<Book> GetBooksByAuthorId(int authorId)
         {
@@ -378,10 +511,42 @@ namespace NzbDrone.Core.Books
                     .FirstOrDefault();
 		        }
 
-	        public Book FindBySlug(string titleSlug)
-	        {
-	            return Query(s => s.TitleSlug == titleSlug).SingleOrDefault();
-	        }
+        private string SlugKey => _database.DatabaseType == DatabaseType.PostgreSQL
+            ? "lower(\"Books\".\"TitleSlug\") COLLATE \"C\"" : "lower(\"Books\".\"TitleSlug\")";
+
+        public List<Book> FindBySlug(string titleSlug)
+        {
+            // The leading index column is the media side; an unscoped link can return both.
+            return Query(Builder().Where($"\"Books\".\"MediaType\" IN ({(int)BookMediaType.Audiobook}, {(int)BookMediaType.Ebook}) AND {SlugKey} = @slug",
+                new { slug = titleSlug?.ToLowerInvariant() }));
+        }
+
+        public List<Book> FindTitleSlugConflicts(IEnumerable<string> slugs, IDbConnection connection = null, IDbTransaction transaction = null)
+        {
+            var matches = new Dictionary<int, Book>();
+            // Exact slug plus its numeric-suffix range; no whole-catalog materialization.
+            foreach (var chunk in slugs.Distinct(StringComparer.Ordinal).Chunk(SqliteVariableLimit.MaxParameters / 3))
+            {
+                var predicates = new List<string>();
+                var parameters = new DynamicParameters();
+                for (var i = 0; i < chunk.Length; i++)
+                {
+                    parameters.Add($"slug{i}", chunk[i]);
+                    parameters.Add($"start{i}", chunk[i] + "_0");
+                    parameters.Add($"end{i}", chunk[i] + "_:");
+                    // SQL LENGTH counts characters on both engines, unlike UTF-16 string.Length.
+                    var suffix = $"substr({SlugKey}, LENGTH(@slug{i}) + 2)";
+                    var numericSuffix = _database.DatabaseType == DatabaseType.PostgreSQL
+                        ? $"{suffix} ~ '^[0-9]+$'"
+                        : $"{suffix} <> '' AND {suffix} NOT GLOB '*[^0-9]*'";
+                    predicates.Add($"(\"MediaType\" IN ({(int)BookMediaType.Audiobook}, {(int)BookMediaType.Ebook}) AND {SlugKey} = @slug{i}) OR (\"MediaType\" IN ({(int)BookMediaType.Audiobook}, {(int)BookMediaType.Ebook}) AND {SlugKey} >= @start{i} AND {SlugKey} < @end{i} AND {numericSuffix})");
+                }
+                var sql = $"SELECT \"Id\", \"AuthorId\", \"MediaType\", \"TitleSlug\" FROM \"Books\" WHERE {string.Join(" OR ", predicates)}";
+                var rows = connection == null ? _database.Query<Book>(sql, parameters) : connection.Query<Book>(sql, parameters, transaction);
+                foreach (var book in rows) matches[book.Id] = book;
+            }
+            return matches.Values.ToList();
+        }
 
         //x.Id == null is converted to SQL, so warning incorrect
 #pragma warning disable CS0472
@@ -501,10 +666,16 @@ namespace NzbDrone.Core.Books
 
         public PagingSpec<Book> BooksWhereCutoffUnmet(PagingSpec<Book> pagingSpec, List<QualitiesBelowCutoff> qualitiesBelowCutoff)
         {
-            pagingSpec.Records = GetPagedRecords(BooksWhereCutoffUnmetBuilder(qualitiesBelowCutoff), pagingSpec, PagedQuery);
+            // Each result is one book. Child-table columns are not single-valued
+            // after grouping, so use the normal default for those sort requests.
+            var sortTable = TableMapping.Mapper.GetSortKey(pagingSpec.SortKey).Table;
+            if (sortTable != null && sortTable != "Books" && sortTable != "Authors")
+                pagingSpec.SortKey = null;
 
-            var countTemplate = $"SELECT COUNT(*) FROM (SELECT /**select**/ FROM \"{TableMapping.Mapper.TableNameMapping(typeof(Book))}\" /**join**/ /**innerjoin**/ /**leftjoin**/ /**where**/ /**groupby**/ /**having**/) AS \"Inner\"";
-            pagingSpec.TotalRecords = GetPagedRecordCount(BooksWhereCutoffUnmetBuilder(qualitiesBelowCutoff).Select(typeof(Book)), pagingSpec, countTemplate);
+            pagingSpec.Records = GetPagedRecords(BooksWhereCutoffUnmetBuilder(qualitiesBelowCutoff)
+                .GroupBy<Book>(book => book.Id).GroupBy<Author>(author => author.Id), pagingSpec, PagedQuery);
+            pagingSpec.TotalRecords = GetPagedRecordCount(BooksWhereCutoffUnmetBuilder(qualitiesBelowCutoff)
+                .SelectCountDistinct<Book>(book => book.Id), pagingSpec);
 
             return pagingSpec;
         }
@@ -537,109 +708,33 @@ namespace NzbDrone.Core.Books
             return Query(builder);
         }
 
-        public void SetMonitoredFlat(Book book, bool monitored)
-        {
-            // Must check MediaType to set only the appropriate monitoring flag
-            var actualBook = Get(book.Id);
-            if (actualBook.MediaType == BookMediaType.Audiobook)
-            {
-                book.AudiobookMonitored = monitored;
-                book.EbookMonitored = false;
-                SetFields(book, p => p.AudiobookMonitored, p => p.EbookMonitored);
-            }
-            else if (actualBook.MediaType == BookMediaType.Ebook)
-            {
-                book.AudiobookMonitored = false;
-                book.EbookMonitored = monitored;
-                SetFields(book, p => p.AudiobookMonitored, p => p.EbookMonitored);
-            }
-
-            ModelUpdated(book, true);
-        }
-
         public void SetMonitored(IEnumerable<int> ids, bool monitored)
         {
-            // Must fetch actual books to check MediaType
-            var actualBooks = Get(ids);
-            foreach (var book in actualBooks)
-            {
-                if (book.MediaType == BookMediaType.Audiobook)
-                {
-                    book.AudiobookMonitored = monitored;
-                    book.EbookMonitored = false;
-                    SetFields(book, p => p.AudiobookMonitored, p => p.EbookMonitored);
-                }
-                else if (book.MediaType == BookMediaType.Ebook)
-                {
-                    book.AudiobookMonitored = false;
-                    book.EbookMonitored = monitored;
-                    SetFields(book, p => p.AudiobookMonitored, p => p.EbookMonitored);
-                }
-            }
+            var books = Get(ids).Where(book => book.MediaType is BookMediaType.Audiobook or BookMediaType.Ebook).ToList();
+            books.ForEach(book => book.SetMonitored(monitored));
+            SetMonitoring(books);
         }
 
-        public void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored)
+        public void SetMonitoring(IList<Book> books)
         {
-            var idList = ids?.Distinct().ToList() ?? new List<int>();
-            if (!idList.Any())
-            {
-                return;
-            }
+            if (books.Count == 0) return;
+            if (books.Any(book => book.Id == 0)) throw new InvalidOperationException("Can't update model with ID 0");
 
-            string sql;
-            if (mediaType == "audiobook")
+            var sql = "UPDATE \"Books\" SET \"AudiobookMonitored\" = @AudiobookMonitored, \"EbookMonitored\" = @EbookMonitored WHERE \"Id\" "
+                + (_database.DatabaseType == DatabaseType.PostgreSQL ? "= ANY(@Ids)" : "IN @Ids");
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            foreach (var group in books.GroupBy(book => (book.AudiobookMonitored, book.EbookMonitored)))
             {
-                sql = _database.DatabaseType == DatabaseType.PostgreSQL
-                    ? "UPDATE \"Books\" SET \"AudiobookMonitored\" = @monitored, \"EbookMonitored\" = @other WHERE \"Id\" = ANY(@Ids)"
-                    : "UPDATE \"Books\" SET \"AudiobookMonitored\" = @monitored, \"EbookMonitored\" = @other WHERE \"Id\" IN @Ids";
-            }
-            else if (mediaType == "ebook")
-            {
-                sql = _database.DatabaseType == DatabaseType.PostgreSQL
-                    ? "UPDATE \"Books\" SET \"EbookMonitored\" = @monitored, \"AudiobookMonitored\" = @other WHERE \"Id\" = ANY(@Ids)"
-                    : "UPDATE \"Books\" SET \"EbookMonitored\" = @monitored, \"AudiobookMonitored\" = @other WHERE \"Id\" IN @Ids";
-            }
-            else
-            {
-                return;
-            }
-
-            using (var conn = _database.OpenConnection())
-            {
-                // SQLite has a default ~999 bind-variable limit; Dapper expands IN lists into many parameters.
-                if (_database.DatabaseType == DatabaseType.SQLite && idList.Count > SqliteVariableLimit.MaxParameters)
+                var ids = group.Select(book => book.Id).Distinct().ToArray();
+                var batchSize = _database.DatabaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters - 2 : ids.Length;
+                foreach (var batch in ids.Chunk(batchSize))
                 {
-                    using (var tran = conn.BeginTransaction())
-                    {
-                        foreach (var batch in idList.Chunk(SqliteVariableLimit.MaxParameters))
-                        {
-                            conn.Execute(sql, new { monitored = monitored, other = false, Ids = batch.ToArray() }, tran);
-                        }
-
-                        tran.Commit();
-                    }
-                }
-                else
-                {
-                    conn.Execute(sql, new { monitored = monitored, other = false, Ids = idList.ToArray() });
+                    connection.Execute(sql, new { group.Key.AudiobookMonitored, group.Key.EbookMonitored, Ids = batch }, transaction);
                 }
             }
-        }
 
-        public Book FindByTitle(int authorId, string title)
-        {
-            var cleanTitle = Parser.Parser.CleanAuthorName(title);
-
-            if (string.IsNullOrEmpty(cleanTitle))
-            {
-                cleanTitle = title;
-            }
-
-            // With multiple copies, we need to handle multiple results
-            // Return the first one found (prioritize by lowest Id for consistency)
-            return Query(s => (s.CleanTitle == cleanTitle || s.Title == title) && s.AuthorId == authorId)
-                .OrderBy(s => s.Id)
-                .FirstOrDefault();
+            transaction.Commit();
         }
 
         public List<Book> GetAuthorBooksWithFiles(Author author)
@@ -656,7 +751,7 @@ namespace NzbDrone.Core.Books
             return Query(Builder()
                          .Join<Book, SeriesBookLink>((b, sbl) => b.Id == sbl.BookId)
                          .Where<SeriesBookLink>(sbl => sbl.SeriesId == seriesId))
-                         .OrderBy(b => b.SeriesLinks?.FirstOrDefault()?.SeriesPosition ?? 0).ToList();
+                         .OrderBy(b => BookSeries.PositionOrder(b.SeriesLinks?.FirstOrDefault(link => link.SeriesId == seriesId)?.Position)).ToList();
         }
 
         public void UpdateMonitoringByAuthorAndMediaType(int authorId, BookMediaType mediaType, bool monitored, IEnumerable<int> exceptBookIds = null)
@@ -728,7 +823,7 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null)
+        public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null, bool? library = null)
         {
             var sortKeyNormalized = sortKey?.Trim().ToLowerInvariant();
             var sortDirectionNormalized = sortDirection?.Trim().ToUpperInvariant() == "DESC" ? "DESC" : "ASC";
@@ -778,7 +873,7 @@ namespace NzbDrone.Core.Books
             var missingOrWanted = missing == true || wanted == true;
             var effectiveMonitored = missingOrWanted ? true : monitored;
 
-            if (!effectiveMonitored.HasValue && !includeUnmonitored)
+            if (!effectiveMonitored.HasValue && !includeUnmonitored && library != true)
             {
                 var trueIndicator = _database.DatabaseType == DatabaseType.PostgreSQL ? "true" : "1";
                 whereConditions.Add($"(b.\"AudiobookMonitored\" = {trueIndicator} OR b.\"EbookMonitored\" = {trueIndicator})");
@@ -823,22 +918,20 @@ namespace NzbDrone.Core.Books
 
             if (missingOrWanted || downloaded.HasValue)
             {
-                var existsClause = normalizedMediaTypeForFiles != null
-                    ? "EXISTS (SELECT 1 FROM \"Editions\" e INNER JOIN \"BookFiles\" bf ON bf.\"EditionId\" = e.\"Id\" WHERE e.\"BookId\" = b.\"Id\" AND (bf.\"MediaType\" IS NULL OR bf.\"MediaType\" = '' OR LOWER(bf.\"MediaType\") = @bookFileMediaType))"
-                    : "EXISTS (SELECT 1 FROM \"Editions\" e INNER JOIN \"BookFiles\" bf ON bf.\"EditionId\" = e.\"Id\" WHERE e.\"BookId\" = b.\"Id\")";
+                var existsClause = "EXISTS (SELECT 1 FROM \"Editions\" e INNER JOIN \"BookFiles\" bf ON bf.\"EditionId\" = e.\"Id\" WHERE e.\"BookId\" = b.\"Id\")";
 
                 whereConditions.Add(missingOrWanted || downloaded == false ? $"NOT {existsClause}" : existsClause);
-
-                if (normalizedMediaTypeForFiles != null)
-                {
-                    parameters.Add("bookFileMediaType", normalizedMediaTypeForFiles);
-                }
             }
 
             if (wanted == true)
             {
                 whereConditions.Add("b.\"ReleaseDate\" <= @wantedCutoff");
                 parameters.Add("wantedCutoff", DateTime.UtcNow);
+            }
+
+            if (library == true)
+            {
+                whereConditions.Add(BuildLibraryBookClause("b"));
             }
 
             var whereClause = whereConditions.Any()
@@ -873,7 +966,7 @@ namespace NzbDrone.Core.Books
             using (var conn = _database.OpenConnection())
             {
                 var results = conn.Query<BookBucketRow>(sql, parameters);
-                var footerStatistics = GetBookFooterStatistics(conn, includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
+                var footerStatistics = GetBookFooterStatistics(conn, includeUnmonitored, mediaType, downloaded, monitored, missing, wanted, library);
 
                 var buckets = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 var cumulativeIndexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -912,9 +1005,9 @@ namespace NzbDrone.Core.Books
             public int StartIndex { get; set; }
         }
 
-        private BookFooterStatistics GetBookFooterStatistics(IDbConnection conn, bool includeUnmonitored, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null)
+        private BookFooterStatistics GetBookFooterStatistics(IDbConnection conn, bool includeUnmonitored, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null, bool? library = null)
         {
-            var builder = CreatePagedBooksBuilder(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
+            var builder = CreatePagedBooksBuilder(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted, library);
             var template = builder.AddTemplate(@"
                 WITH filtered_books AS (
                     SELECT
@@ -953,7 +1046,7 @@ namespace NzbDrone.Core.Books
             return conn.QuerySingleOrDefault<BookFooterStatistics>(template.RawSql, parameters) ?? new BookFooterStatistics();
         }
 
-        private SqlBuilder CreatePagedBooksBuilder(bool includeUnmonitored, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null)
+        private SqlBuilder CreatePagedBooksBuilder(bool includeUnmonitored, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null, bool? library = null)
         {
             var builder = Builder();
             string normalizedMediaTypeForFiles = null;
@@ -962,7 +1055,7 @@ namespace NzbDrone.Core.Books
             var missingOrWanted = missing == true || wanted == true;
             var effectiveMonitored = missingOrWanted ? true : monitored;
 
-            if (!effectiveMonitored.HasValue && !includeUnmonitored)
+            if (!effectiveMonitored.HasValue && !includeUnmonitored && library != true)
             {
                 var trueIndicator = _database.DatabaseType == DatabaseType.PostgreSQL ? "true" : "1";
                 builder.Where($"(\"AudiobookMonitored\" = {trueIndicator} OR \"EbookMonitored\" = {trueIndicator})");
@@ -1010,17 +1103,8 @@ namespace NzbDrone.Core.Books
             if (missingOrWanted || downloaded.HasValue)
             {
                 var hasFiles = !(missingOrWanted || downloaded == false);
-                if (normalizedMediaTypeForFiles != null)
-                {
-                    var existsClause = $@"EXISTS (SELECT 1 FROM ""Editions"" e INNER JOIN ""BookFiles"" bf ON bf.""EditionId"" = e.""Id"" WHERE e.""BookId"" = ""{tableName}"".""Id"" AND (bf.""MediaType"" IS NULL OR bf.""MediaType"" = '' OR LOWER(bf.""MediaType"") = @bookFileMediaType))";
-                    builder.Where(hasFiles ? existsClause : $"NOT {existsClause}",
-                        new { bookFileMediaType = normalizedMediaTypeForFiles });
-                }
-                else
-                {
-                    var existsClause = $@"EXISTS (SELECT 1 FROM ""Editions"" e INNER JOIN ""BookFiles"" bf ON bf.""EditionId"" = e.""Id"" WHERE e.""BookId"" = ""{tableName}"".""Id"")";
-                    builder.Where(hasFiles ? existsClause : $"NOT {existsClause}");
-                }
+                var existsClause = $@"EXISTS (SELECT 1 FROM ""Editions"" e INNER JOIN ""BookFiles"" bf ON bf.""EditionId"" = e.""Id"" WHERE e.""BookId"" = ""{tableName}"".""Id"")";
+                builder.Where(hasFiles ? existsClause : $"NOT {existsClause}");
             }
 
             if (wanted == true)
@@ -1028,7 +1112,27 @@ namespace NzbDrone.Core.Books
                 builder.Where($@"""{tableName}"".""ReleaseDate"" <= @wantedCutoff", new { wantedCutoff = DateTime.UtcNow });
             }
 
+            if (library == true)
+            {
+                builder.Where(BuildLibraryBookClause($@"""{tableName}"""));
+            }
+
             return builder;
+        }
+
+        private string BuildLibraryBookClause(string bookReference, string bookIdPredicate = null)
+        {
+            var trueIndicator = _database.DatabaseType == DatabaseType.PostgreSQL ? "true" : "1";
+            var monitoredScope = bookIdPredicate == null ? string.Empty : $@" AND library_book.""Id"" {bookIdPredicate}";
+            var ownedScope = bookIdPredicate == null ? string.Empty : $@" WHERE e.""BookId"" {bookIdPredicate}";
+            // Keeping the monitoring union inside membership permits a spillable join; scoped eligibility reads only candidate-owned evidence.
+            return $@"{bookReference}.""Id"" IN (
+                SELECT library_book.""Id"" FROM ""Books"" library_book
+                WHERE ((library_book.""MediaType"" = {(int)BookMediaType.Audiobook} AND library_book.""AudiobookMonitored"" = {trueIndicator})
+                    OR (library_book.""MediaType"" = {(int)BookMediaType.Ebook} AND library_book.""EbookMonitored"" = {trueIndicator})){monitoredScope}
+                UNION
+                SELECT e.""BookId"" FROM ""Editions"" e
+                INNER JOIN ""BookFiles"" bf ON bf.""EditionId"" = e.""Id""{ownedScope})";
         }
 
         private string BuildAuthorMonitoredExistsClause(string bookReference, string normalizedMediaType)
@@ -1044,10 +1148,10 @@ namespace NzbDrone.Core.Books
             return $@"EXISTS (SELECT 1 FROM ""Authors"" monitoring_author WHERE monitoring_author.""Id"" = {bookReference}.""AuthorId"" AND ({authorGate}))";
         }
 
-        public List<int> GetBookIds(bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null)
+        public List<int> GetBookIds(bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null, bool? library = null)
         {
             var tableName = TableMapping.Mapper.TableNameMapping(typeof(Book));
-            var builder = CreatePagedBooksBuilder(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
+            var builder = CreatePagedBooksBuilder(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted, library);
             var template = builder.AddTemplate($"SELECT \"{tableName}\".\"Id\" FROM \"{tableName}\" /**where**/");
 
             using (var conn = _database.OpenConnection())
@@ -1056,7 +1160,7 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        public PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null)
+        public PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null, bool? library = null)
         {
             offset = Math.Max(0, offset);
             pageSize = Math.Clamp(pageSize, 1, 500);
@@ -1083,13 +1187,13 @@ namespace NzbDrone.Core.Books
 
             var normalizedSortKey = sortKey.ToLowerInvariant();
             var sortColumn = columnMap[normalizedSortKey];
-            var countBuilder = CreatePagedBooksBuilder(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
+            var countBuilder = CreatePagedBooksBuilder(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted, library);
             var countTemplate = countBuilder.AddTemplate($"SELECT COUNT(*) FROM \"{tableName}\" /**where**/");
 
             using (var conn = _database.OpenConnection())
             {
                 var totalCount = conn.QuerySingle<int>(countTemplate.RawSql, countTemplate.Parameters);
-                var builder = CreatePagedBooksBuilder(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
+                var builder = CreatePagedBooksBuilder(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted, library);
                 builder.Select(typeof(Book));
 
                 if (normalizedSortKey == "sizeondisk")

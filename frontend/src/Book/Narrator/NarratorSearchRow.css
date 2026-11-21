@@ -82,16 +82,14 @@
   width: 150px;
 }
 
+.addButton {
+  max-width: 100%;
+}
+
 .inLibraryStatus {
   display: inline-flex;
   align-items: center;
   color: var(--successColor);
-  font-weight: bold;
-  font-size: 14px;
-}
-
-.monitoredStatus {
-  color: var(--disabledColor);
   font-weight: bold;
   font-size: 14px;
 }
@@ -102,18 +100,38 @@
 }
 
 @media only screen and (max-width: 600px) {
+  .narrator {
+    width: 100%;
+  }
+
   .narratorContainer {
     align-items: flex-start;
+    flex-direction: column;
     gap: 10px;
   }
 
+  .narratorDetails {
+    min-width: 0;
+    width: 100%;
+    overflow-wrap: anywhere;
+  }
+
   .bookCover {
-    width: 82px;
-    height: 122px;
+    width: 35px;
+    height: 35px;
   }
 
   .action {
-    width: auto;
-    min-width: 96px;
+    width: 1%;
+    white-space: normal;
+  }
+
+  .addButton {
+    white-space: normal;
+  }
+
+  .inLibraryStatus {
+    display: inline;
+    overflow-wrap: normal;
   }
 }

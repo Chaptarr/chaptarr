@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
@@ -21,6 +23,17 @@ namespace NzbDrone.Core.Books
         private readonly ISeriesBookLinkService _linkService;
         private readonly IRefreshSeriesBookLinkService _refreshLinkService;
         private readonly Logger _logger;
+        private readonly ConcurrentDictionary<string, object> _seriesRefreshLocks = new(StringComparer.OrdinalIgnoreCase);
+
+        private sealed class AuthorScopedSeries : Series
+        {
+            public AuthorScopedSeries(Series source, List<SeriesBookLink> links)
+            {
+                UseMetadataFrom(source);
+                UseDbFieldsFrom(source);
+                LinkItems = links;
+            }
+        }
 
         public RefreshSeriesService(IBookService bookService,
                                     ISeriesService seriesService,
@@ -93,10 +106,9 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        private Dictionary<string, List<Book>> BuildLocalBookProviderLookup(int authorId)
+        private Dictionary<string, List<Book>> BuildLocalBookProviderLookup(int authorId, List<Book> localBooks)
         {
             var lookup = new Dictionary<string, List<Book>>(StringComparer.OrdinalIgnoreCase);
-            var localBooks = _bookService.GetBooksByAuthor(authorId) ?? new List<Book>();
 
             foreach (var book in localBooks.Where(b => b != null))
             {
@@ -158,9 +170,8 @@ namespace NzbDrone.Core.Books
                         Book = matchingBook,
                         BookId = matchingBook.Id,
 
-                        // Null means the metadata API didn't surface a primary flag for this slot;
-                        // default to true so not-yet-refreshed series keep their existing membership.
-                        IsPrimary = seriesBook.IsPrimary ?? true,
+                        // Primary status is metadata; an unknown flag does not remove the membership.
+                        IsPrimary = seriesBook.IsPrimary,
                         SeriesInstanceType = seriesInstanceType
                     });
                 }
@@ -169,9 +180,9 @@ namespace NzbDrone.Core.Books
             return result;
         }
 
-        private List<Series> FilterRemoteSeriesToLocalBooks(int authorId, List<Series> remoteSeries)
+        private List<Series> FilterRemoteSeriesToLocalBooks(int authorId, List<Series> remoteSeries, List<Book> localBooks)
         {
-            var localBookLookup = BuildLocalBookProviderLookup(authorId);
+            var localBookLookup = BuildLocalBookProviderLookup(authorId, localBooks);
             if (localBookLookup.Count == 0)
             {
                 _logger.Debug("[SERIES] No local provider IDs available for authorId {0}; no remote series can be linked", authorId);
@@ -183,7 +194,7 @@ namespace NzbDrone.Core.Books
 
             foreach (var remote in remoteSeries)
             {
-                if (remote?.LinkItems?.Any() == true)
+                if (remote?.SeriesBooks?.Any() != true && remote?.LinkItems?.Any() == true)
                 {
                     filtered.Add(remote);
                     linkedBookCount += remote.LinkItems.Count;
@@ -210,7 +221,7 @@ namespace NzbDrone.Core.Books
             return filtered;
         }
 
-        protected override RemoteData GetRemoteData(Series local, List<Series> remote, Author data)
+        protected override RemoteData GetRemoteData(Series local, List<Series> remote, Author data, RefreshContext context)
         {
             // FIX: Handle potential duplicates by using FirstOrDefault instead of SingleOrDefault
             // This can happen when multiple series have the same provider IDs
@@ -245,7 +256,11 @@ namespace NzbDrone.Core.Books
 
         protected override UpdateResult UpdateEntity(Series local, Series remote)
         {
-            var remoteForUpdate = RefreshEntityCopy.CloneSeries(remote);
+            // Compare what the metadata writer will store, including retained optional fields,
+            // so an unchanged snapshot does not report another update on every refresh.
+            var remoteForUpdate = new Series();
+            remoteForUpdate.UseMetadataFrom(local);
+            remoteForUpdate.UseMetadataFrom(remote);
             remoteForUpdate.UseDbFieldsFrom(local);
 
             if (local.Equals(remoteForUpdate))
@@ -278,17 +293,16 @@ namespace NzbDrone.Core.Books
         protected override void DeleteEntity(Series local, bool deleteFiles)
         {
             _logger.Trace($"Removing links for series {local}");
-            var children = GetLocalChildren(local, null);
+            var children = GetLocalChildren(local, null, null);
             _linkService.DeleteMany(children);
 
-            if (!_linkService.GetLinksBySeries(local.Id).Any())
+            if (_seriesService.DeleteIfUnlinked(local.Id))
             {
                 _logger.Trace($"Series {local} has no links remaining, removing");
-                _seriesService.Delete(local.Id);
             }
         }
 
-        protected override List<SeriesBookLink> GetRemoteChildren(Series local, Series remote)
+        protected override List<SeriesBookLink> GetRemoteChildren(Series local, Series remote, RefreshContext context)
         {
             var result = new List<SeriesBookLink>();
             var seriesInstanceType = local?.IsNarratorVariant == true ? "narrator_variant" : "original";
@@ -359,9 +373,8 @@ namespace NzbDrone.Core.Books
                             Book = matchingBook,
                             BookId = matchingBook.Id,
 
-                            // Null means the metadata API didn't surface a primary flag for this slot;
-                            // default to true so not-yet-refreshed series keep their existing membership.
-                            IsPrimary = seriesBook.IsPrimary ?? true,
+                            // Primary status is metadata; an unknown flag does not remove the membership.
+                            IsPrimary = seriesBook.IsPrimary,
                             SeriesInstanceType = seriesInstanceType
                         };
 
@@ -406,10 +419,11 @@ namespace NzbDrone.Core.Books
                     })
                     .Select(g =>
                     {
-                        // Prefer links with a real parsed series position, then lowest position.
+                        // Keep provider positions intact; integer parsing loses decimal/range ordering.
                         return g
-                            .OrderByDescending(l => l.SeriesPosition > 0)
-                            .ThenBy(l => l.SeriesPosition <= 0 ? int.MaxValue : l.SeriesPosition)
+                            .OrderBy(l => string.IsNullOrWhiteSpace(l.Position))
+                            .ThenBy(l => BookSeries.PositionOrder(l.Position))
+                            .ThenBy(l => l.Position, StringComparer.Ordinal)
                             .First();
                     })
                     .ToList();
@@ -429,13 +443,14 @@ namespace NzbDrone.Core.Books
             return result;
         }
 
-        protected override List<SeriesBookLink> GetLocalChildren(Series entity, List<SeriesBookLink> remoteChildren)
+        protected override List<SeriesBookLink> GetLocalChildren(Series entity, List<SeriesBookLink> remoteChildren, RefreshContext context)
         {
-            // Get all links for this series
-            return _linkService.GetLinksBySeries(entity.Id);
+            return entity is AuthorScopedSeries
+                ? entity.LinkItems
+                : throw new InvalidOperationException("Series reconciliation requires an author-scoped link snapshot.");
         }
 
-        protected override Tuple<SeriesBookLink, List<SeriesBookLink>> GetMatchingExistingChildren(List<SeriesBookLink> existingChildren, SeriesBookLink remote)
+        protected override Tuple<SeriesBookLink, List<SeriesBookLink>> GetMatchingExistingChildren(List<SeriesBookLink> existingChildren, SeriesBookLink remote, RefreshContext context)
         {
             var existingChild = existingChildren.SingleOrDefault(x => x.BookId == remote.Book.Value.Id);
             var mergeChildren = new List<SeriesBookLink>();
@@ -497,12 +512,20 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        protected override bool RefreshChildren(SortedChildren localChildren, List<SeriesBookLink> remoteChildren, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
+        protected override bool RefreshChildren(SortedChildren localChildren, List<SeriesBookLink> remoteChildren, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, RefreshContext context)
         {
             return _refreshLinkService.RefreshSeriesBookLinkInfo(localChildren.Added, localChildren.Updated, localChildren.Merged, localChildren.Deleted, localChildren.UpToDate, remoteChildren, forceUpdateFileTags);
         }
 
         public bool RefreshSeriesInfo(int authorId, List<Series> remoteSeries, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
+        {
+            lock (BookService.GetWantedEditionLock(authorId))
+            {
+                return RefreshAuthorSeries(authorId, remoteSeries, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate);
+            }
+        }
+
+        private bool RefreshAuthorSeries(int authorId, List<Series> remoteSeries, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
         {
             remoteSeries ??= new List<Series>();
 
@@ -538,7 +561,7 @@ namespace NzbDrone.Core.Books
             var providerBackedRemoteSeries = goodreadsBackedRemoteSeries
                 .GroupBy(s => $"{(int)s.MediaType}|{s.GoodreadsSeriesId?.Trim()}",
                     StringComparer.OrdinalIgnoreCase)
-                .Select(g => g.First())
+                .Select(g => RefreshEntityCopy.CloneSeries(g.First()))
                 .ToList();
 
             if (providerBackedRemoteSeries.Count != goodreadsBackedRemoteSeries.Count)
@@ -547,7 +570,9 @@ namespace NzbDrone.Core.Books
                     goodreadsBackedRemoteSeries.Count - providerBackedRemoteSeries.Count, authorId);
             }
 
-            providerBackedRemoteSeries = FilterRemoteSeriesToLocalBooks(authorId, providerBackedRemoteSeries);
+            var localBooks = _bookService.GetBooksByAuthor(authorId) ?? new List<Book>();
+            var localBookIds = localBooks.Select(b => b.Id).ToHashSet();
+            providerBackedRemoteSeries = FilterRemoteSeriesToLocalBooks(authorId, providerBackedRemoteSeries, localBooks);
             if (providerBackedRemoteSeries.Count == 0)
             {
                 _logger.Debug("[SERIES] No Goodreads-backed series could be linked to local books for authorId {0}; skipping refresh", authorId);
@@ -561,49 +586,76 @@ namespace NzbDrone.Core.Books
             // 2) provider ID lookup (so linkless-but-persisted series can still be repaired)
             var existingByAuthor = _seriesService.GetByAuthorId(authorId);
 
-            var existingBySeries = providerBackedRemoteSeries
-                .GroupBy(s => s.MediaType)
-                .SelectMany(g => _seriesService.FindById(
-                    g.Select(s => s.GoodreadsSeriesId)
-                        .Where(id => !id.IsNullOrWhiteSpace())
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToList(),
-                    g.Key))
-                .ToList();
-
-            var existing = existingByAuthor
-                .Concat(existingBySeries)
-                .Where(s => s != null && s.IsOriginal)
-                .GroupBy(s => s.Id)
-                .Select(g => g.First())
-                .ToList();
-
-            var toAdd = providerBackedRemoteSeries
-                .Where(remote => !existing.Any(local => MatchesRemoteSeries(local, remote)))
-                .ToList();
-
-            if (toAdd.Any())
+            // Shared identities must stay stable from discovery through link persistence/deletion.
+            // Ordered acquisition preserves batching without serializing unrelated authors' series.
+            var seriesLocks = existingByAuthor.Concat(providerBackedRemoteSeries)
+                .Select(series => $"{(int)series.MediaType}|{series.GoodreadsSeriesId ?? $"local:{series.Id}"}")
+                .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+                .Select(key => _seriesRefreshLocks.GetOrAdd(key, _ => new object())).ToList();
+            var acquired = 0;
+            try
             {
-                _seriesService.InsertMany(toAdd);
+                foreach (var seriesLock in seriesLocks)
+                {
+                    Monitor.Enter(seriesLock);
+                    acquired++;
+                }
+
+                var existingBySeries = providerBackedRemoteSeries
+                    .GroupBy(s => s.MediaType)
+                    .SelectMany(g => _seriesService.FindById(
+                        g.Select(s => s.GoodreadsSeriesId)
+                            .Where(id => !id.IsNullOrWhiteSpace())
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .ToList(),
+                        g.Key))
+                    .ToList();
+
+                var existing = existingByAuthor
+                    .Concat(existingBySeries)
+                    .Where(s => s != null && s.IsOriginal)
+                    .GroupBy(s => s.Id)
+                    .Select(g => g.First())
+                    .ToList();
+
+                var toAdd = providerBackedRemoteSeries
+                    .Where(remote => !existing.Any(local => MatchesRemoteSeries(local, remote)))
+                    .ToList();
+
+                if (toAdd.Any())
+                {
+                    _seriesService.InsertMany(toAdd);
+                }
+
+                // Refresh ALL existing + newly added series through the base-class path.
+                // - Matched originals get metadata + link reconciliation
+                // - Unmatched narrator variants are preserved via ShouldDelete=false
+                // - Legacy provider-id-less originals (if any slip through) are deleted via ShouldDelete=true
+                var all = existing
+                    .Concat(toAdd)
+                    .Where(s => s != null && s.IsOriginal && remoteMediaTypes.Contains(s.MediaType))
+                    .GroupBy(s => s.Id)
+                    .Select(g => g.First())
+                    .ToList();
+
+                foreach (var item in all)
+                {
+                    // Scope reconciliation to the refreshing author so shared series retain other authors' links.
+                    // A per-call copy also scopes removal when this author leaves a shared series.
+                    var scoped = new AuthorScopedSeries(item, _linkService.GetLinksBySeries(item.Id)
+                        .Where(link => localBookIds.Contains(link.BookId)).ToList());
+                    updated |= RefreshEntityInfo(scoped, providerBackedRemoteSeries, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate);
+                }
+
+                return updated;
             }
-
-            // Refresh ALL existing + newly added series through the base-class path.
-            // - Matched originals get metadata + link reconciliation
-            // - Unmatched narrator variants are preserved via ShouldDelete=false
-            // - Legacy provider-id-less originals (if any slip through) are deleted via ShouldDelete=true
-            var all = existing
-                .Concat(toAdd)
-                .Where(s => s != null && s.IsOriginal && remoteMediaTypes.Contains(s.MediaType))
-                .GroupBy(s => s.Id)
-                .Select(g => g.First())
-                .ToList();
-
-            foreach (var item in all)
+            finally
             {
-                updated |= RefreshEntityInfo(item, providerBackedRemoteSeries, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate);
+                for (var i = acquired - 1; i >= 0; i--)
+                {
+                    Monitor.Exit(seriesLocks[i]);
+                }
             }
-
-            return updated;
         }
     }
 }

@@ -118,21 +118,6 @@ export default {
     [SELECT_IMPORT_LIST_SCHEMA]: (state, { payload }) => {
       return selectProviderSchema(state, section, payload, (selectedSchema) => {
         selectedSchema.enableAutomaticAdd = true;
-        const implementation = selectedSchema.implementation?.value ?? selectedSchema.implementation;
-        const implementationName = selectedSchema.implementationName;
-
-        const isHardcoverLibraryImportList =
-          implementation === 'HardcoverLibraryImportList' ||
-          implementationName === 'Hardcover Library';
-
-        const isGoodreadsImportList =
-          (implementationName && implementationName.startsWith('Goodreads ')) ||
-          implementation === 'GoodreadsBookshelf' ||
-          implementation === 'GoodreadsListImportList' ||
-          implementation === 'GoodreadsSeriesImportList';
-
-        selectedSchema.shouldMonitor = (isHardcoverLibraryImportList || isGoodreadsImportList) ? 'specificBook' : 'entireAuthor';
-
         return selectedSchema;
       });
     }

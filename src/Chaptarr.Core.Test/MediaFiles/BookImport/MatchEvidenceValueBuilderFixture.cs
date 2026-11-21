@@ -8,6 +8,93 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     [TestFixture]
     public class MatchEvidenceValueBuilderFixture
     {
+        [TestCase("'")]
+        [TestCase("‘")]
+        [TestCase("’")]
+        [TestCase("ʼ")]
+        public void possessive_highlights_use_the_same_apostrophes_as_matching(string apostrophe)
+        {
+            var raw = "Frank Herbert" + apostrophe + "s Dune";
+            var builder = new MatchEvidenceValueBuilder();
+            builder.AddPhrase("embedded_tag", "TITLE", raw, "Frank Herberts Dune", "supporting", "title", "book", "Title proof");
+            Assert.That(Slice(builder.Build().Single()), Is.EqualTo(raw));
+        }
+
+        [Test]
+        public void supplementary_letters_should_distinguish_proof_and_preserve_highlights()
+        {
+            const string raw = "🌶️ Astorias𠀀Smut’s edition";
+            var sut = new MatchEvidenceValueBuilder();
+            sut.AddPhrase("embedded_tag", "TITLE", raw, "Astorias𠀀Smuts", "supporting", "title", "book", "Title proof");
+            var value = sut.Build().Single();
+            Assert.That(Slice(value, value.Ranges.Single()), Is.EqualTo("Astorias𠀀Smut’s"));
+
+            var other = new MatchEvidenceValueBuilder();
+            other.AddPhrase("embedded_tag", "TITLE", raw, "Astorias𠀁Smuts", "supporting", "title", "book", "Title proof");
+            Assert.That(other.Build().SelectMany(v => v.Ranges), Is.Empty);
+        }
+
+        [TestCase("Ready Player 𝟚", "Ready Player 2")]
+        [TestCase("Ready Player ②", "Ready Player 2")]
+        [TestCase("23 1/2 Lies", "23 ½ Lies")]
+        [TestCase("The 7 ½ Deaths of Evelyn Hardcastle", "The 7½ Deaths of Evelyn Hardcastle")]
+        public void numeric_title_proof_should_highlight_the_original_spelling(string raw, string title)
+        {
+            var sut = new MatchEvidenceValueBuilder();
+            sut.AddPhrase("embedded_tag", "TITLE", raw, title, "supporting", "title", "book", "Title proof");
+            var value = sut.Build().Single();
+            Assert.That(Slice(value), Is.EqualTo(raw));
+        }
+
+        [Test]
+        public void number_equivalent_title_proof_should_highlight_the_original_roman_span()
+        {
+            const string raw = "Ready Player Ⅱ — Unabridged";
+            var sut = new MatchEvidenceValueBuilder();
+
+            sut.AddNumberEquivalentPhrase(
+                "embedded_tag",
+                "TITLE",
+                raw,
+                "Ready Player 2",
+                "eng",
+                "supporting",
+                "title",
+                "edition",
+                "Numeric title proof");
+
+            var value = sut.Build().Single();
+            var titleRange = value.Ranges.Single(range => range.Type == "title");
+            Assert.That(Slice(value, titleRange), Is.EqualTo("Ready Player Ⅱ"));
+        }
+
+        [Test]
+        public void unsupported_edition_language_does_not_highlight_cardinal_word_aliases()
+        {
+            var sut = new MatchEvidenceValueBuilder();
+
+            sut.AddNumberEquivalentPhrase(
+                "embedded_tag",
+                "TITLE",
+                "Ready Player Two",
+                "Ready Player 2",
+                "spa",
+                "supporting",
+                "title",
+                "edition",
+                "Numeric title proof");
+
+            Assert.That(sut.Build(), Is.Empty);
+        }
+
+        [Test]
+        public void a_different_numeric_title_should_not_be_highlighted_as_proof()
+        {
+            var sut = new MatchEvidenceValueBuilder();
+            sut.AddPhrase("embedded_tag", "TITLE", "Ready Player ②", "Ready Player One", "supporting", "title", "book", "Title proof");
+            Assert.That(sut.Build(), Is.Empty);
+        }
+
         [Test]
         public void should_group_duplicate_extractor_fields_by_the_exact_raw_value()
         {

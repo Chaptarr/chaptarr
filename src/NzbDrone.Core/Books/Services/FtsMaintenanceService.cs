@@ -1,8 +1,9 @@
 using System;
+using System.Data;
+using System.Diagnostics;
 using Dapper;
 using NLog;
 using NzbDrone.Core.Books.Events;
-using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
 
@@ -43,8 +44,7 @@ namespace NzbDrone.Core.Books.Services
 
                 using (var conn = _database.OpenConnection())
                 {
-                    // Baseline schema defines author_fts as a content-linked FTS5 table
-                    // with triggers managing inserts/updates from Authors.
+                    // Triggers maintain the header author index from the stored folded key.
                     // To refresh the FTS row for this author, perform a no-op UPDATE
                     // on Authors to fire the AFTER UPDATE trigger.
 
@@ -68,6 +68,15 @@ namespace NzbDrone.Core.Books.Services
 
         public void RebuildAllFts()
         {
+            if (_database.DatabaseType == DatabaseType.SQLite)
+            {
+                using var connection = _database.OpenConnection();
+                using var transaction = connection.BeginTransaction();
+                RebuildSqliteAuthorIndex(connection, transaction, _logger);
+                transaction.Commit();
+                return;
+            }
+
             _logger.Debug("[FTS-MAINT] Starting full FTS rebuild");
             var authors = _authorService.GetAllAuthors();
 
@@ -79,18 +88,32 @@ namespace NzbDrone.Core.Books.Services
             _logger.Debug("[FTS-MAINT] Completed FTS rebuild for {0} authors", authors.Count);
         }
 
-        private string GetLastnameFirst(string name)
+        internal static void RebuildSqliteAuthorIndex(IDbConnection connection, IDbTransaction transaction, Logger logger)
         {
-            if (string.IsNullOrWhiteSpace(name))
-                return "";
-
-            var parts = name.Trim().Split(' ');
-            if (parts.Length >= 2)
-            {
-                return $"{parts[parts.Length - 1]}, {string.Join(" ", parts, 0, parts.Length - 1)}".ToLowerInvariant();
-            }
-
-            return name.ToLowerInvariant();
+            var stopwatch = Stopwatch.StartNew();
+            const string insert = @"INSERT INTO author_fts(rowid, SearchName)
+                SELECT Id, COALESCE(SearchName, '') || ' ' || replace(COALESCE(SearchName, ''), '.', '') || ' ' || COALESCE(TitleSlug, '') FROM Authors";
+            connection.Execute(@"
+                DROP TRIGGER IF EXISTS author_fts_ai;
+                DROP TRIGGER IF EXISTS author_fts_ad;
+                DROP TRIGGER IF EXISTS author_fts_au;
+                DROP TABLE IF EXISTS author_fts;
+                CREATE VIRTUAL TABLE author_fts USING fts5(SearchName, content='', contentless_delete=1,
+                    tokenize='unicode61 remove_diacritics 1');", transaction: transaction);
+            connection.Execute(insert, transaction: transaction);
+            connection.Execute($@"
+                CREATE TRIGGER author_fts_ai AFTER INSERT ON Authors BEGIN
+                    {insert} WHERE Id = new.Id;
+                END;
+                CREATE TRIGGER author_fts_ad AFTER DELETE ON Authors BEGIN
+                    DELETE FROM author_fts WHERE rowid = old.Id;
+                END;
+                CREATE TRIGGER author_fts_au AFTER UPDATE ON Authors BEGIN
+                    DELETE FROM author_fts WHERE rowid = old.Id;
+                    {insert} WHERE Id = new.Id;
+                END;", transaction: transaction);
+            var count = connection.ExecuteScalar<long>("SELECT COUNT(*) FROM author_fts", transaction: transaction);
+            logger.Info("Rebuilt header author search index: {0} entries in {1} ms", count, stopwatch.ElapsedMilliseconds);
         }
 
         public void Handle(AuthorAddedEvent message)

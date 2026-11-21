@@ -26,14 +26,17 @@ namespace Chaptarr.Api.V1.History
         private readonly IUpgradableSpecification _upgradableSpecification;
         private readonly IFailedDownloadService _failedDownloadService;
         private readonly IAuthorService _authorService;
+        private readonly ISeriesBookLinkService _seriesBookLinkService;
 
-        public HistoryController(IHistoryService historyService,
+        public HistoryController(ISeriesBookLinkService seriesBookLinkService,
+                             IHistoryService historyService,
                              ICustomFormatCalculationService formatCalculator,
                              IUpgradableSpecification upgradableSpecification,
                              IFailedDownloadService failedDownloadService,
                              IAuthorService authorService)
         {
             _historyService = historyService;
+            _seriesBookLinkService = seriesBookLinkService ?? throw new ArgumentNullException(nameof(seriesBookLinkService));
             _formatCalculator = formatCalculator;
             _upgradableSpecification = upgradableSpecification;
             _failedDownloadService = failedDownloadService;
@@ -86,13 +89,22 @@ namespace Chaptarr.Api.V1.History
             }
 
             var parsedMediaType = MediaTypeParameterParser.ParseOptional(mediaType);
-            return pagingSpec.ApplyToPage(spec => _historyService.Paged(spec, parsedMediaType), h => MapToResource(h, includeAuthor, includeBook));
+            return pagingSpec.ApplyToPage(spec =>
+            {
+                var page = _historyService.Paged(spec, parsedMediaType);
+                if (includeBook)
+                    BookSeries.LoadLinks(page.Records.Select(item => item.Book), ids => _seriesBookLinkService.GetLinksByBook(ids));
+                return page;
+            }, h => MapToResource(h, includeAuthor, includeBook));
         }
 
         [HttpGet("since")]
         public List<HistoryResource> GetHistorySince(DateTime date, EntityHistoryEventType? eventType = null, bool includeAuthor = false, bool includeBook = false, [FromQuery] string mediaType = null)
         {
-            return FilterByMediaType(_historyService.Since(date, eventType), mediaType).Select(h => MapToResource(h, includeAuthor, includeBook)).ToList();
+            var history = FilterByMediaType(_historyService.Since(date, eventType), mediaType).ToList();
+            if (includeBook)
+                BookSeries.LoadLinks(history.Select(item => item.Book), ids => _seriesBookLinkService.GetLinksByBook(ids));
+            return history.Select(h => MapToResource(h, includeAuthor, includeBook)).ToList();
         }
 
         [HttpGet("author")]
@@ -100,17 +112,12 @@ namespace Chaptarr.Api.V1.History
         {
             var author = _authorService.GetAuthor(authorId);
 
-            if (bookId.HasValue)
-            {
-                return FilterByMediaType(_historyService.GetByBook(bookId.Value, eventType), mediaType).Select(h =>
-                {
-                    h.Author = author;
-
-                    return MapToResource(h, includeAuthor, includeBook);
-                }).ToList();
-            }
-
-            return FilterByMediaType(_historyService.GetByAuthor(authorId, eventType), mediaType).Select(h =>
+            var history = FilterByMediaType(bookId.HasValue
+                ? _historyService.GetByBook(bookId.Value, eventType)
+                : _historyService.GetByAuthor(authorId, eventType), mediaType).ToList();
+            if (includeBook)
+                BookSeries.LoadLinks(history.Select(item => item.Book), ids => _seriesBookLinkService.GetLinksByBook(ids));
+            return history.Select(h =>
             {
                 h.Author = author;
 
@@ -126,7 +133,8 @@ namespace Chaptarr.Api.V1.History
                 return history;
             }
 
-            return history.Where(h => h?.Book != null && h.Book.MediaType == parsedMediaType.Value);
+            return history.Where(h => h?.EventType is EntityHistoryEventType.AuthorsMerged or EntityHistoryEventType.AuthorSplit ||
+                h?.Book != null && h.Book.MediaType == parsedMediaType.Value);
         }
 
         [HttpPost("failed/{id}")]

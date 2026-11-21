@@ -87,6 +87,18 @@
 }
 
 @media only screen and (max-width: $breakpointSmall) {
+  .tabList {
+    display: flex;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .tab {
+    flex: 0 0 auto;
+    padding-top: 12px;
+    min-height: 44px;
+  }
+
   .contentBody {
     scrollbar-gutter: auto;
   }

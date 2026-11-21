@@ -9,7 +9,7 @@ namespace NzbDrone.Core.Books
         public int SeriesPosition { get; set; }
         public int SeriesId { get; set; }
         public int BookId { get; set; }
-        public bool IsPrimary { get; set; }
+        public bool? IsPrimary { get; set; }
 
         // New fields for narrator variant support
         public string SeriesInstanceType { get; set; } = "original";
@@ -34,7 +34,6 @@ namespace NzbDrone.Core.Books
             Id = other.Id;
             SeriesId = other.SeriesId;
             BookId = other.BookId;
-            IsPrimary = other.IsPrimary;
             IsInheritedLink = other.IsInheritedLink;
         }
     }

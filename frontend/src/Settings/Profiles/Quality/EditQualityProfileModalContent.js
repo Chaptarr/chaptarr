@@ -178,6 +178,7 @@ class EditQualityProfileModalContent extends Component {
       name,
       profileType,
       upgradeAllowed,
+      confirmAutomaticUpgrades,
       preferCustomFormatsOverQuality,
       convertToQualityId,
       cutoff,
@@ -299,6 +300,24 @@ class EditQualityProfileModalContent extends Component {
                           onChange={onInputChange}
                         />
                       </FormGroup>
+
+                      {
+                        upgradeAllowedField.value &&
+                          <FormGroup size={sizes.EXTRA_SMALL}>
+                            <FormLabel size={sizes.SMALL}>{translate('AutomaticUpgradeAction')}</FormLabel>
+                            <FormInputGroup
+                              type={inputTypes.SELECT}
+                              name="confirmAutomaticUpgrades"
+                              value={confirmAutomaticUpgrades?.value ? 'wait' : 'replace'}
+                              values={[
+                                { key: 'replace', value: translate('ReplaceAutomatically') },
+                                { key: 'wait', value: translate('WaitForReplacementConfirmation') }
+                              ]}
+                              helpText={translate('AutomaticUpgradeActionHelp')}
+                              onChange={({ name: fieldName, value }) => onInputChange({ name: fieldName, value: value === 'wait' })}
+                            />
+                          </FormGroup>
+                      }
 
                       {
                         isAudiobookProfile &&

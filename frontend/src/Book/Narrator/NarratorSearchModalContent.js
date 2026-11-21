@@ -11,6 +11,7 @@ import ModalHeader from 'Components/Modal/ModalHeader';
 import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
 import { kinds } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import NarratorSearchRow from './NarratorSearchRow';
 import styles from './NarratorSearchModalContent.css';
@@ -54,10 +55,11 @@ class NarratorSearchModalContent extends Component {
 
   render() {
     const {
+      bookId,
       bookTitle,
       discovery,
       isSearching,
-      isSettingPreferred,
+      additions,
       error,
       onNarratorSelect,
       onModalClose
@@ -95,7 +97,7 @@ class NarratorSearchModalContent extends Component {
 
           {hasError && (
             <Alert kind={kinds.DANGER}>
-              {errorMessage || error.message || translate('NarratorSearchFailed')}
+              {errorMessage || error?.message || getErrorMessage(error, translate('NarratorSearchFailed'))}
             </Alert>
           )}
 
@@ -103,32 +105,21 @@ class NarratorSearchModalContent extends Component {
             <div className={styles.narratorSection}>
               <Table columns={columns}>
                 <TableBody>
-                  {/* Show existing narrators first */}
-                  {existingCopyNarrators.map((narrator) => {
+                  {[
+                    ...existingCopyNarrators.map((narrator) => ({ narrator, existing: true })),
+                    ...filteredNarrators.map((narrator) => ({ narrator, existing: false }))
+                  ].map(({ narrator, existing }) => {
                     const narratorName = typeof narrator === 'string' ? narrator : narrator.name;
-                    const editionId = typeof narrator === 'object' ? narrator.editionId : null;
-                    const status = typeof narrator === 'object' ? narrator.status || 'existing' : 'existing';
+                    const editionId = typeof narrator === 'object' ? narrator.editionId ?? null : null;
+                    const status = existing ? (narrator.status || 'existing') : 'available';
                     return (
                       <NarratorSearchRow
-                        key={`existing-${editionId || narratorName}`}
+                        key={editionId || narratorName}
                         narrator={narrator}
                         status={status}
-                        onSelect={null}
-                        isSelecting={false}
-                      />
-                    );
-                  })}
-                  {/* Then show available narrators */}
-                  {filteredNarrators.map((narrator) => {
-                    const narratorName = typeof narrator === 'string' ? narrator : narrator.name;
-                    const editionId = typeof narrator === 'object' ? narrator.editionId : null;
-                    return (
-                      <NarratorSearchRow
-                        key={`available-${editionId || narratorName}`}
-                        narrator={narrator}
-                        status="available"
-                        onSelect={(selectedNarrator) => onNarratorSelect(selectedNarrator, searchForNewBook)}
-                        isSelecting={isSettingPreferred}
+                        onSelect={existing ? null : (selectedNarrator) => onNarratorSelect(selectedNarrator, searchForNewBook)}
+                        isSelecting={!existing && additions[`${bookId}:${editionId}`]?.isSaving === true}
+                        error={existing ? null : additions[`${bookId}:${editionId}`]?.error}
                       />
                     );
                   })}
@@ -177,10 +168,9 @@ NarratorSearchModalContent.propTypes = {
   authorName: PropTypes.string.isRequired,
   discovery: PropTypes.object.isRequired,
   isSearching: PropTypes.bool.isRequired,
-  isSettingPreferred: PropTypes.bool.isRequired,
+  additions: PropTypes.object.isRequired,
   error: PropTypes.object,
   onNarratorSelect: PropTypes.func.isRequired,
-  onRefreshPress: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };
 

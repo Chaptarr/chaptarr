@@ -1,51 +1,14 @@
-using System.Globalization;
-using System.Text;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
+using NzbDrone.Core.Utilities;
+using NzbDrone.Core.Parser;
 
 namespace NzbDrone.Core.Books.Extensions
 {
     public static class StringSuperNormalizer
     {
-        // Regex that matches anything that is NOT a Unicode letter or digit
-        // This preserves ALL languages (Chinese, Arabic, etc.) while removing ALL punctuation/spaces
-        private static readonly Regex NonAlphanumericRegex = new Regex(@"[^\p{L}\p{Nd}]", RegexOptions.Compiled);
-
-        /// <summary>
-        /// Supernormalizes text by removing ALL non-letter and non-digit characters.
-        /// Preserves Unicode letters from all languages.
-        /// Examples:
-        /// "J.K. Rowling" → "JKRowling"
-        /// "José García-Márquez" → "JoséGarcíaMárquez"
-        /// "村上春樹" → "村上春樹"
-        /// "Фёдор Достоевский" → "ФёдорДостоевский"
-        /// </summary>
-        public static string SuperNormalize(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return string.Empty;
-            }
-
-            // Convert to lowercase and remove all non-letter/non-digit characters
-            return NonAlphanumericRegex.Replace(text.ToLowerInvariant(), "");
-        }
-
-        /// <summary>
-        /// Creates a supernormalized version for database storage or comparison
-        /// </summary>
-        public static string ForDatabase(string text)
-        {
-            return SuperNormalize(text);
-        }
-
-        /// <summary>
-        /// Checks if a supernormalized text contains another supernormalized text
-        /// </summary>
-        public static bool SuperNormalizedContains(string text, string searchFor)
-        {
-            return SuperNormalize(text).Contains(SuperNormalize(searchFor));
-        }
-
         // ========================================================================
         // FTS MATCHING NORMALIZATION
         // Used for computing MatchingTitle and normalizing query tokens.
@@ -53,14 +16,14 @@ namespace NzbDrone.Core.Books.Extensions
         // ========================================================================
 
         // Regex for possessive normalization: matches 's at word boundary
-        // Covers: ' (U+0027 straight), ' (U+2019 right curly), ' (U+2018 left curly)
-        private static readonly Regex PossessiveRegex = new Regex("['\\u2018\\u2019]s\\b", RegexOptions.Compiled);
+        // Preserve the released stored-key alphabet: straight and left/right curly apostrophes.
+        internal static readonly Regex PossessiveRegex = new Regex("['\\u2018\\u2019]s\\b", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         /// <summary>
         /// Normalizes text for FTS matching:
         /// 1. Merges possessives ('s → s): Philosopher's → Philosophers
         /// 2. Strips diacritics: café → cafe, ménage → menage
-        /// 3. Returns lowercase
+        /// 3. Applies the shared numeric and scalar comparison rules
         ///
         /// Use this for computing MatchingTitle column and normalizing query tokens.
         /// </summary>
@@ -76,19 +39,29 @@ namespace NzbDrone.Core.Books.Extensions
             // Does NOT affect: Can't, O'Brien, ma'am (not word-final 's)
             text = PossessiveRegex.Replace(text, "s");
 
-            // Step 2: Normalize diacritics (NFD decomposition + strip combining marks)
-            // Handles: café → cafe, ménage → menage, Hervé → Herve, señor → senor
-            text = text.Normalize(NormalizationForm.FormD);
-            var sb = new StringBuilder(text.Length);
-            foreach (var c in text)
+            return UnicodeComparisonNormalizer.NormalizeText(text);
+        }
+
+        public static string ComputeBookComparisonKey(string title)
+        {
+            return (title ?? string.Empty).CleanBookTitle().CleanAuthorName();
+        }
+
+        internal static string NormalizeNarratorsForFts(IEnumerable<string> names)
+        {
+            return NormalizeForFts(string.Join(" ", names?.Where(name => !string.IsNullOrWhiteSpace(name)) ?? Enumerable.Empty<string>()));
+        }
+
+        internal static IEnumerable<string> GetFtsQueryTerms(string text, bool preserveFtsConnectors = true)
+        {
+            if (string.IsNullOrWhiteSpace(text))
             {
-                if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
-                {
-                    sb.Append(c);
-                }
+                return Enumerable.Empty<string>();
             }
 
-            return sb.ToString().ToLowerInvariant();
+            return UnicodeComparisonNormalizer.WordSpans(NormalizeForFts(text), preserveFtsConnectors)
+                .Select(word => word.Value)
+                .Distinct(StringComparer.Ordinal);
         }
 
         /// <summary>

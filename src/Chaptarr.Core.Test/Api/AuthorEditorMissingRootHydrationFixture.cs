@@ -4,6 +4,12 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using Chaptarr.Core.Test;
+using Chaptarr.Core.Test.Common;
+using Chaptarr.Api.V1;
+using Microsoft.AspNetCore.Mvc;
+using NLog;
+using NzbDrone.Common.Cache;
+using NzbDrone.Core.Messaging.Events;
 using Chaptarr.Api.V1.Author;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
@@ -28,7 +34,7 @@ namespace Chaptarr.Core.Test.Api
                 AudiobookRootFolderPath = "/library/audiobooks"
             });
 
-            var controller = new AuthorEditorController(authorService, commandQueue, CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService());
+            var controller = new AuthorEditorController(authorService, commandQueue, CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService(), AuthorFolderUpdateFixture.CreateFileNames());
 
             controller.SaveAll(new AuthorEditorResource
             {
@@ -57,7 +63,7 @@ namespace Chaptarr.Core.Test.Api
                 EbookRootFolderPath = "/library/ebooks"
             });
 
-            var controller = new AuthorEditorController(authorService, commandQueue, CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService());
+            var controller = new AuthorEditorController(authorService, commandQueue, CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService(), AuthorFolderUpdateFixture.CreateFileNames());
 
             controller.SaveAll(new AuthorEditorResource
             {
@@ -82,7 +88,7 @@ namespace Chaptarr.Core.Test.Api
                 EbookMonitorNewItems = null
             };
             var authorService = CreateAuthorService(author);
-            var controller = new AuthorEditorController(authorService, new RecordingCommandQueue(), CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService());
+            var controller = new AuthorEditorController(authorService, new RecordingCommandQueue(), CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService(), AuthorFolderUpdateFixture.CreateFileNames());
 
             controller.SaveAll(new AuthorEditorResource
             {
@@ -109,7 +115,7 @@ namespace Chaptarr.Core.Test.Api
                 AudiobookRootFolderPath = "/library/audiobooks"
             };
             var authorService = CreateAuthorService(author);
-            var controller = new AuthorEditorController(authorService, new RecordingCommandQueue(), CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService());
+            var controller = new AuthorEditorController(authorService, new RecordingCommandQueue(), CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService(), AuthorFolderUpdateFixture.CreateFileNames());
 
             controller.SaveAll(new AuthorEditorResource
             {
@@ -121,6 +127,146 @@ namespace Chaptarr.Core.Test.Api
 
             Assert.That(author.EbookMonitored, Is.True);
             Assert.That(author.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
+        }
+
+        [Test]
+        public void bulk_tag_edits_should_persist_each_media_set_and_response_independently(
+            [Values(false, true)] bool postgres,
+            [Values("add", "remove", "replace-empty", "replace-values", "no-change", "null-stored-add", "null-stored-replace-empty", "one-null-add")] string scenario,
+            [Values(null, "audiobook", "ebook")] string mediaType)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var events = InterfaceProxy.Proxy<IEventAggregator>((method, args) => null);
+                var logger = LogManager.GetCurrentClassLogger();
+                var repository = new AuthorRepository(database, events, logger);
+                var roots = CreateRootFolderService();
+                var commands = new RecordingCommandQueue();
+                var authors = new AuthorService(repository, events, null, roots, commands, new CacheManager(),
+                    new BookRepository(database, events), null, logger, null, null, null, database);
+                var originals = new List<CoreAuthor>();
+                for (var index = 0; index < 2; index++)
+                {
+                    var legacy = scenario.StartsWith("null-stored-", StringComparison.Ordinal);
+                    originals.Add(repository.Insert(new CoreAuthor
+                    {
+                        Name = "Tag Test Writer " + index,
+                        CleanName = "tagtestwriter" + index,
+                        SortName = "tag test writer " + index,
+                        TitleSlug = Guid.NewGuid().ToString("N"),
+                        Path = "/fixture/tag-test-writer-" + index,
+                        Added = DateTime.UtcNow,
+                        AudiobookMonitored = false,
+                        EbookMonitored = false,
+                        AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                        EbookMonitorNewItems = NewItemMonitorTypes.None,
+                        AudiobookTags = legacy ? null : new HashSet<int> { 1 + index * 2 },
+                        EbookTags = legacy || scenario == "one-null-add" ? null : new HashSet<int> { 2 + index * 2 },
+                        Tags = legacy ? new HashSet<int> { 5 + index } : new HashSet<int> { 1 + index * 2, 2 + index * 2 }
+                    }));
+                }
+
+                if (scenario.StartsWith("null-stored-", StringComparison.Ordinal))
+                {
+                    foreach (var author in originals)
+                    {
+                        var stored = repository.Get(author.Id);
+                        Assert.That(stored.AudiobookTags, Is.Empty, "database NULL reads retain the model constructor's empty set");
+                        Assert.That(stored.EbookTags, Is.Empty, "database NULL reads retain the model constructor's empty set");
+                    }
+                }
+
+                var apply = scenario.StartsWith("replace", StringComparison.Ordinal) || scenario == "null-stored-replace-empty"
+                    ? ApplyTags.Replace : scenario == "remove" ? ApplyTags.Remove : ApplyTags.Add;
+                var requested = scenario == "no-change" ? null : scenario.Contains("empty", StringComparison.Ordinal)
+                    ? new List<int>() : scenario == "remove" ? new List<int> { 1 } : new List<int> { 9 };
+                var controller = new AuthorEditorController(authors, commands, roots, new TestQualityProfileService(), new TestMetadataProfileService(), AuthorFolderUpdateFixture.CreateFileNames());
+                var result = controller.SaveAll(new AuthorEditorResource
+                {
+                    AuthorIds = originals.Select(author => author.Id).ToList(),
+                    Tags = requested,
+                    ApplyTags = apply,
+                    MediaType = mediaType
+                }) as AcceptedResult;
+                Assert.That(result, Is.Not.Null);
+                var response = ((IEnumerable<AuthorResource>)result.Value).ToDictionary(author => author.Id);
+                for (var index = 0; index < originals.Count; index++)
+                {
+                    var expectedAudio = scenario switch
+                    {
+                        "add" or "one-null-add" => new[] { 1 + index * 2, 9 },
+                        "remove" => index == 0 ? Array.Empty<int>() : new[] { 3 },
+                        "replace-empty" or "null-stored-replace-empty" => Array.Empty<int>(),
+                        "replace-values" => new[] { 9 },
+                        "null-stored-add" => new[] { 9 },
+                        _ => new[] { 1 + index * 2 }
+                    };
+                    var expectedEbook = scenario switch
+                    {
+                        "add" => new[] { 2 + index * 2, 9 },
+                        "one-null-add" or "replace-values" => new[] { 9 },
+                        "replace-empty" or "null-stored-replace-empty" => Array.Empty<int>(),
+                        "null-stored-add" => new[] { 9 },
+                        _ => new[] { 2 + index * 2 }
+                    };
+                    if (mediaType == "ebook") expectedAudio = scenario.StartsWith("null-stored-", StringComparison.Ordinal) ? Array.Empty<int>() : new[] { 1 + index * 2 };
+                    if (mediaType == "audiobook") expectedEbook = scenario.StartsWith("null-stored-", StringComparison.Ordinal) || scenario == "one-null-add" ? Array.Empty<int>() : new[] { 2 + index * 2 };
+                    var stored = repository.Get(originals[index].Id);
+                    var resource = response[stored.Id];
+                    var readback = stored.ToResource();
+                    var union = expectedAudio.Concat(expectedEbook).Distinct().ToArray();
+                    Assert.Multiple(() =>
+                    {
+                        Assert.That(stored.GetTagsForMediaType(BookMediaType.Audiobook), Is.EquivalentTo(expectedAudio), "persisted audiobook tags");
+                        Assert.That(stored.GetTagsForMediaType(BookMediaType.Ebook), Is.EquivalentTo(expectedEbook), "persisted ebook tags");
+                        Assert.That(stored.Tags, Is.EquivalentTo(union), "persisted aggregate tags");
+                        Assert.That(resource.AudiobookTags, Is.EquivalentTo(expectedAudio), "response audiobook tags");
+                        Assert.That(resource.EbookTags, Is.EquivalentTo(expectedEbook), "response ebook tags");
+                        Assert.That(resource.Tags, Is.EquivalentTo(union), "response aggregate tags");
+                        Assert.That(readback.Tags, Is.EquivalentTo(union), "resource from fresh database read");
+                        Assert.That(stored.AudiobookMonitored, Is.False);
+                        Assert.That(stored.EbookMonitored, Is.False);
+                        Assert.That(stored.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
+                        Assert.That(stored.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
+                    });
+                }
+
+                Assert.That(commands.PushedCommands, Is.Empty);
+            });
+        }
+
+        [TestCase(ApplyTags.Add)]
+        [TestCase(ApplyTags.Remove)]
+        public void legacy_in_memory_null_media_tags_should_keep_the_existing_both_sides_fallback(ApplyTags operation)
+        {
+            var author = new CoreAuthor
+            {
+                Id = 1,
+                Name = "Legacy Tag Writer",
+                Tags = new HashSet<int> { 5 },
+                AudiobookTags = null,
+                EbookTags = null
+            };
+            var controller = new AuthorEditorController(CreateAuthorService(author), new RecordingCommandQueue(),
+                CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService(), AuthorFolderUpdateFixture.CreateFileNames());
+            var requested = operation == ApplyTags.Add ? 9 : 5;
+            var expected = operation == ApplyTags.Add ? new[] { 5, 9 } : Array.Empty<int>();
+            var result = controller.SaveAll(new AuthorEditorResource
+            {
+                AuthorIds = new List<int> { 1 },
+                Tags = new List<int> { requested },
+                ApplyTags = operation
+            }) as AcceptedResult;
+            var resource = ((IEnumerable<AuthorResource>)result.Value).Single();
+            Assert.Multiple(() =>
+            {
+                Assert.That(author.GetTagsForMediaType(BookMediaType.Audiobook), Is.EquivalentTo(expected));
+                Assert.That(author.GetTagsForMediaType(BookMediaType.Ebook), Is.EquivalentTo(expected));
+                Assert.That(author.Tags, Is.EquivalentTo(expected));
+                Assert.That(resource.AudiobookTags, Is.EquivalentTo(expected));
+                Assert.That(resource.EbookTags, Is.EquivalentTo(expected));
+                Assert.That(resource.Tags, Is.EquivalentTo(expected));
+            });
         }
 
         private static IAuthorService CreateAuthorService(params CoreAuthor[] authors)
@@ -209,6 +355,7 @@ namespace Chaptarr.Core.Test.Api
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();

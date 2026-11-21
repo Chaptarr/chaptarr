@@ -37,7 +37,9 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
                              SELECT ""History"".""Id"" FROM ""History""
                              LEFT OUTER JOIN ""Books""
                              ON ""History"".""BookId"" = ""Books"".""Id""
-                             WHERE ""Books"".""Id"" IS NULL)");
+                             WHERE ""Books"".""Id"" IS NULL
+                               AND NOT (""History"".""BookId"" = 0 AND ""History"".""EventType"" IN (@merged, @split)))",
+                new { merged = (int)NzbDrone.Core.History.EntityHistoryEventType.AuthorsMerged, split = (int)NzbDrone.Core.History.EntityHistoryEventType.AuthorSplit });
         }
     }
 }

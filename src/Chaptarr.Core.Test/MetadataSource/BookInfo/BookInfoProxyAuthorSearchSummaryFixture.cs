@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using NLog;
@@ -26,6 +28,8 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         {
             public string BodyOverride { get; set; }
 
+            public Func<HttpRequest, HttpResponse> ReplayResponse { get; set; }
+
             public List<HttpRequest> Requests { get; } = new List<HttpRequest>();
 
             public HashSet<string> MissingAuthorIds { get; } = new HashSet<string>();
@@ -35,6 +39,11 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             public HttpResponse Get(HttpRequest request)
             {
                 Requests.Add(request);
+
+                if (ReplayResponse != null)
+                {
+                    return ReplayResponse(request);
+                }
 
                 if (TimedOutAuthorIds.Any(id => request.Url.FullUri.Contains(Uri.EscapeDataString(id))))
                 {
@@ -71,7 +80,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             }
 
             public void DownloadFile(string url, string fileName, string userAgent = null) => throw new NotImplementedException();
-            public HttpResponse Execute(HttpRequest request) => throw new NotImplementedException();
+            public HttpResponse Execute(HttpRequest request) => Get(request);
             public HttpResponse<T> Get<T>(HttpRequest request) where T : new() => throw new NotImplementedException();
             public HttpResponse Head(HttpRequest request) => throw new NotImplementedException();
             public HttpResponse Post(HttpRequest request) => throw new NotImplementedException();
@@ -322,6 +331,149 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             Assert.That(method, Is.Not.Null);
             Assert.That(method.Invoke(null, new object[] { "audnexus", "audible" }), Is.True);
             Assert.That(method.Invoke(null, new object[] { "hardcover", "audible" }), Is.False);
+        }
+
+        [TestCase("goodreads", false, "gr:113603", "gr:874602", false)]
+        [TestCase("hardcover", false, "hc:427401", "hc:213830", false)]
+        [TestCase("hardcover", true, null, "hc:213830", false)]
+        [TestCase("hardcover", true, null, "hc:213830", true)]
+        [TestCase("audible", false, "az:B002VA3CDO", "az:B0GZZ57KFW", false)]
+        public void captured_provider_search_should_preserve_author_name_and_id_when_enrichment_is_unavailable(
+            string provider, bool authorQuery, string bookId, string authorId, bool primaryUnavailable)
+        {
+            var logger = LogManager.GetCurrentClassLogger();
+            var config = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            string Capture(string name) => File.ReadAllText(Path.Combine(TestContext.CurrentContext.TestDirectory,
+                "Fixtures", "ProviderSearch", name));
+            var http = new SummaryHttpClient
+            {
+                ReplayResponse = request =>
+                {
+                    var url = request.Url.FullUri;
+                    string body;
+                    var status = HttpStatusCode.OK;
+                    if (url.StartsWith("https://www.goodreads.com/book/auto_complete", StringComparison.Ordinal))
+                    {
+                        var parameters = System.Web.HttpUtility.ParseQueryString(new Uri(url).Query);
+                        Assert.That(parameters["q"], Is.EqualTo("a wizard of earthsea"));
+                        Assert.That(parameters["format"], Is.EqualTo("json"));
+                        body = Capture("upstream-goodreads-normalized.json");
+                    }
+                    else if (url.StartsWith("https://api.audible.com/1.0/catalog/products?", StringComparison.Ordinal))
+                    {
+                        var parameters = System.Web.HttpUtility.ParseQueryString(new Uri(url).Query);
+                        Assert.That(parameters["keywords"], Is.EqualTo("A Wizard of Earthsea"));
+                        Assert.That(parameters["num_results"], Is.EqualTo("20"));
+                        Assert.That(parameters["products_sort_by"], Is.EqualTo("Relevance"));
+                        Assert.That(parameters["response_groups"], Is.EqualTo("product_desc,contributors,media,product_attrs"));
+                        body = Capture("upstream-audible.json");
+                    }
+                    else if (url == "https://api.hardcover.app/v1/graphql")
+                    {
+                        using var payload = JsonDocument.Parse(request.ContentData);
+                        var variables = payload.RootElement.GetProperty("variables");
+                        if (variables.TryGetProperty("query_type", out var queryType))
+                        {
+                            using var capturedRequest = JsonDocument.Parse(Capture(authorQuery
+                                ? "upstream-hardcover-author-request.json" : "upstream-hardcover-book-request.json"));
+                            var expected = capturedRequest.RootElement;
+                            Assert.That(payload.RootElement.GetProperty("query").GetString().ReplaceLineEndings("\n"), Is.EqualTo(expected.GetProperty("query").GetString().ReplaceLineEndings("\n")));
+                            foreach (var field in new[] { "q", "page", "limit" })
+                                Assert.That(variables.GetProperty(field).ToString(), Is.EqualTo(expected.GetProperty("variables").GetProperty(field).ToString()));
+                            body = queryType.GetString() switch
+                            {
+                                "Author" when authorQuery => Capture("upstream-hardcover-author.json"),
+                                "Book" when !authorQuery => Capture("upstream-hardcover-book.json"),
+                                _ => "{\"data\":{\"search\":{\"results\":{\"hits\":[]}}}}"
+                            };
+                        }
+                        else if (payload.RootElement.GetProperty("query").GetString().Contains("SearchEnrichment", StringComparison.Ordinal))
+                        {
+                            body = "{\"data\":{\"authors\":[],\"series\":[]}}";
+                        }
+                        else
+                        {
+                            var query = payload.RootElement.GetProperty("query").GetString();
+                            var batch = Enumerable.Range(0, 2).Single(index =>
+                            {
+                                using var capturedRequest = JsonDocument.Parse(Capture($"hardcover-primary-books-request-{index}.json"));
+                                return capturedRequest.RootElement.GetProperty("query").GetString().ReplaceLineEndings("\n") == query.ReplaceLineEndings("\n");
+                            });
+                            using var capturedPrimaryRequest = JsonDocument.Parse(Capture($"hardcover-primary-books-request-{batch}.json"));
+                            Assert.That(variables.GetProperty("limit").GetInt32(),
+                                Is.EqualTo(capturedPrimaryRequest.RootElement.GetProperty("variables").GetProperty("limit").GetInt32()));
+                            status = primaryUnavailable ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK;
+                            body = primaryUnavailable ? "{}" : Capture($"upstream-hardcover-primary-{batch}.json");
+                        }
+                    }
+                    else if (url.StartsWith("https://metadata.test/api/v5/author/summary/", StringComparison.Ordinal))
+                    {
+                        status = HttpStatusCode.NotFound;
+                        body = "{}";
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException("Unexpected replay request: " + url);
+                    }
+
+                    return new HttpResponse(request, new HttpHeader { ContentType = "application/json" }, body, status);
+                }
+            };
+            var cacheRows = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Http.ICachedHttpResponseRepository>((method, args) => null);
+            var cache = new NzbDrone.Core.Http.CachedHttpResponseService(cacheRows, http, logger);
+            var proxy = new BookInfoProxy(http, null, new NzbDrone.Core.MetadataSource.Goodreads.GoodreadsSearchProxy(cache, logger),
+                new NzbDrone.Core.MetadataSource.Hardcover.HardcoverSearchClient(http, config),
+                new NzbDrone.Core.MetadataSource.Audible.AudibleCatalogProxy(cache, logger), null, null, null,
+                config, new MetadataRequestBuilder(config), logger, new CacheManager(),
+                new MetadataServerHealthGate(config, new MetadataServerHealthService(logger), logger));
+            var controller = new Chaptarr.Api.V1.Search.SearchController(proxy, null,
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.MediaCover.IMapCoversToLocal>((method, args) => null),
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.MediaCover.IMediaCoverProxy>((method, args) => args[0]),
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IAuthorService>((method, args) => null), null);
+            var results = controller.Search(authorQuery ? "Ursula Le Guin" : "A Wizard of Earthsea", provider).Value;
+            var author = authorQuery
+                ? results.Single(row => row.Author?.ForeignAuthorId == authorId).Author
+                : results.Single(row => row.Book?.ForeignBookId == bookId).Book.Author;
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(author.AuthorName, Is.EqualTo("Ursula K. Le Guin"));
+                Assert.That(author.ForeignAuthorId, Is.EqualTo(authorId));
+                Assert.That(author.AuthorName, Is.Not.EqualTo("Pending Import"));
+                Assert.That(http.Requests, Is.Not.Empty);
+                Assert.That(http.Requests.Any(request => request.Url.FullUri.Contains("/api/v5/search", StringComparison.Ordinal)), Is.False);
+            });
+            if (provider == "audible")
+            {
+                var missingId = results.Single(row => row.Book?.ForeignBookId == "az:B09G7B8XXY").Book.Author;
+                Assert.That(missingId.AuthorName, Is.EqualTo("Ursula K. Le Guin"));
+                Assert.That(missingId.ForeignAuthorId, Is.Null.Or.Empty);
+            }
+
+            if (provider == "goodreads")
+            {
+                var differentAuthor = results.Single(row => row.Book?.ForeignBookId == "gr:220778298").Book.Author;
+                Assert.That(differentAuthor.AuthorName, Is.EqualTo("Fred Fordham"));
+                Assert.That(differentAuthor.ForeignAuthorId, Is.EqualTo("gr:15502566"));
+            }
+
+            if (authorQuery)
+            {
+                var primaryRequests = http.Requests.Where(request => request.ContentData?.Length > 0 &&
+                    System.Text.Encoding.UTF8.GetString(request.ContentData).Contains("BooksByAuthors", StringComparison.Ordinal)).ToList();
+                Assert.That(primaryRequests, Has.Count.EqualTo(2));
+                Assert.That(results.Single(row => row.Author?.ForeignAuthorId == authorId).ProviderId, Is.EqualTo(authorId));
+            }
+
+            if (provider == "hardcover")
+            {
+                var searchTypes = http.Requests.Where(request => request.ContentData?.Length > 0).Select(request =>
+                {
+                    using var payload = JsonDocument.Parse(request.ContentData);
+                    return payload.RootElement.GetProperty("variables").TryGetProperty("query_type", out var type) ? type.GetString() : null;
+                }).Where(type => type != null);
+                Assert.That(searchTypes, Is.EqualTo(new[] { "Author", "Book", "Series" }));
+            }
         }
     }
 }

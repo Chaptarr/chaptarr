@@ -1,5 +1,10 @@
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using FluentValidation.Results;
+using NzbDrone.Common;
+using NzbDrone.Common.Cache;
+using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
@@ -10,10 +15,16 @@ namespace NzbDrone.Core.Notifications.Synology
     public class SynologyIndexer : NotificationBase<SynologyIndexerSettings>
     {
         private readonly ISynologyIndexerProxy _indexerProxy;
+        private readonly IDiskProvider _diskProvider;
+        private readonly ICached<object> _queueLocks;
+        private readonly IPendingNotificationRepository _pending;
 
-        public SynologyIndexer(ISynologyIndexerProxy indexerProxy)
+        public SynologyIndexer(ISynologyIndexerProxy indexerProxy, IDiskProvider diskProvider, ICacheManager cacheManager, IPendingNotificationRepository pending)
         {
             _indexerProxy = indexerProxy;
+            _diskProvider = diskProvider;
+            _queueLocks = cacheManager.GetCache<object>(GetType(), "queueLocks");
+            _pending = pending;
         }
 
         public override string Link => "https://www.synology.com";
@@ -49,9 +60,9 @@ namespace NzbDrone.Core.Notifications.Synology
 
         public override void OnAuthorDelete(AuthorDeleteMessage deleteMessage)
         {
-            if (Settings.UpdateLibrary)
+            if (Settings.UpdateLibrary && deleteMessage.DeletedFiles)
             {
-                _indexerProxy.DeleteFolder(deleteMessage.Author.Path);
+                QueueDelete(deleteMessage.Author.Path, true);
             }
         }
 
@@ -59,9 +70,9 @@ namespace NzbDrone.Core.Notifications.Synology
         {
             if (Settings.UpdateLibrary && deleteMessage.DeletedFiles)
             {
-                foreach (var bookFile in deleteMessage.Book.BookFiles)
+                lock (_queueLocks.Get(Definition.Id.ToString(), () => new object()))
                 {
-                    _indexerProxy.DeleteFile(bookFile.Path);
+                    _pending.Enqueue(Definition.Id, deleteMessage.Book.BookFiles.Select(file => Path.GetFullPath(file.Path)));
                 }
             }
         }
@@ -70,7 +81,7 @@ namespace NzbDrone.Core.Notifications.Synology
         {
             if (Settings.UpdateLibrary)
             {
-                _indexerProxy.DeleteFile(deleteMessage.BookFile.Path);
+                QueueDelete(deleteMessage.BookFile.Path, false);
             }
         }
 
@@ -80,6 +91,62 @@ namespace NzbDrone.Core.Notifications.Synology
             {
                 _indexerProxy.UpdateFolder(message.Author.Path);
             }
+        }
+
+        public override bool HasPendingQueue => _pending.HasPending(Definition.Id);
+
+        public override void ProcessQueue()
+        {
+            lock (_queueLocks.Get(Definition.Id.ToString(), () => new object()))
+            {
+                // Folder deletions subsume their files even when those rows cross a page boundary.
+                var folders = Settings.UpdateLibrary
+                    ? _pending.GetPending(Definition.Id, foldersOnly: true).Where(item => !_diskProvider.FolderExists(item.Path)).ToList()
+                    : new List<PendingNotificationItem>();
+                var deletedFolders = folders.Select(item => item.Path).ToHashSet(PathEqualityComparer.Instance);
+                var sentFolders = new HashSet<string>(PathEqualityComparer.Instance);
+                foreach (var batch in _pending.GetPending(Definition.Id).Chunk(PendingNotificationRepository.BatchSize))
+                {
+                    if (!Settings.UpdateLibrary)
+                    {
+                        _pending.Complete(batch);
+                        continue;
+                    }
+                    foreach (var group in batch.GroupBy(item => GetDeletionTarget(item.Path, deletedFolders), PathEqualityComparer.Instance))
+                    {
+                        if (deletedFolders.Contains(group.Key))
+                        {
+                            if (sentFolders.Add(group.Key)) _indexerProxy.DeleteFolder(group.Key);
+                        }
+                        else if (group.Any(item => !item.IsFolder) && !_diskProvider.FileExists(group.Key)) _indexerProxy.DeleteFile(group.Key);
+                        // Keep the folder marker until every child page succeeds, so a retry still coalesces them.
+                        _pending.Complete(group.Where(item => !item.IsFolder || !deletedFolders.Contains(item.Path)));
+                    }
+                }
+                _pending.Complete(folders);
+            }
+        }
+
+        private void QueueDelete(string path, bool isFolder)
+        {
+            lock (_queueLocks.Get(Definition.Id.ToString(), () => new object()))
+            {
+                _pending.Enqueue(Definition.Id, Path.GetFullPath(path), isFolder);
+            }
+        }
+
+        private static string GetDeletionTarget(string path, HashSet<string> deletedFolders)
+        {
+            var target = path;
+            for (var parent = path; parent != null; parent = parent.GetParentPath())
+            {
+                if (deletedFolders.Contains(parent))
+                {
+                    target = parent;
+                }
+            }
+
+            return target;
         }
 
         public override ValidationResult Test()

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Xml;
 using System.Xml.Linq;
 using NLog;
@@ -14,11 +15,12 @@ namespace NzbDrone.Core.Indexers.Newznab
 {
     public interface INewznabCapabilitiesProvider
     {
-        NewznabCapabilities GetCapabilities(NewznabSettings settings, int? proxyId);
+        NewznabCapabilities GetCapabilities(NewznabSettings settings, int? proxyId, bool forceRefresh = false);
     }
 
     public class NewznabCapabilitiesProvider : INewznabCapabilitiesProvider
     {
+        internal static readonly TimeSpan FallbackLifetime = TimeSpan.FromMinutes(5);
         private readonly ICached<NewznabCapabilities> _capabilitiesCache;
         private readonly IIndexerHttpClientFactory _httpClientFactory;
         private readonly Logger _logger;
@@ -30,15 +32,33 @@ namespace NzbDrone.Core.Indexers.Newznab
             _logger = logger;
         }
 
-        public NewznabCapabilities GetCapabilities(NewznabSettings indexerSettings, int? proxyId)
+        public NewznabCapabilities GetCapabilities(NewznabSettings indexerSettings, int? proxyId, bool forceRefresh = false)
         {
             var key = indexerSettings.ToJson();
-            var capabilities = _capabilitiesCache.Get(key, () => FetchCapabilities(indexerSettings, proxyId), TimeSpan.FromDays(7));
+            var cached = _capabilitiesCache.Find(key);
+            if (!forceRefresh && cached != null) return cached;
 
-            return capabilities;
+            var stopwatch = Stopwatch.StartNew();
+            try
+            {
+                // Only a successfully parsed response may replace the last good snapshot.
+                var refreshed = FetchCapabilities(indexerSettings, proxyId, forceRefresh);
+                var result = refreshed ?? new NewznabCapabilities();
+                _capabilitiesCache.Set(key, result, refreshed != null ? TimeSpan.FromDays(7) : FallbackLifetime);
+                return result;
+            }
+            finally
+            {
+                _logger.Debug("Newznab capabilities for {0}: forceRefresh={1}, elapsedMs={2}",
+                    indexerSettings.BaseUrl, forceRefresh, stopwatch.ElapsedMilliseconds);
+            }
         }
 
-        private NewznabCapabilities FetchCapabilities(NewznabSettings indexerSettings, int? proxyId)
+        internal static string GetTestFailureMessage(Exception exception) => exception is RequestLimitReachedException
+            ? $"Request limit reached: {exception.Message}"
+            : $"Indexer capabilities could not be read: {exception.Message}";
+
+        private NewznabCapabilities FetchCapabilities(NewznabSettings indexerSettings, int? proxyId, bool forceRefresh)
         {
             var capabilities = new NewznabCapabilities();
 
@@ -71,23 +91,26 @@ namespace NzbDrone.Core.Indexers.Newznab
             }
             catch (XmlException ex)
             {
-                ex.WithData(response, 128 * 1024);
+                ex.WithData(response);
                 _logger.Trace("Unexpected Response content ({0} bytes): {1}", response.ResponseData.Length, response.Content);
                 _logger.Debug(ex, "Failed to parse newznab api capabilities for {0}", indexerSettings.BaseUrl);
                 throw;
             }
             catch (ApiKeyException ex)
             {
-                ex.WithData(response, 128 * 1024);
+                ex.WithData(response);
                 _logger.Trace("Unexpected Response content ({0} bytes): {1}", response.ResponseData.Length, response.Content);
                 _logger.Debug(ex, "Failed to parse newznab api capabilities for {0}, invalid API key", indexerSettings.BaseUrl);
                 throw;
             }
             catch (Exception ex)
             {
-                ex.WithData(response, 128 * 1024);
+                ex.WithData(response);
                 _logger.Trace("Unexpected Response content ({0} bytes): {1}", response.ResponseData.Length, response.Content);
-                _logger.Error(ex, "Failed to determine newznab api capabilities for {0}, using the defaults instead till Chaptarr restarts", indexerSettings.BaseUrl);
+                _logger.Error(ex, "Failed to determine newznab api capabilities for {0}; {1}", indexerSettings.BaseUrl,
+                    forceRefresh ? "cached capabilities left unchanged" : $"using cached defaults; next ordinary lookup retries after {DateTime.UtcNow.Add(FallbackLifetime):O}");
+                if (forceRefresh) throw;
+                return null;
             }
 
             return capabilities;

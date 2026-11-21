@@ -24,6 +24,7 @@ import { calibreProfiles, icons, inputTypes, kinds, tooltipPositions } from 'Hel
 import { coerceFolderType, FolderType } from 'Helpers/Props/folderTypes';
 import monitorNewItemsOptions from 'Utilities/Author/monitorNewItemsOptions';
 import monitorOptions from 'Utilities/Author/monitorOptions';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import styles from './EditRootFolderModalContent.css';
 
@@ -137,17 +138,7 @@ class EditRootFolderModalContent extends Component {
   getSaveErrorMessage = () => {
     const { saveError } = this.props;
 
-    if (saveError.message) {
-      return saveError.message;
-    }
-
-    if (saveError.responseJSON && saveError.responseJSON.length > 0) {
-      return saveError.responseJSON[0].errorMessage ||
-        saveError.responseJSON[0].message ||
-        'An error occurred while saving the root folder';
-    }
-
-    return 'An error occurred while saving the root folder';
+    return saveError.message || getErrorMessage(saveError, translate('RootFolderSaveError'));
   };
 
   render() {
@@ -157,6 +148,9 @@ class EditRootFolderModalContent extends Component {
       error,
       isSaving,
       saveError,
+      isMediaManagementFetching,
+      mediaManagementError,
+      fetchMediaManagementSettings,
       item,
       onInputChange,
       onModalClose,
@@ -229,7 +223,27 @@ class EditRootFolderModalContent extends Component {
 
         <ModalBody>
           {
-            isFetching &&
+            mediaManagementError && !isMediaManagementFetching &&
+              <Alert kind={kinds.DANGER} role="alert">
+                {translate('UnableToLoadMediaManagementSettings')}
+                {' '}
+                <Button onPress={() => fetchMediaManagementSettings()}>
+                  {translate('Reload')}
+                </Button>
+              </Alert>
+          }
+          {
+            saveError &&
+              <Alert kind={kinds.DANGER} role="alert">
+                {this.getSaveErrorMessage()}
+                {Array.isArray(saveError.responseJSON) && saveError.responseJSON.some((error) => error.errorCode === 'RootFolderNotWritable') && (
+                  <div>{translate('RootFolderDockerPermissionHelp')}</div>
+                )}
+              </Alert>
+          }
+
+          {
+            (isFetching || isMediaManagementFetching) &&
               <LoadingIndicator />
           }
 
@@ -416,7 +430,7 @@ class EditRootFolderModalContent extends Component {
                           type={inputTypes.SELECT}
                           name="audiobookMonitorExistingMode"
                           values={monitorOptions}
-                          {...(audiobookMonitorExistingMode || { value: 'all' })}
+                          {...(audiobookMonitorExistingMode || { value: 'none' })}
                           onChange={onInputChange}
                         />
                       </FormGroup>
@@ -561,7 +575,7 @@ class EditRootFolderModalContent extends Component {
                           type={inputTypes.SELECT}
                           name="ebookMonitorExistingMode"
                           values={monitorOptions}
-                          {...(ebookMonitorExistingMode || { value: 'all' })}
+                          {...(ebookMonitorExistingMode || { value: 'none' })}
                           onChange={onInputChange}
                         />
                       </FormGroup>
@@ -871,33 +885,24 @@ class EditRootFolderModalContent extends Component {
 
         <ModalFooter>
           {
-            saveError &&
-              <Alert kind={kinds.DANGER} className={styles.saveError}>
-                {this.getSaveErrorMessage()}
-                {
-                  saveError.message && saveError.message.toLowerCase().includes('permission') &&
-                    ' Please check that the Docker container has read permissions for this directory.'
-                }
-              </Alert>
-          }
-
-          {
             rootFolderId &&
               <Button
                 className={styles.deleteButton}
                 kind={kinds.DANGER}
+                isDisabled={isSaving}
                 onPress={onDeleteRootFolderPress}
               >
                 {translate('Delete')}
               </Button>
           }
 
-          <Button onPress={onModalClose}>
+          <Button isDisabled={isSaving} onPress={onModalClose}>
             {translate('Cancel')}
           </Button>
 
           <SpinnerErrorButton
             isSpinning={isSaving}
+            isDisabled={!this.props.isMediaManagementPopulated || isMediaManagementFetching || !!mediaManagementError}
             error={saveError}
             onPress={this.onSmartSavePress}
           >
@@ -914,6 +919,10 @@ EditRootFolderModalContent.propTypes = {
   isFetching: PropTypes.bool.isRequired,
   error: PropTypes.object,
   isSaving: PropTypes.bool.isRequired,
+  isMediaManagementPopulated: PropTypes.bool.isRequired,
+  isMediaManagementFetching: PropTypes.bool.isRequired,
+  mediaManagementError: PropTypes.object,
+  fetchMediaManagementSettings: PropTypes.func.isRequired,
   saveError: PropTypes.object,
   item: PropTypes.object.isRequired,
   showMetadataProfile: PropTypes.bool.isRequired,

@@ -1,3 +1,4 @@
+using Chaptarr.Core.Test.Common;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -53,14 +54,14 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             }
         }
 
-        private sealed class RecordingEditionFtsRepository : IEditionFtsRepository
+        private sealed class RecordingEditionFtsRepository : StagedEditionFtsStub
         {
             public readonly List<(int? AuthorId, List<string> Tokens)> Calls = new();
 
-            public bool FtsTableExists() => true;
-            public void RebuildIndex() { }
+            public override bool FtsTableExists() => true;
+            public override void RebuildIndex() { }
 
-            public List<EditionFtsMatch> SearchWithTwoStep(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20)
+            protected override List<EditionFtsMatch> SelectEditions(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit)
             {
                 return Evaluate(authorId, tokens);
             }
@@ -113,23 +114,26 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public Author GetAuthor(int authorId) => _authorsById.TryGetValue(authorId, out var author) ? author : null;
             public Author FindByProviderId(string provider, string providerId) => _authorsByProvider.TryGetValue($"{provider}:{providerId}", out var author) ? author : null;
 
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
+
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByName(string title) => throw new NotImplementedException();
-            public Author FindByNameInexact(string title) => throw new NotImplementedException();
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
+            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
-            public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
+            public List<KeyValuePair<int, string>> AllAuthorPaths() => throw new NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new NotImplementedException();
-            public void RemoveAddOptions(Author author) => throw new NotImplementedException();
+            public void SetAddOptions(Author author) => throw new NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
             public long GetAuthorSizeForMediaType(int authorId, string mediaType) => throw new NotImplementedException();
             public void UpdateLastSelectedMediaType(int authorId, string mediaType) => throw new NotImplementedException();

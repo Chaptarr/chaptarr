@@ -212,24 +212,20 @@ namespace NzbDrone.Core.Download.Clients.Transmission
 
         protected override string AddFromMagnetLink(RemoteBook remoteBook, string hash, string magnetLink)
         {
-            _proxy.AddTorrentFromUrl(magnetLink, GetDownloadDirectory(remoteBook), Settings);
-            _proxy.SetTorrentSeedingConfiguration(hash, remoteBook.SeedConfiguration, Settings);
-
-            var isRecentBook = remoteBook.IsRecentBook();
-
-            if ((isRecentBook && Settings.RecentTvPriority == (int)TransmissionPriority.First) ||
-                (!isRecentBook && Settings.OlderTvPriority == (int)TransmissionPriority.First))
-            {
-                _proxy.MoveTorrentToTopInQueue(hash, Settings);
-            }
-
-            return hash;
+            return CompleteAdd(remoteBook, hash, _proxy.AddTorrentFromUrl(magnetLink, GetDownloadDirectory(remoteBook), Settings));
         }
 
         protected override string AddFromTorrentFile(RemoteBook remoteBook, string hash, string filename, byte[] fileContent)
         {
-            _proxy.AddTorrentFromData(fileContent, GetDownloadDirectory(remoteBook), Settings);
-            _proxy.SetTorrentSeedingConfiguration(hash, remoteBook.SeedConfiguration, Settings);
+            return CompleteAdd(remoteBook, hash, _proxy.AddTorrentFromData(fileContent, GetDownloadDirectory(remoteBook), Settings));
+        }
+
+        private string CompleteAdd(RemoteBook remoteBook, string hash, bool added)
+        {
+            if (added || remoteBook.SeedConfiguration?.KeepSeeding == true)
+            {
+                _proxy.SetTorrentSeedingConfiguration(hash, remoteBook.SeedConfiguration, Settings);
+            }
 
             var isRecentBook = remoteBook.IsRecentBook();
 

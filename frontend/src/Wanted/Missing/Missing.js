@@ -17,6 +17,8 @@ import TablePager from 'Components/Table/TablePager';
 import { align, icons, kinds } from 'Helpers/Props';
 import InteractiveImportModal from 'InteractiveImport/InteractiveImportModal';
 import UnmappedFilesMediaTypeToggle from 'UnmappedFiles/UnmappedFilesMediaTypeToggle';
+import { shouldConfirmSearch } from 'Utilities/Author/getAuthorStatisticsForMediaType';
+import getWantedSearchCount from 'Utilities/Book/getWantedSearchCount';
 import getFilterValue from 'Utilities/Filter/getFilterValue';
 import hasDifferentItems from 'Utilities/Object/hasDifferentItems';
 import translate from 'Utilities/String/translate';
@@ -48,6 +50,9 @@ class Missing extends Component {
       allUnselected: false,
       lastToggled: null,
       selectedState: {},
+      pendingSelectedBookIds: null,
+      pendingSearchCount: 0,
+      isCountingSearches: false,
       isConfirmSearchAllMissingModalOpen: false,
       isInteractiveImportModalOpen: false
     };
@@ -83,6 +88,10 @@ class Missing extends Component {
 
   onSearchSelectedPress = () => {
     const selected = this.getSelectedIds();
+    if (shouldConfirmSearch(selected.length)) {
+      this.setState({ isConfirmSearchAllMissingModalOpen: true, pendingSelectedBookIds: selected });
+      return;
+    }
 
     this.props.onSearchSelectedPress(selected);
   };
@@ -96,17 +105,33 @@ class Missing extends Component {
     });
   };
 
-  onSearchAllMissingPress = () => {
-    this.setState({ isConfirmSearchAllMissingModalOpen: true });
+  onSearchAllMissingPress = async() => {
+    this.setState({ isCountingSearches: true });
+    try {
+      const count = await getWantedSearchCount('missing', this.props);
+      if (shouldConfirmSearch(count)) {
+        this.setState({ isConfirmSearchAllMissingModalOpen: true, pendingSelectedBookIds: null, pendingSearchCount: count });
+      } else {
+        this.props.onSearchAllMissingPress();
+      }
+    } catch (error) {
+      this.props.onSearchCountError(error);
+    } finally {
+      this.setState({ isCountingSearches: false });
+    }
   };
 
   onSearchAllMissingConfirmed = () => {
-    this.props.onSearchAllMissingPress();
-    this.setState({ isConfirmSearchAllMissingModalOpen: false });
+    if (this.state.pendingSelectedBookIds) {
+      this.props.onSearchSelectedPress(this.state.pendingSelectedBookIds);
+    } else {
+      this.props.onSearchAllMissingPress();
+    }
+    this.onConfirmSearchAllMissingModalClose();
   };
 
   onConfirmSearchAllMissingModalClose = () => {
-    this.setState({ isConfirmSearchAllMissingModalOpen: false });
+    this.setState({ isConfirmSearchAllMissingModalOpen: false, pendingSelectedBookIds: null });
   };
 
   onInteractiveImportPress = () => {
@@ -159,13 +184,15 @@ class Missing extends Component {
 
     return (
       <PageContent title={translate('Missing')}>
-        <PageToolbar>
-          <PageToolbarSection>
+        <PageToolbar
+          controls={
             <UnmappedFilesMediaTypeToggle
               selectedMediaType={selectedMediaType}
               onMediaTypeChange={this.onMediaTypeChange}
             />
-
+          }
+        >
+          <PageToolbarSection>
             <PageToolbarButton
               label={translate('SearchSelected')}
               iconName={icons.SEARCH}
@@ -186,8 +213,8 @@ class Missing extends Component {
             <PageToolbarButton
               label={translate('SearchAll')}
               iconName={icons.SEARCH}
-              isDisabled={!items.length}
-              isSpinning={isSearchingForMissingBooks}
+              isDisabled={!items.length || this.state.isCountingSearches}
+              isSpinning={isSearchingForMissingBooks || this.state.isCountingSearches}
               onPress={this.onSearchAllMissingPress}
             />
 
@@ -279,11 +306,11 @@ class Missing extends Component {
                 <ConfirmModal
                   isOpen={isConfirmSearchAllMissingModalOpen}
                   kind={kinds.DANGER}
-                  title={translate('SearchForAllMissingBooks')}
+                  title={translate(this.state.pendingSelectedBookIds ? 'SearchSelected' : 'SearchForAllMissingBooks')}
                   message={
                     <div>
                       <div>
-                        {translate('SearchForAllMissingBooksConfirm', { count: totalRecords })}
+                        {translate('SearchAuthorBooksConfirm', { count: this.state.pendingSelectedBookIds?.length ?? this.state.pendingSearchCount })}
                       </div>
                       <div>
                         {translate('SearchCannotBeCancelled')}
@@ -325,6 +352,7 @@ Missing.propTypes = {
   setMissingMediaType: PropTypes.func.isRequired,
   onFilterSelect: PropTypes.func.isRequired,
   onSearchSelectedPress: PropTypes.func.isRequired,
+  onSearchCountError: PropTypes.func.isRequired,
   batchToggleMissingBooks: PropTypes.func.isRequired,
   onSearchAllMissingPress: PropTypes.func.isRequired
 };

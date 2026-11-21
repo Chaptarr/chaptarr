@@ -13,8 +13,9 @@ namespace NzbDrone.Core.Books
         AuthorSyncMetadata CreateOrUpdateSyncMetadata(int authorId, string externalAuthorId, string etag = null);
         void UpdateSyncMetadata(AuthorSyncMetadata syncMetadata);
         void UpdateSyncResult(int authorId, bool success, string etag = null, string error = null, 
-                             int httpStatus = 0, TimeSpan? duration = null);
+                             int httpStatus = 0, TimeSpan? duration = null, bool retryAllowed = true, bool localFailure = false);
         List<AuthorSyncMetadata> GetDueForSync(int limit = 100);
+        void DeferRetry(AuthorSyncMetadata metadata);
         void BulkUpdateSyncMetadata(List<AuthorSyncMetadata> syncMetadata);
     }
 
@@ -55,64 +56,19 @@ namespace NzbDrone.Core.Books
             var existingByAuthor = _syncMetadataRepository.FindByAuthorId(authorId);
             var existingByExternal = _syncMetadataRepository.FindByExternalAuthorId(externalAuthorId);
 
-            if (existingByAuthor != null)
+            // A sync token is not ownership proof. Reconcile the published identity at the
+            // refresh boundary before moving children; never steal another author's mapping.
+            if (existingByExternal != null && existingByExternal.AuthorId != authorId)
             {
-                // If another row already owns this external ID, we have duplicate author rows (or stale metadata rows).
-                // Keep the row for the author being refreshed and remove the conflicting external mapping.
-                if (existingByExternal != null && existingByExternal.Id != existingByAuthor.Id)
-                {
-                    _logger.Warn("[SYNC-METADATA] ExternalAuthorId '{0}' is already mapped to AuthorId={1}. " +
-                                 "AuthorId={2} is attempting to claim the same external id; deleting the conflicting sync-metadata row (Id={3}).",
-                        externalAuthorId,
-                        existingByExternal.AuthorId,
-                        authorId,
-                        existingByExternal.Id);
-
-                    try
-                    {
-                        _syncMetadataRepository.Delete(existingByExternal.Id);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Error(ex, "[SYNC-METADATA] Failed deleting conflicting sync-metadata row for ExternalAuthorId '{0}' (Id={1})",
-                            externalAuthorId, existingByExternal.Id);
-                        throw;
-                    }
-                }
-
-                existingByAuthor.ExternalAuthorId = externalAuthorId;
-                if (etag != null)
-                {
-                    existingByAuthor.ETag = etag;
-                }
-
-                _syncMetadataRepository.Update(existingByAuthor);
-                return existingByAuthor;
+                throw new InvalidOperationException($"Author {authorId} cannot claim {externalAuthorId}: it belongs to author {existingByExternal.AuthorId}. Reconcile author identity first.");
             }
 
-            // No row for this AuthorId yet. If there is already a row for this ExternalAuthorId, reassign it
-            // instead of inserting and crashing on the UNIQUE constraint.
-            if (existingByExternal != null)
+            if (existingByAuthor != null)
             {
-                if (existingByExternal.AuthorId != authorId)
-                {
-                    _logger.Warn("[SYNC-METADATA] ExternalAuthorId '{0}' is already mapped to AuthorId={1}. " +
-                                 "Reassigning sync-metadata row (Id={2}) to AuthorId={3}.",
-                        externalAuthorId,
-                        existingByExternal.AuthorId,
-                        existingByExternal.Id,
-                        authorId);
-
-                    existingByExternal.AuthorId = authorId;
-                }
-
-                if (etag != null)
-                {
-                    existingByExternal.ETag = etag;
-                }
-
-                _syncMetadataRepository.Update(existingByExternal);
-                return existingByExternal;
+                existingByAuthor.ExternalAuthorId = externalAuthorId;
+                if (etag != null) existingByAuthor.ETag = etag;
+                _syncMetadataRepository.Update(existingByAuthor);
+                return existingByAuthor;
             }
 
             // Create new record
@@ -135,7 +91,7 @@ namespace NzbDrone.Core.Books
         }
 
         public void UpdateSyncResult(int authorId, bool success, string etag = null, string error = null,
-                                   int httpStatus = 0, TimeSpan? duration = null)
+                                   int httpStatus = 0, TimeSpan? duration = null, bool retryAllowed = true, bool localFailure = false)
         {
             var syncMetadata = _syncMetadataRepository.FindByAuthorId(authorId);
             if (syncMetadata == null)
@@ -144,6 +100,9 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
+            var previousFailureCount = syncMetadata.SyncFailureCount;
+            var previousStatus = syncMetadata.LastSyncStatus;
+            var previousHttpStatus = syncMetadata.LastHttpStatus;
             var now = DateTime.UtcNow;
             syncMetadata.LastSyncAttempt = now;
             syncMetadata.LastHttpStatus = httpStatus;
@@ -155,7 +114,7 @@ namespace NzbDrone.Core.Books
                 syncMetadata.LastSuccessfulSync = now;
                 syncMetadata.LastSyncStatus = SyncStatus.Success;
                 syncMetadata.SyncFailureCount = 0;
-                syncMetadata.NextSyncNotBefore = null; // Available for next sync immediately
+                syncMetadata.NextSyncNotBefore = null; // Successful work leaves the retry queue.
                 
                 if (!string.IsNullOrEmpty(etag))
                 {
@@ -165,22 +124,42 @@ namespace NzbDrone.Core.Books
             else
             {
                 syncMetadata.LastSyncStatus = httpStatus == 429 ? SyncStatus.RateLimited : SyncStatus.Failed;
-                syncMetadata.SyncFailureCount++;
+                var providerUnavailable = !localFailure && (httpStatus == 0 || httpStatus == 429 || httpStatus >= 500);
+                if (!providerUnavailable) syncMetadata.SyncFailureCount++;
+                if (localFailure) syncMetadata.ETag = null;
 
-                // Implement exponential backoff for failed syncs
-                var backoffMinutes = Math.Min(60 * Math.Pow(2, syncMetadata.SyncFailureCount - 1), 1440); // Max 24 hours
-                syncMetadata.NextSyncNotBefore = now.AddMinutes(backoffMinutes);
-                
-                _logger.Debug("Author {0} sync failed {1} time(s), next sync not before {2}", 
-                    authorId, syncMetadata.SyncFailureCount, syncMetadata.NextSyncNotBefore);
+                // A provider rate limit must not inherit an author's earlier failure count
+                // and postpone a recoverable refresh for a day.
+                syncMetadata.NextSyncNotBefore = !retryAllowed ? null : localFailure || httpStatus == 404 || httpStatus == 429
+                    ? now.AddHours(1)
+                    : AuthorRetrySchedule.NextAttempt(providerUnavailable ? 1 : syncMetadata.SyncFailureCount);
             }
 
             _syncMetadataRepository.Update(syncMetadata);
+            if (success && previousStatus is SyncStatus.Failed or SyncStatus.RateLimited)
+                _logger.Info("Author {0} refresh recovered; previous failure: {1}", authorId, previousHttpStatus == 0 ? "local or connection failure" : "HTTP " + previousHttpStatus);
+            else if (!success)
+            {
+                if (retryAllowed && (previousStatus != syncMetadata.LastSyncStatus || previousHttpStatus != httpStatus ||
+                    localFailure && previousFailureCount == 0))
+                    _logger.Warn("Author {0} refresh could not complete: {1}. Next automatic retry is due at {2:u}.",
+                        authorId, syncMetadata.LastError, syncMetadata.NextSyncNotBefore);
+                _logger.Debug("Author {0} sync failed {1} time(s), next retry {2}",
+                    authorId, syncMetadata.SyncFailureCount, syncMetadata.NextSyncNotBefore);
+            }
         }
 
         public List<AuthorSyncMetadata> GetDueForSync(int limit = 100)
         {
             return _syncMetadataRepository.GetDueForSync(limit);
+        }
+
+        public void DeferRetry(AuthorSyncMetadata metadata)
+        {
+            // Reserve a bounded retry before work that can escape without a result.
+            // A recorded outcome replaces this date; this is not an author failure.
+            metadata.NextSyncNotBefore = AuthorRetrySchedule.NextAttempt(Math.Max(4, metadata.SyncFailureCount));
+            _syncMetadataRepository.SetFields(metadata, item => item.NextSyncNotBefore);
         }
 
         public void BulkUpdateSyncMetadata(List<AuthorSyncMetadata> syncMetadata)

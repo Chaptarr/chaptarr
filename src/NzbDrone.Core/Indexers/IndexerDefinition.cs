@@ -19,6 +19,7 @@ namespace NzbDrone.Core.Indexers
         public DownloadProtocol Protocol { get; set; }
         public bool SupportsRss { get; set; }
         public bool SupportsSearch { get; set; }
+        public bool? SupportsNarratorMetadata { get; set; }
         public int Priority { get; set; }
         public int? ProxyId { get; set; }
 

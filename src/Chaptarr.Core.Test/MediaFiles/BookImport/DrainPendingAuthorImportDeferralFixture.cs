@@ -35,9 +35,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             private static IEnumerable<IngestQueueItem> QueueItemsOrItems(RecordingIngestQueueRepository repository) => repository.QueueItems;
             private static IngestQueueItem CloneItem(IngestQueueItem item) => item;
 
-            public void BeginSession(int commandId)
-            {
-            }
 
             public void InsertBatch(List<IngestQueueItem> items)
             {
@@ -86,7 +83,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     .ToList();
             }
 
-            public List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0)
+            public List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0, bool includeCompleted = false)
             {
                 return QueueItemsOrItems(this)
                     .Where(item => item.Id > afterId)
@@ -198,16 +195,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 return QueueItems.Count(item => string.Equals(item.Status, "queued", StringComparison.OrdinalIgnoreCase));
             }
 
-            public int RequeueFailedOrUnmappedUnderPath(string pathPrefix)
-            {
-                throw new NotImplementedException();
-            }
 
-            public int RequeueFailedPaths(IEnumerable<string> paths)
-            {
-                throw new NotImplementedException();
-            }
 
+            public int PurgeCompletedResults(IEnumerable<int> resultIds) => 0;
             public int PurgeUnderPath(string pathPrefix)
             {
                 throw new NotImplementedException();
@@ -218,10 +208,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 throw new NotImplementedException();
             }
 
-            public void PurgeOldCompleted(int daysToKeep = 14)
-            {
-                throw new NotImplementedException();
-            }
 
             public void RecordImportResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null)
             {
@@ -234,7 +220,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 UpdateStatus(queueItemId, "done", statusError);
             }
 
-            public List<NzbDrone.Core.Datastore.ImportResult> GetImportResults(int? commandId = null)
+            public List<NzbDrone.Core.Datastore.ImportResult> GetImportResults(IReadOnlyCollection<string> paths = null)
             {
                 throw new NotImplementedException();
             }
@@ -323,9 +309,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         {
             public BookImportFileResult Result { get; set; }
 
-            public Task ImportFileAsync(string path, int bookId, string quality) => throw new NotImplementedException();
-            public Task ImportFileAsync(string path, int bookId, string quality, Dictionary<string, List<string>> tags) => throw new NotImplementedException();
-            public Task ImportFileAsync(string path, int bookId, int? editionId, string quality, Dictionary<string, List<string>> tags) => throw new NotImplementedException();
             public Task<BookImportFileResult> ImportExistingFileAsync(string path, int bookId, int? editionId, string quality, Dictionary<string, List<string>> tags) => Task.FromResult(Result);
             public Task<BookImportFileResult> ImportExistingFileAsync(string path, int bookId, int? editionId, string quality, Dictionary<string, List<string>> tags, int? durationSeconds) => Task.FromResult(Result);
             public Task<BookImportFileResult> ImportExistingFileAsync(string path, int bookId, int? editionId, string quality, Dictionary<string, List<string>> tags, int? durationSeconds, MatchProvenance provenance) => Task.FromResult(Result);
@@ -554,7 +537,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         }
 
         [Test]
-        public async Task drain_should_apply_consensus_unit_tags_when_staging_tags_are_missing_in_large_units()
+        public async Task drain_should_preserve_each_files_own_tags_when_staging_tags_are_missing()
         {
             const string scannedPath = "/staging/Frank Herbert/Dune";
 
@@ -605,12 +588,15 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var firstPassFiles = matching.FilesByCall.First();
             var tagLightFile = firstPassFiles.FirstOrDefault(file => file.Path.EndsWith("/01.mp3", StringComparison.OrdinalIgnoreCase));
             Assert.That(tagLightFile, Is.Not.Null, "Expected the tag-light file to be included in the unit");
-            Assert.That(tagLightFile.AllTags.ContainsKey("ALBUM"), Is.True);
-            Assert.That(tagLightFile.AllTags["ALBUM"], Is.EquivalentTo(new[] { "Dune" }));
-            Assert.That(tagLightFile.AllTags.ContainsKey("ALBUMARTIST"), Is.True);
-            Assert.That(tagLightFile.AllTags["ALBUMARTIST"], Is.EquivalentTo(new[] { "Frank Herbert" }));
-            Assert.That(tagLightFile.AllTags.ContainsKey("TITLE"), Is.False,
-                "Consensus unit tags should not smear a per-track singleton title into missing-tag files");
+            Assert.That(firstPassFiles, Has.Length.EqualTo(6));
+            Assert.That(tagLightFile.AllTags, Is.Empty,
+                "Matching must not treat a neighbor's tags as this file's own title or author evidence");
+            foreach (var file in firstPassFiles.Where(file => file != tagLightFile))
+            {
+                Assert.That(file.AllTags["ALBUM"], Is.EquivalentTo(new[] { "Dune" }));
+                Assert.That(file.AllTags["ALBUMARTIST"], Is.EquivalentTo(new[] { "Frank Herbert" }));
+                Assert.That(file.AllTags["TITLE"], Is.EquivalentTo(new[] { $"Track {int.Parse(Path.GetFileNameWithoutExtension(file.Path))}" }));
+            }
         }
 
         [Test]

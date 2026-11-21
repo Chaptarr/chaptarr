@@ -48,6 +48,7 @@ function AuthenticationRequiredModalContent(props) {
   const {
     authenticationMethod,
     authenticationRequired,
+    allowedHosts,
     username,
     password,
     passwordConfirmation,
@@ -166,6 +167,18 @@ function AuthenticationRequiredModalContent(props) {
                   helpText={translate('AuthenticationRequiredHelpText')}
                   onChange={onInputChange}
                   {...authenticationRequired}
+                />
+              </FormGroup>
+
+              <FormGroup>
+                <FormLabel>{translate('AllowedHosts')}</FormLabel>
+                <FormInputGroup
+                  type={inputTypes.TEXT}
+                  name="allowedHosts"
+                  helpText={translate('AllowedHostsHelpText')}
+                  helpTextWarning={translate('RestartRequiredHelpTextWarning')}
+                  onChange={onInputChange}
+                  {...allowedHosts}
                 />
               </FormGroup>
 

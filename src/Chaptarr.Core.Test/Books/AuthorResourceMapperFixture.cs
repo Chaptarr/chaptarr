@@ -8,7 +8,6 @@ using NLog.Config;
 using NLog.Targets;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaCover;
-using NzbDrone.Core.RootFolders;
 using NUnit.Framework;
 
 namespace Chaptarr.Core.Test.Books
@@ -17,7 +16,22 @@ namespace Chaptarr.Core.Test.Books
     public class AuthorResourceMapperFixture
     {
         [Test]
-        public void should_map_legacy_single_fields_to_the_ebook_side_for_an_ebook_root_idempotently()
+        public void new_author_requests_cannot_supply_internal_retry_state()
+        {
+            var future = System.DateTime.UtcNow.AddYears(1);
+            var resource = new AuthorResource { AuthorName = "Example Writer", AddOptions = new AddAuthorOptions
+            {
+                SearchForMissingBooks = true, InitialFormatSyncFailureCount = 100, InitialFormatSyncNotBefore = future
+            } };
+            var model = resource.ToModel();
+            Assert.That(model.AddOptions.InitialFormatSyncFailureCount, Is.Zero);
+            Assert.That(model.AddOptions.InitialFormatSyncNotBefore, Is.Null);
+            Assert.That(model.AddOptions.SearchForMissingBooks, Is.True);
+            Assert.That(resource.AddOptions.InitialFormatSyncNotBefore, Is.EqualTo(future), "Mapping must not modify the submitted object");
+        }
+
+        [Test]
+        public void should_map_legacy_single_fields_to_the_requested_side_idempotently()
         {
             var resource = new AuthorResource
             {
@@ -30,14 +44,8 @@ namespace Chaptarr.Core.Test.Books
                 MonitorNewItems = "all",
                 Tags = new HashSet<int> { 4 }
             };
-            var ebookRoot = new RootFolder
-            {
-                Path = "/ebooks",
-                FolderType = FolderType.Ebook
-            };
-
-            AuthorResourceMapper.NormalizeLegacySingleFields(resource, null, ebookRoot);
-            AuthorResourceMapper.NormalizeLegacySingleFields(resource, null);
+            AuthorResourceMapper.NormalizeLegacySingleFields(resource, null, "ebook");
+            AuthorResourceMapper.NormalizeLegacySingleFields(resource, null, "ebook");
 
             Assert.Multiple(() =>
             {
@@ -57,31 +65,27 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void should_map_legacy_single_fields_to_both_sides_for_a_mixed_root()
+        public void should_leave_unscoped_shared_settings_unprojected_during_mapping()
         {
             var resource = new AuthorResource
             {
-                QualityProfileId = 1,
-                MetadataProfileId = 2,
-                RootFolderPath = "/books",
-                Monitored = true
+                QualityProfileId = 1, MetadataProfileId = 2, RootFolderPath = "/books", Monitored = true
             };
+            var model = resource.ToModel();
+            Assert.That(model.AudiobookRootFolderPath, Is.Null);
+            Assert.That(model.EbookRootFolderPath, Is.Null);
+            Assert.That(resource.AudiobookQualityProfileId, Is.Null);
+            Assert.That(resource.EbookQualityProfileId, Is.Null);
+        }
 
-            AuthorResourceMapper.NormalizeLegacySingleFields(resource, null, new RootFolder
-            {
-                Path = "/books",
-                FolderType = FolderType.Mixed
-            });
-
-            Assert.Multiple(() =>
-            {
-                Assert.That(resource.AudiobookQualityProfileId, Is.EqualTo(1));
-                Assert.That(resource.EbookQualityProfileId, Is.EqualTo(1));
-                Assert.That(resource.AudiobookMetadataProfileId, Is.EqualTo(2));
-                Assert.That(resource.EbookMetadataProfileId, Is.EqualTo(2));
-                Assert.That(resource.AudiobookRootFolderPath, Is.EqualTo("/books"));
-                Assert.That(resource.EbookRootFolderPath, Is.EqualTo("/books"));
-            });
+        [Test]
+        public void media_query_must_not_enable_bare_provider_id_translation()
+        {
+            var resource = new AuthorResource { ForeignAuthorId = "130698", QualityProfileId = 1 };
+            var model = resource.ToModel((ReadarrFacadeContext)null, "ebook");
+            Assert.That(model.EbookQualityProfileId, Is.EqualTo(1));
+            Assert.That(model.GoodreadsAuthorId, Is.Null);
+            Assert.That(model.HardcoverAuthorId, Is.Null);
         }
 
         [Test]
@@ -336,16 +340,16 @@ namespace Chaptarr.Core.Test.Books
 	            Assert.That(model.HardcoverAuthorId, Is.Null);
 	            Assert.That(model.GoodreadsAuthorId, Is.Null);
 	            Assert.That(model.AudnexusAuthorId, Is.Null);
-	            Assert.That(model.AudiobookQualityProfileId, Is.EqualTo(7));
-	            Assert.That(model.EbookQualityProfileId, Is.EqualTo(7));
-            Assert.That(model.AudiobookMetadataProfileId, Is.EqualTo(8));
-            Assert.That(model.EbookMetadataProfileId, Is.EqualTo(8));
-            Assert.That(model.AudiobookRootFolderPath, Is.EqualTo("/books"));
-            Assert.That(model.EbookRootFolderPath, Is.EqualTo("/books"));
-            Assert.That(model.AudiobookMonitored, Is.True);
-            Assert.That(model.EbookMonitored, Is.True);
-            Assert.That(model.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
-            Assert.That(model.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
+	            Assert.That(model.AudiobookQualityProfileId, Is.Null);
+	            Assert.That(model.EbookQualityProfileId, Is.Null);
+            Assert.That(model.AudiobookMetadataProfileId, Is.Null);
+            Assert.That(model.EbookMetadataProfileId, Is.Null);
+            Assert.That(model.AudiobookRootFolderPath, Is.Null);
+            Assert.That(model.EbookRootFolderPath, Is.Null);
+            Assert.That(model.AudiobookMonitored, Is.Null);
+            Assert.That(model.EbookMonitored, Is.Null);
+            Assert.That(model.AudiobookMonitorNewItems, Is.Null);
+            Assert.That(model.EbookMonitorNewItems, Is.Null);
             Assert.That(model.AudiobookTags, Is.EquivalentTo(new[] { 4 }));
             Assert.That(model.EbookTags, Is.EquivalentTo(new[] { 4 }));
 	            Assert.That(model.AddOptions.Monitor, Is.EqualTo(MonitorTypes.SpecificBook));
@@ -546,7 +550,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void should_preserve_sibling_and_omitted_fields_on_facade_author_update()
+        public void should_preserve_sibling_and_omitted_fields_on_facade_author_update([Values(false, true)] bool useQuery)
         {
             var existing = new NzbDrone.Core.Books.Author
             {
@@ -580,10 +584,10 @@ namespace Chaptarr.Core.Test.Books
                 AudiobookMonitorNewItems = NewItemMonitorTypes.All
             };
 
-            var updated = resource.ToModel(existing, new ReadarrFacadeContext("gr", "audiobook", "/readarr/gr/audiobook"));
+            var updated = resource.ToModel(existing, useQuery ? null : new ReadarrFacadeContext("gr", "audiobook", "/readarr/gr/audiobook"), useQuery ? "audiobook" : null);
 
             Assert.That(updated.AudiobookQualityProfileId, Is.EqualTo(7));
-            Assert.That(updated.AudiobookMonitored, Is.False);
+            Assert.That(updated.AudiobookMonitored, Is.EqualTo(useQuery), "Explicit native per-format monitoring wins over the generic compatibility field");
             Assert.That(updated.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
             Assert.That(updated.AudiobookRootFolderPath, Is.EqualTo("/audiobooks"));
             Assert.That(updated.AudiobookTags, Is.EquivalentTo(new[] { 10 }));
@@ -678,6 +682,41 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(updated.AudiobookTags, Is.EquivalentTo(new[] { 5, 6 }));
             Assert.That(updated.EbookTags, Is.EquivalentTo(new[] { 5, 6 }));
             Assert.That(updated.Tags, Is.EquivalentTo(new[] { 5, 6 }));
+        }
+
+        [TestCase(null, false)]
+        [TestCase("audiobook", false)]
+        [TestCase("ebook", false)]
+        [TestCase("audiobook", true)]
+        [TestCase("ebook", true)]
+        public void classic_tags_fill_echoed_empty_arrays_only_in_the_requested_scope(string side, bool facade)
+        {
+            var resource = new AuthorResource
+            {
+                Tags = new HashSet<int> { 7 }, AudiobookTags = new HashSet<int>(), EbookTags = new HashSet<int>()
+            };
+            var context = facade ? new ReadarrFacadeContext("gr", side, "/readarr/gr/" + side) : null;
+            var model = resource.ToModel(context, side);
+            Assert.That(model.AudiobookTags, Is.EquivalentTo(side == "ebook" ? new int[0] : new[] { 7 }));
+            Assert.That(model.EbookTags, Is.EquivalentTo(side == "audiobook" ? new int[0] : new[] { 7 }));
+            Assert.That(resource.Tags, Is.EquivalentTo(new[] { 7 }));
+        }
+
+        [Test]
+        public void explicit_format_tags_win_and_can_be_cleared_without_legacy_tags()
+        {
+            var resource = new AuthorResource
+            {
+                Tags = new HashSet<int> { 7 }, AudiobookTags = new HashSet<int> { 1 }, EbookTags = new HashSet<int> { 2 }
+            };
+            var model = resource.ToModel();
+            Assert.That(model.AudiobookTags, Is.EquivalentTo(new[] { 1 }));
+            Assert.That(model.EbookTags, Is.EquivalentTo(new[] { 2 }));
+            resource.Tags = null;
+            resource.AudiobookTags.Clear();
+            model = resource.ToModel(model);
+            Assert.That(model.AudiobookTags, Is.Empty);
+            Assert.That(model.EbookTags, Is.EquivalentTo(new[] { 2 }));
         }
 
         [Test]
@@ -809,6 +848,35 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(resource.AudiobookTags, Is.Empty);
             Assert.That(resource.EbookTags, Is.EquivalentTo(new[] { 2 }));
             Assert.That(resource.Tags, Is.EquivalentTo(new[] { 2 }));
+        }
+
+        [Test]
+        public void should_present_legacy_tags_without_mutating_or_sharing_stored_sets()
+        {
+            var model = new Author
+            {
+                AudiobookTags = null,
+                EbookTags = null,
+                Tags = new HashSet<int> { 4, 5 }
+            };
+
+            var resource = model.ToResource();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.Tags, Is.EquivalentTo(new[] { 4, 5 }));
+                Assert.That(resource.AudiobookTags, Is.EquivalentTo(new[] { 4, 5 }));
+                Assert.That(resource.EbookTags, Is.EquivalentTo(new[] { 4, 5 }));
+            });
+            resource.Tags.Clear();
+            resource.AudiobookTags.Clear();
+            Assert.Multiple(() =>
+            {
+                Assert.That(model.Tags, Is.EquivalentTo(new[] { 4, 5 }));
+                Assert.That(model.AudiobookTags, Is.Null);
+                Assert.That(model.EbookTags, Is.Null);
+                Assert.That(resource.EbookTags, Is.EquivalentTo(new[] { 4, 5 }));
+            });
         }
 
         private static MemoryTarget ConfigureLogging()

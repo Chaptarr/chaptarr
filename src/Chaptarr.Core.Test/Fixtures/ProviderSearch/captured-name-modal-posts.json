@@ -1,0 +1,2482 @@
+{
+  "importRequests": [
+    {
+      "method": "POST",
+      "pathname": "/api/v1/author/import",
+      "body": {
+        "foreignAuthorId": "gr:874602",
+        "authorName": "Ursula K. Le Guin",
+        "mediaType": "audiobook",
+        "rootFolder": "/fixture/audio-alt",
+        "qualityProfileId": 12,
+        "metadataProfileId": 22,
+        "monitor": "existing",
+        "audiobookMonitorExistingMode": "existing",
+        "audiobookMonitored": true,
+        "audiobookMonitorNewItems": "none",
+        "tags": [
+          43
+        ],
+        "manualFlag": true,
+        "searchForMissingBooks": true
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/author/import",
+      "body": {
+        "foreignAuthorId": "gr:874602",
+        "authorName": "Ursula K. Le Guin",
+        "mediaType": "ebook",
+        "rootFolder": "/fixture/ebook-alt",
+        "qualityProfileId": 14,
+        "metadataProfileId": 24,
+        "monitor": "none",
+        "ebookMonitorExistingMode": "none",
+        "ebookMonitored": false,
+        "ebookMonitorNewItems": "all",
+        "tags": [],
+        "manualFlag": true,
+        "searchForMissingBooks": true
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/author/import",
+      "body": {
+        "foreignAuthorId": "gr:874602",
+        "authorName": "Ursula K. Le Guin",
+        "mediaType": "audiobook",
+        "rootFolder": "/fixture/audio-alt",
+        "qualityProfileId": 12,
+        "metadataProfileId": 22,
+        "monitor": "existing",
+        "audiobookMonitorExistingMode": "existing",
+        "audiobookMonitored": true,
+        "audiobookMonitorNewItems": "none",
+        "tags": [
+          43
+        ],
+        "manualFlag": true,
+        "searchForMissingBooks": false
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/author/import",
+      "body": {
+        "foreignAuthorId": "gr:874602",
+        "authorName": "Ursula K. Le Guin",
+        "mediaType": "ebook",
+        "rootFolder": "/fixture/ebook-alt",
+        "qualityProfileId": 14,
+        "metadataProfileId": 24,
+        "monitor": "none",
+        "ebookMonitorExistingMode": "none",
+        "ebookMonitored": false,
+        "ebookMonitorNewItems": "all",
+        "tags": [],
+        "manualFlag": true,
+        "searchForMissingBooks": true
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/author/import",
+      "body": {
+        "foreignAuthorId": "hc:213830",
+        "authorName": "Ursula K. Le Guin",
+        "mediaType": "audiobook",
+        "rootFolder": "/fixture/audio-alt",
+        "qualityProfileId": 12,
+        "metadataProfileId": 22,
+        "monitor": "existing",
+        "audiobookMonitorExistingMode": "existing",
+        "audiobookMonitored": true,
+        "audiobookMonitorNewItems": "none",
+        "tags": [
+          43
+        ],
+        "manualFlag": true,
+        "searchForMissingBooks": true
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/author/import",
+      "body": {
+        "foreignAuthorId": "hc:213830",
+        "authorName": "Ursula K. Le Guin",
+        "mediaType": "ebook",
+        "rootFolder": "/fixture/ebook-alt",
+        "qualityProfileId": 14,
+        "metadataProfileId": 24,
+        "monitor": "none",
+        "ebookMonitorExistingMode": "none",
+        "ebookMonitored": false,
+        "ebookMonitorNewItems": "all",
+        "tags": [],
+        "manualFlag": true,
+        "searchForMissingBooks": true
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/author/import",
+      "body": {
+        "foreignAuthorId": "hc:213830",
+        "authorName": "Ursula K. Le Guin",
+        "mediaType": "audiobook",
+        "rootFolder": "/fixture/audio-alt",
+        "qualityProfileId": 12,
+        "metadataProfileId": 22,
+        "monitor": "existing",
+        "audiobookMonitorExistingMode": "existing",
+        "audiobookMonitored": true,
+        "audiobookMonitorNewItems": "none",
+        "tags": [
+          43
+        ],
+        "manualFlag": true,
+        "searchForMissingBooks": false
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/author/import",
+      "body": {
+        "foreignAuthorId": "hc:213830",
+        "authorName": "Ursula K. Le Guin",
+        "mediaType": "ebook",
+        "rootFolder": "/fixture/ebook-alt",
+        "qualityProfileId": 14,
+        "metadataProfileId": 24,
+        "monitor": "none",
+        "ebookMonitorExistingMode": "none",
+        "ebookMonitored": false,
+        "ebookMonitorNewItems": "all",
+        "tags": [],
+        "manualFlag": true,
+        "searchForMissingBooks": true
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/author/import",
+      "body": {
+        "foreignAuthorId": "az:B0GZZ57KFW",
+        "authorName": "Ursula K. Le Guin",
+        "mediaType": "audiobook",
+        "rootFolder": "/fixture/audio-alt",
+        "qualityProfileId": 12,
+        "metadataProfileId": 22,
+        "monitor": "existing",
+        "audiobookMonitorExistingMode": "existing",
+        "audiobookMonitored": true,
+        "audiobookMonitorNewItems": "none",
+        "tags": [
+          43
+        ],
+        "manualFlag": true,
+        "searchForMissingBooks": true
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/author/import",
+      "body": {
+        "foreignAuthorId": "az:B0GZZ57KFW",
+        "authorName": "Ursula K. Le Guin",
+        "mediaType": "ebook",
+        "rootFolder": "/fixture/ebook-alt",
+        "qualityProfileId": 14,
+        "metadataProfileId": 24,
+        "monitor": "none",
+        "ebookMonitorExistingMode": "none",
+        "ebookMonitored": false,
+        "ebookMonitorNewItems": "all",
+        "tags": [],
+        "manualFlag": true,
+        "searchForMissingBooks": true
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/author/import",
+      "body": {
+        "foreignAuthorId": "az:B0GZZ57KFW",
+        "authorName": "Ursula K. Le Guin",
+        "mediaType": "audiobook",
+        "rootFolder": "/fixture/audio-alt",
+        "qualityProfileId": 12,
+        "metadataProfileId": 22,
+        "monitor": "existing",
+        "audiobookMonitorExistingMode": "existing",
+        "audiobookMonitored": true,
+        "audiobookMonitorNewItems": "none",
+        "tags": [
+          43
+        ],
+        "manualFlag": true,
+        "searchForMissingBooks": false
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/author/import",
+      "body": {
+        "foreignAuthorId": "az:B0GZZ57KFW",
+        "authorName": "Ursula K. Le Guin",
+        "mediaType": "ebook",
+        "rootFolder": "/fixture/ebook-alt",
+        "qualityProfileId": 14,
+        "metadataProfileId": 24,
+        "monitor": "none",
+        "ebookMonitorExistingMode": "none",
+        "ebookMonitored": false,
+        "ebookMonitorNewItems": "all",
+        "tags": [],
+        "manualFlag": true,
+        "searchForMissingBooks": true
+      }
+    }
+  ],
+  "bookRequests": [
+    {
+      "method": "POST",
+      "pathname": "/api/v1/book",
+      "body": {
+        "title": "A Wizard of Earthsea",
+        "authorTitle": "le guin, ursula k. A Wizard of Earthsea",
+        "seriesTitle": "",
+        "overview": "Ged, the greatest sorcerer in all Earthsea, was called Sparrowhawk in his reckless youth. <br/><br/>Hungry for power and knowledge, Sparrowhawk tampered with long-held secrets and loose…",
+        "authorId": 0,
+        "foreignBookId": "gr:113603",
+        "localBookId": null,
+        "foreignEditionId": "gr:13642",
+        "goodreadsBookId": "gr:13642",
+        "goodreadsWorkId": "gr:113603",
+        "titleSlug": "113603",
+        "monitored": true,
+        "audiobookMonitored": true,
+        "ebookMonitored": false,
+        "anyEditionOk": true,
+        "ratings": {
+          "votes": 378757,
+          "value": 4.01,
+          "popularity": 1518815.5699999998
+        },
+        "added": "0001-01-01T04:57:00Z",
+        "pageCount": 0,
+        "genres": [],
+        "author": {
+          "status": "ended",
+          "ended": true,
+          "authorName": "Ursula K. Le Guin",
+          "authorNameLastFirst": "Le Guin, Ursula K.",
+          "foreignAuthorId": "gr:874602",
+          "overview": "Ursula Kroeber Le Guin was an American author who wrote more than 20 novels and 100 short stories. She's best known for her genre-bending speculative fiction, including the Earthsea fantasy series and the Hainish universe novels. Her early works, A Wizard of Earthsea (1968), The Left Hand of Darkness (1969), and The Dispossessed (1974), established her as a major figure in science fiction.",
+          "born": "1929-10-21T00:00:00Z",
+          "died": "2018-01-22T00:00:00Z",
+          "links": [
+            {
+              "url": "https://www.goodreads.com/author/show/874602.Ursula_K_Le_Guin",
+              "name": "goodreads"
+            },
+            {
+              "url": "https://www.amazon.com/stores/author/B000AQ2M2S/about",
+              "name": "amazon"
+            },
+            {
+              "url": "https://hardcover.app/authors/ursula-k-le-guin",
+              "name": "hardcover"
+            }
+          ],
+          "images": [
+            {
+              "url": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/authors/1244291425i/874602._UX200_CR0,21,200,200_.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a800a353c050d410b286168a2afed104ab1d2972"
+            },
+            {
+              "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a53989777fee8974bb4910ade55107eb7a46b820"
+            },
+            {
+              "url": "https://m.media-amazon.com/images/I/31Jz6haWaBL.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "90adf6baec3fc4b1e4991e41797abdd4471f5147"
+            }
+          ],
+          "folder": "",
+          "genres": [],
+          "pseudonyms": [],
+          "cleanName": "ursulakleguin",
+          "sortName": "ursula k. le guin",
+          "sortNameLastFirst": "le guin, ursula k.",
+          "added": "0001-01-01T04:57:00Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0,
+            "popularity": 0
+          },
+          "lastSelectedMediaType": "audiobook",
+          "statistics": {
+            "bookFileCount": 0,
+            "bookCount": 0,
+            "availableBookCount": 0,
+            "totalBookCount": 0,
+            "sizeOnDisk": 0,
+            "percentOfBooks": 0
+          },
+          "id": 0,
+          "addOptions": {
+            "monitor": "specificBook",
+            "searchForMissingBooks": false,
+            "booksToMonitor": [
+              "gr:113603"
+            ]
+          },
+          "audiobookQualityProfileId": 12,
+          "audiobookMetadataProfileId": 22,
+          "audiobookRootFolderPath": "/fixture/audio-alt",
+          "audiobookMonitored": true,
+          "audiobookMonitorNewItems": "none",
+          "audiobookTags": [
+            43
+          ],
+          "tags": [
+            43
+          ],
+          "monitored": true
+        },
+        "images": [
+          {
+            "url": "/MediaCoverProxy/59ff77371eed450a8da45aa515f6957d2883fc9f4145e75d2faacca55bcacb0b/13642._SY750_.jpg",
+            "coverType": "cover",
+            "extension": ".jpg",
+            "remoteUrl": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1353424536i/13642._SY750_.jpg"
+          }
+        ],
+        "links": [],
+        "addOptions": {
+          "addType": "automatic",
+          "searchForNewBook": true
+        },
+        "remoteCover": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1353424536i/13642._SY750_.jpg",
+        "editions": [
+          {
+            "bookId": 0,
+            "foreignEditionId": "gr:13642",
+            "titleSlug": "113603",
+            "asins": [],
+            "title": "A Wizard of Earthsea",
+            "overview": "Ged, the greatest sorcerer in all Earthsea, was called Sparrowhawk in his reckless youth. <br/><br/>Hungry for power and knowledge, Sparrowhawk tampered with long-held secrets and loose…",
+            "isEbook": false,
+            "pageCount": 183,
+            "images": [
+              {
+                "url": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1353424536i/13642._SY750_.jpg",
+                "coverType": "cover",
+                "extension": ".jpg"
+              }
+            ],
+            "links": [],
+            "ratings": {
+              "votes": 378757,
+              "value": 4.01,
+              "popularity": 1518815.5699999998
+            },
+            "monitored": true,
+            "manualAdd": false,
+            "goodreadsEditionId": 13642,
+            "bookFileCount": 0,
+            "monitoredByAnotherAudiobookBook": false,
+            "narratorNames": [],
+            "hasChapters": false,
+            "chapters": []
+          }
+        ],
+        "localAudiobookBooks": [],
+        "localEbookBooks": [],
+        "mediaType": "audiobook",
+        "availableNarrators": [],
+        "narratorNames": [],
+        "hasFiles": false,
+        "isOmnibus": false,
+        "id": 0
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/book",
+      "body": {
+        "title": "A Wizard of Earthsea",
+        "authorTitle": "le guin, ursula k. A Wizard of Earthsea",
+        "seriesTitle": "",
+        "overview": "Ged, the greatest sorcerer in all Earthsea, was called Sparrowhawk in his reckless youth. <br/><br/>Hungry for power and knowledge, Sparrowhawk tampered with long-held secrets and loose…",
+        "authorId": 0,
+        "foreignBookId": "gr:113603",
+        "localBookId": null,
+        "foreignEditionId": "gr:13642",
+        "goodreadsBookId": "gr:13642",
+        "goodreadsWorkId": "gr:113603",
+        "titleSlug": "113603",
+        "monitored": true,
+        "audiobookMonitored": false,
+        "ebookMonitored": true,
+        "anyEditionOk": true,
+        "ratings": {
+          "votes": 378757,
+          "value": 4.01,
+          "popularity": 1518815.5699999998
+        },
+        "added": "0001-01-01T04:57:00Z",
+        "pageCount": 0,
+        "genres": [],
+        "author": {
+          "status": "ended",
+          "ended": true,
+          "authorName": "Ursula K. Le Guin",
+          "authorNameLastFirst": "Le Guin, Ursula K.",
+          "foreignAuthorId": "gr:874602",
+          "overview": "Ursula Kroeber Le Guin was an American author who wrote more than 20 novels and 100 short stories. She's best known for her genre-bending speculative fiction, including the Earthsea fantasy series and the Hainish universe novels. Her early works, A Wizard of Earthsea (1968), The Left Hand of Darkness (1969), and The Dispossessed (1974), established her as a major figure in science fiction.",
+          "born": "1929-10-21T00:00:00Z",
+          "died": "2018-01-22T00:00:00Z",
+          "links": [
+            {
+              "url": "https://www.goodreads.com/author/show/874602.Ursula_K_Le_Guin",
+              "name": "goodreads"
+            },
+            {
+              "url": "https://www.amazon.com/stores/author/B000AQ2M2S/about",
+              "name": "amazon"
+            },
+            {
+              "url": "https://hardcover.app/authors/ursula-k-le-guin",
+              "name": "hardcover"
+            }
+          ],
+          "images": [
+            {
+              "url": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/authors/1244291425i/874602._UX200_CR0,21,200,200_.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a800a353c050d410b286168a2afed104ab1d2972"
+            },
+            {
+              "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a53989777fee8974bb4910ade55107eb7a46b820"
+            },
+            {
+              "url": "https://m.media-amazon.com/images/I/31Jz6haWaBL.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "90adf6baec3fc4b1e4991e41797abdd4471f5147"
+            }
+          ],
+          "folder": "",
+          "genres": [],
+          "pseudonyms": [],
+          "cleanName": "ursulakleguin",
+          "sortName": "ursula k. le guin",
+          "sortNameLastFirst": "le guin, ursula k.",
+          "added": "0001-01-01T04:57:00Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0,
+            "popularity": 0
+          },
+          "lastSelectedMediaType": "audiobook",
+          "statistics": {
+            "bookFileCount": 0,
+            "bookCount": 0,
+            "availableBookCount": 0,
+            "totalBookCount": 0,
+            "sizeOnDisk": 0,
+            "percentOfBooks": 0
+          },
+          "id": 0,
+          "addOptions": {
+            "monitor": "specificBook",
+            "searchForMissingBooks": false,
+            "booksToMonitor": [
+              "gr:113603"
+            ]
+          },
+          "ebookQualityProfileId": 14,
+          "ebookMetadataProfileId": 24,
+          "ebookRootFolderPath": "/fixture/ebook-alt",
+          "ebookMonitored": false,
+          "ebookMonitorNewItems": "all",
+          "ebookTags": [],
+          "tags": [],
+          "monitored": false
+        },
+        "images": [
+          {
+            "url": "/MediaCoverProxy/59ff77371eed450a8da45aa515f6957d2883fc9f4145e75d2faacca55bcacb0b/13642._SY750_.jpg",
+            "coverType": "cover",
+            "extension": ".jpg",
+            "remoteUrl": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1353424536i/13642._SY750_.jpg"
+          }
+        ],
+        "links": [],
+        "addOptions": {
+          "addType": "automatic",
+          "searchForNewBook": true
+        },
+        "remoteCover": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1353424536i/13642._SY750_.jpg",
+        "editions": [
+          {
+            "bookId": 0,
+            "foreignEditionId": "gr:13642",
+            "titleSlug": "113603",
+            "asins": [],
+            "title": "A Wizard of Earthsea",
+            "overview": "Ged, the greatest sorcerer in all Earthsea, was called Sparrowhawk in his reckless youth. <br/><br/>Hungry for power and knowledge, Sparrowhawk tampered with long-held secrets and loose…",
+            "isEbook": false,
+            "pageCount": 183,
+            "images": [
+              {
+                "url": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1353424536i/13642._SY750_.jpg",
+                "coverType": "cover",
+                "extension": ".jpg"
+              }
+            ],
+            "links": [],
+            "ratings": {
+              "votes": 378757,
+              "value": 4.01,
+              "popularity": 1518815.5699999998
+            },
+            "monitored": true,
+            "manualAdd": false,
+            "goodreadsEditionId": 13642,
+            "bookFileCount": 0,
+            "monitoredByAnotherAudiobookBook": false,
+            "narratorNames": [],
+            "hasChapters": false,
+            "chapters": []
+          }
+        ],
+        "localAudiobookBooks": [],
+        "localEbookBooks": [],
+        "mediaType": "ebook",
+        "availableNarrators": [],
+        "narratorNames": [],
+        "hasFiles": false,
+        "isOmnibus": false,
+        "id": 0
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/book",
+      "body": {
+        "title": "A Wizard of Earthsea",
+        "authorTitle": "le guin, ursula k. A Wizard of Earthsea",
+        "seriesTitle": "",
+        "overview": "Ged, the greatest sorcerer in all Earthsea, was called Sparrowhawk in his reckless youth. <br/><br/>Hungry for power and knowledge, Sparrowhawk tampered with long-held secrets and loose…",
+        "authorId": 0,
+        "foreignBookId": "gr:113603",
+        "localBookId": null,
+        "foreignEditionId": "gr:13642",
+        "goodreadsBookId": "gr:13642",
+        "goodreadsWorkId": "gr:113603",
+        "titleSlug": "113603",
+        "monitored": true,
+        "audiobookMonitored": true,
+        "ebookMonitored": false,
+        "anyEditionOk": true,
+        "ratings": {
+          "votes": 378757,
+          "value": 4.01,
+          "popularity": 1518815.5699999998
+        },
+        "added": "0001-01-01T04:57:00Z",
+        "pageCount": 0,
+        "genres": [],
+        "author": {
+          "status": "ended",
+          "ended": true,
+          "authorName": "Ursula K. Le Guin",
+          "authorNameLastFirst": "Le Guin, Ursula K.",
+          "foreignAuthorId": "gr:874602",
+          "overview": "Ursula Kroeber Le Guin was an American author who wrote more than 20 novels and 100 short stories. She's best known for her genre-bending speculative fiction, including the Earthsea fantasy series and the Hainish universe novels. Her early works, A Wizard of Earthsea (1968), The Left Hand of Darkness (1969), and The Dispossessed (1974), established her as a major figure in science fiction.",
+          "born": "1929-10-21T00:00:00Z",
+          "died": "2018-01-22T00:00:00Z",
+          "links": [
+            {
+              "url": "https://www.goodreads.com/author/show/874602.Ursula_K_Le_Guin",
+              "name": "goodreads"
+            },
+            {
+              "url": "https://www.amazon.com/stores/author/B000AQ2M2S/about",
+              "name": "amazon"
+            },
+            {
+              "url": "https://hardcover.app/authors/ursula-k-le-guin",
+              "name": "hardcover"
+            }
+          ],
+          "images": [
+            {
+              "url": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/authors/1244291425i/874602._UX200_CR0,21,200,200_.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a800a353c050d410b286168a2afed104ab1d2972"
+            },
+            {
+              "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a53989777fee8974bb4910ade55107eb7a46b820"
+            },
+            {
+              "url": "https://m.media-amazon.com/images/I/31Jz6haWaBL.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "90adf6baec3fc4b1e4991e41797abdd4471f5147"
+            }
+          ],
+          "folder": "",
+          "genres": [],
+          "pseudonyms": [],
+          "cleanName": "ursulakleguin",
+          "sortName": "ursula k. le guin",
+          "sortNameLastFirst": "le guin, ursula k.",
+          "added": "0001-01-01T04:57:00Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0,
+            "popularity": 0
+          },
+          "lastSelectedMediaType": "audiobook",
+          "statistics": {
+            "bookFileCount": 0,
+            "bookCount": 0,
+            "availableBookCount": 0,
+            "totalBookCount": 0,
+            "sizeOnDisk": 0,
+            "percentOfBooks": 0
+          },
+          "id": 0,
+          "addOptions": {
+            "monitor": "specificBook",
+            "searchForMissingBooks": false,
+            "booksToMonitor": [
+              "gr:113603"
+            ]
+          },
+          "audiobookQualityProfileId": 12,
+          "audiobookMetadataProfileId": 22,
+          "audiobookRootFolderPath": "/fixture/audio-alt",
+          "audiobookMonitored": true,
+          "audiobookMonitorNewItems": "none",
+          "audiobookTags": [
+            43
+          ],
+          "tags": [
+            43
+          ],
+          "monitored": true
+        },
+        "images": [
+          {
+            "url": "/MediaCoverProxy/59ff77371eed450a8da45aa515f6957d2883fc9f4145e75d2faacca55bcacb0b/13642._SY750_.jpg",
+            "coverType": "cover",
+            "extension": ".jpg",
+            "remoteUrl": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1353424536i/13642._SY750_.jpg"
+          }
+        ],
+        "links": [],
+        "addOptions": {
+          "addType": "automatic",
+          "searchForNewBook": true
+        },
+        "remoteCover": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1353424536i/13642._SY750_.jpg",
+        "editions": [
+          {
+            "bookId": 0,
+            "foreignEditionId": "gr:13642",
+            "titleSlug": "113603",
+            "asins": [],
+            "title": "A Wizard of Earthsea",
+            "overview": "Ged, the greatest sorcerer in all Earthsea, was called Sparrowhawk in his reckless youth. <br/><br/>Hungry for power and knowledge, Sparrowhawk tampered with long-held secrets and loose…",
+            "isEbook": false,
+            "pageCount": 183,
+            "images": [
+              {
+                "url": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1353424536i/13642._SY750_.jpg",
+                "coverType": "cover",
+                "extension": ".jpg"
+              }
+            ],
+            "links": [],
+            "ratings": {
+              "votes": 378757,
+              "value": 4.01,
+              "popularity": 1518815.5699999998
+            },
+            "monitored": true,
+            "manualAdd": false,
+            "goodreadsEditionId": 13642,
+            "bookFileCount": 0,
+            "monitoredByAnotherAudiobookBook": false,
+            "narratorNames": [],
+            "hasChapters": false,
+            "chapters": []
+          }
+        ],
+        "localAudiobookBooks": [],
+        "localEbookBooks": [],
+        "mediaType": "audiobook",
+        "availableNarrators": [],
+        "narratorNames": [],
+        "hasFiles": false,
+        "isOmnibus": false,
+        "id": 0
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/book",
+      "body": {
+        "title": "A Wizard of Earthsea",
+        "authorTitle": "le guin, ursula k. A Wizard of Earthsea",
+        "seriesTitle": "",
+        "overview": "Ged, the greatest sorcerer in all Earthsea, was called Sparrowhawk in his reckless youth. <br/><br/>Hungry for power and knowledge, Sparrowhawk tampered with long-held secrets and loose…",
+        "authorId": 0,
+        "foreignBookId": "gr:113603",
+        "localBookId": null,
+        "foreignEditionId": "gr:13642",
+        "goodreadsBookId": "gr:13642",
+        "goodreadsWorkId": "gr:113603",
+        "titleSlug": "113603",
+        "monitored": true,
+        "audiobookMonitored": false,
+        "ebookMonitored": true,
+        "anyEditionOk": true,
+        "ratings": {
+          "votes": 378757,
+          "value": 4.01,
+          "popularity": 1518815.5699999998
+        },
+        "added": "0001-01-01T04:57:00Z",
+        "pageCount": 0,
+        "genres": [],
+        "author": {
+          "status": "ended",
+          "ended": true,
+          "authorName": "Ursula K. Le Guin",
+          "authorNameLastFirst": "Le Guin, Ursula K.",
+          "foreignAuthorId": "gr:874602",
+          "overview": "Ursula Kroeber Le Guin was an American author who wrote more than 20 novels and 100 short stories. She's best known for her genre-bending speculative fiction, including the Earthsea fantasy series and the Hainish universe novels. Her early works, A Wizard of Earthsea (1968), The Left Hand of Darkness (1969), and The Dispossessed (1974), established her as a major figure in science fiction.",
+          "born": "1929-10-21T00:00:00Z",
+          "died": "2018-01-22T00:00:00Z",
+          "links": [
+            {
+              "url": "https://www.goodreads.com/author/show/874602.Ursula_K_Le_Guin",
+              "name": "goodreads"
+            },
+            {
+              "url": "https://www.amazon.com/stores/author/B000AQ2M2S/about",
+              "name": "amazon"
+            },
+            {
+              "url": "https://hardcover.app/authors/ursula-k-le-guin",
+              "name": "hardcover"
+            }
+          ],
+          "images": [
+            {
+              "url": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/authors/1244291425i/874602._UX200_CR0,21,200,200_.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a800a353c050d410b286168a2afed104ab1d2972"
+            },
+            {
+              "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a53989777fee8974bb4910ade55107eb7a46b820"
+            },
+            {
+              "url": "https://m.media-amazon.com/images/I/31Jz6haWaBL.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "90adf6baec3fc4b1e4991e41797abdd4471f5147"
+            }
+          ],
+          "folder": "",
+          "genres": [],
+          "pseudonyms": [],
+          "cleanName": "ursulakleguin",
+          "sortName": "ursula k. le guin",
+          "sortNameLastFirst": "le guin, ursula k.",
+          "added": "0001-01-01T04:57:00Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0,
+            "popularity": 0
+          },
+          "lastSelectedMediaType": "audiobook",
+          "statistics": {
+            "bookFileCount": 0,
+            "bookCount": 0,
+            "availableBookCount": 0,
+            "totalBookCount": 0,
+            "sizeOnDisk": 0,
+            "percentOfBooks": 0
+          },
+          "id": 0,
+          "addOptions": {
+            "monitor": "specificBook",
+            "searchForMissingBooks": false,
+            "booksToMonitor": [
+              "gr:113603"
+            ]
+          },
+          "ebookQualityProfileId": 14,
+          "ebookMetadataProfileId": 24,
+          "ebookRootFolderPath": "/fixture/ebook-alt",
+          "ebookMonitored": false,
+          "ebookMonitorNewItems": "all",
+          "ebookTags": [],
+          "tags": [],
+          "monitored": false
+        },
+        "images": [
+          {
+            "url": "/MediaCoverProxy/59ff77371eed450a8da45aa515f6957d2883fc9f4145e75d2faacca55bcacb0b/13642._SY750_.jpg",
+            "coverType": "cover",
+            "extension": ".jpg",
+            "remoteUrl": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1353424536i/13642._SY750_.jpg"
+          }
+        ],
+        "links": [],
+        "addOptions": {
+          "addType": "automatic",
+          "searchForNewBook": true
+        },
+        "remoteCover": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1353424536i/13642._SY750_.jpg",
+        "editions": [
+          {
+            "bookId": 0,
+            "foreignEditionId": "gr:13642",
+            "titleSlug": "113603",
+            "asins": [],
+            "title": "A Wizard of Earthsea",
+            "overview": "Ged, the greatest sorcerer in all Earthsea, was called Sparrowhawk in his reckless youth. <br/><br/>Hungry for power and knowledge, Sparrowhawk tampered with long-held secrets and loose…",
+            "isEbook": false,
+            "pageCount": 183,
+            "images": [
+              {
+                "url": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1353424536i/13642._SY750_.jpg",
+                "coverType": "cover",
+                "extension": ".jpg"
+              }
+            ],
+            "links": [],
+            "ratings": {
+              "votes": 378757,
+              "value": 4.01,
+              "popularity": 1518815.5699999998
+            },
+            "monitored": true,
+            "manualAdd": false,
+            "goodreadsEditionId": 13642,
+            "bookFileCount": 0,
+            "monitoredByAnotherAudiobookBook": false,
+            "narratorNames": [],
+            "hasChapters": false,
+            "chapters": []
+          }
+        ],
+        "localAudiobookBooks": [],
+        "localEbookBooks": [],
+        "mediaType": "ebook",
+        "availableNarrators": [],
+        "narratorNames": [],
+        "hasFiles": false,
+        "isOmnibus": false,
+        "id": 0
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/book",
+      "body": {
+        "title": "A Wizard of Earthsea",
+        "authorTitle": " A Wizard of Earthsea",
+        "seriesTitle": "",
+        "overview": "A boy grows to manhood while attempting to subdue the evil he unleashed on the world as an apprentice to the Master Wizard.",
+        "authorId": 0,
+        "foreignBookId": "hc:427401",
+        "localBookId": null,
+        "foreignEditionId": "",
+        "hardcoverBookId": "hc:427401",
+        "titleSlug": "hc:427401",
+        "monitored": true,
+        "audiobookMonitored": true,
+        "ebookMonitored": false,
+        "anyEditionOk": true,
+        "ratings": {
+          "votes": 0,
+          "value": 3.937927,
+          "popularity": 0
+        },
+        "releaseDate": "1968-01-01T05:00:00Z",
+        "added": "0001-01-01T04:57:00Z",
+        "pageCount": 0,
+        "genres": [],
+        "author": {
+          "status": "continuing",
+          "ended": false,
+          "authorName": "Ursula K. Le Guin",
+          "foreignAuthorId": "hc:213830",
+          "links": [],
+          "images": [],
+          "folder": "",
+          "genres": [],
+          "pseudonyms": [],
+          "cleanName": "ursulakleguin",
+          "added": "0001-01-01T04:57:00Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0,
+            "popularity": 0
+          },
+          "lastSelectedMediaType": "audiobook",
+          "statistics": {
+            "bookFileCount": 0,
+            "bookCount": 0,
+            "availableBookCount": 0,
+            "totalBookCount": 0,
+            "sizeOnDisk": 0,
+            "percentOfBooks": 0
+          },
+          "id": 0,
+          "addOptions": {
+            "monitor": "specificBook",
+            "searchForMissingBooks": false,
+            "booksToMonitor": [
+              "hc:427401"
+            ]
+          },
+          "audiobookQualityProfileId": 12,
+          "audiobookMetadataProfileId": 22,
+          "audiobookRootFolderPath": "/fixture/audio-alt",
+          "audiobookMonitored": true,
+          "audiobookMonitorNewItems": "none",
+          "audiobookTags": [
+            43
+          ],
+          "tags": [
+            43
+          ],
+          "monitored": true
+        },
+        "images": [
+          {
+            "url": "/MediaCoverProxy/f62f805dc29b2e47794f0a754b8a7c218914e7c098ff07d46403e5230ac85c8d/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg",
+            "coverType": "cover",
+            "extension": ".jpeg",
+            "remoteUrl": "https://assets.hardcover.app/edition/30492202/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg"
+          }
+        ],
+        "links": [],
+        "addOptions": {
+          "addType": "automatic",
+          "searchForNewBook": true
+        },
+        "remoteCover": "https://assets.hardcover.app/edition/30492202/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg",
+        "editions": [
+          {
+            "bookId": 0,
+            "foreignEditionId": "",
+            "titleSlug": "hc:427401",
+            "isbn10": "0881037559",
+            "asins": [],
+            "title": "A Wizard of Earthsea",
+            "overview": "A boy grows to manhood while attempting to subdue the evil he unleashed on the world as an apprentice to the Master Wizard.",
+            "isEbook": false,
+            "pageCount": 251,
+            "images": [
+              {
+                "url": "https://assets.hardcover.app/edition/30492202/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg",
+                "coverType": "cover",
+                "extension": ".jpeg"
+              }
+            ],
+            "links": [],
+            "ratings": {
+              "votes": 0,
+              "value": 3.937927,
+              "popularity": 0
+            },
+            "monitored": true,
+            "manualAdd": false,
+            "bookFileCount": 0,
+            "monitoredByAnotherAudiobookBook": false,
+            "narratorNames": [],
+            "hasChapters": false,
+            "chapters": []
+          }
+        ],
+        "localAudiobookBooks": [],
+        "localEbookBooks": [],
+        "mediaType": "audiobook",
+        "availableNarrators": [],
+        "narratorNames": [],
+        "hasFiles": false,
+        "isOmnibus": false,
+        "id": 0
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/book",
+      "body": {
+        "title": "A Wizard of Earthsea",
+        "authorTitle": " A Wizard of Earthsea",
+        "seriesTitle": "",
+        "overview": "A boy grows to manhood while attempting to subdue the evil he unleashed on the world as an apprentice to the Master Wizard.",
+        "authorId": 0,
+        "foreignBookId": "hc:427401",
+        "localBookId": null,
+        "foreignEditionId": "",
+        "hardcoverBookId": "hc:427401",
+        "titleSlug": "hc:427401",
+        "monitored": true,
+        "audiobookMonitored": false,
+        "ebookMonitored": true,
+        "anyEditionOk": true,
+        "ratings": {
+          "votes": 0,
+          "value": 3.937927,
+          "popularity": 0
+        },
+        "releaseDate": "1968-01-01T05:00:00Z",
+        "added": "0001-01-01T04:57:00Z",
+        "pageCount": 0,
+        "genres": [],
+        "author": {
+          "status": "continuing",
+          "ended": false,
+          "authorName": "Ursula K. Le Guin",
+          "foreignAuthorId": "hc:213830",
+          "links": [],
+          "images": [],
+          "folder": "",
+          "genres": [],
+          "pseudonyms": [],
+          "cleanName": "ursulakleguin",
+          "added": "0001-01-01T04:57:00Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0,
+            "popularity": 0
+          },
+          "lastSelectedMediaType": "audiobook",
+          "statistics": {
+            "bookFileCount": 0,
+            "bookCount": 0,
+            "availableBookCount": 0,
+            "totalBookCount": 0,
+            "sizeOnDisk": 0,
+            "percentOfBooks": 0
+          },
+          "id": 0,
+          "addOptions": {
+            "monitor": "specificBook",
+            "searchForMissingBooks": false,
+            "booksToMonitor": [
+              "hc:427401"
+            ]
+          },
+          "ebookQualityProfileId": 14,
+          "ebookMetadataProfileId": 24,
+          "ebookRootFolderPath": "/fixture/ebook-alt",
+          "ebookMonitored": false,
+          "ebookMonitorNewItems": "all",
+          "ebookTags": [],
+          "tags": [],
+          "monitored": false
+        },
+        "images": [
+          {
+            "url": "/MediaCoverProxy/f62f805dc29b2e47794f0a754b8a7c218914e7c098ff07d46403e5230ac85c8d/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg",
+            "coverType": "cover",
+            "extension": ".jpeg",
+            "remoteUrl": "https://assets.hardcover.app/edition/30492202/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg"
+          }
+        ],
+        "links": [],
+        "addOptions": {
+          "addType": "automatic",
+          "searchForNewBook": true
+        },
+        "remoteCover": "https://assets.hardcover.app/edition/30492202/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg",
+        "editions": [
+          {
+            "bookId": 0,
+            "foreignEditionId": "",
+            "titleSlug": "hc:427401",
+            "isbn10": "0881037559",
+            "asins": [],
+            "title": "A Wizard of Earthsea",
+            "overview": "A boy grows to manhood while attempting to subdue the evil he unleashed on the world as an apprentice to the Master Wizard.",
+            "isEbook": false,
+            "pageCount": 251,
+            "images": [
+              {
+                "url": "https://assets.hardcover.app/edition/30492202/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg",
+                "coverType": "cover",
+                "extension": ".jpeg"
+              }
+            ],
+            "links": [],
+            "ratings": {
+              "votes": 0,
+              "value": 3.937927,
+              "popularity": 0
+            },
+            "monitored": true,
+            "manualAdd": false,
+            "bookFileCount": 0,
+            "monitoredByAnotherAudiobookBook": false,
+            "narratorNames": [],
+            "hasChapters": false,
+            "chapters": []
+          }
+        ],
+        "localAudiobookBooks": [],
+        "localEbookBooks": [],
+        "mediaType": "ebook",
+        "availableNarrators": [],
+        "narratorNames": [],
+        "hasFiles": false,
+        "isOmnibus": false,
+        "id": 0
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/book",
+      "body": {
+        "title": "A Wizard of Earthsea",
+        "authorTitle": " A Wizard of Earthsea",
+        "seriesTitle": "",
+        "overview": "A boy grows to manhood while attempting to subdue the evil he unleashed on the world as an apprentice to the Master Wizard.",
+        "authorId": 0,
+        "foreignBookId": "hc:427401",
+        "localBookId": null,
+        "foreignEditionId": "",
+        "hardcoverBookId": "hc:427401",
+        "titleSlug": "hc:427401",
+        "monitored": true,
+        "audiobookMonitored": true,
+        "ebookMonitored": false,
+        "anyEditionOk": true,
+        "ratings": {
+          "votes": 0,
+          "value": 3.937927,
+          "popularity": 0
+        },
+        "releaseDate": "1968-01-01T05:00:00Z",
+        "added": "0001-01-01T04:57:00Z",
+        "pageCount": 0,
+        "genres": [],
+        "author": {
+          "status": "continuing",
+          "ended": false,
+          "authorName": "Ursula K. Le Guin",
+          "foreignAuthorId": "hc:213830",
+          "links": [],
+          "images": [],
+          "folder": "",
+          "genres": [],
+          "pseudonyms": [],
+          "cleanName": "ursulakleguin",
+          "added": "0001-01-01T04:57:00Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0,
+            "popularity": 0
+          },
+          "lastSelectedMediaType": "audiobook",
+          "statistics": {
+            "bookFileCount": 0,
+            "bookCount": 0,
+            "availableBookCount": 0,
+            "totalBookCount": 0,
+            "sizeOnDisk": 0,
+            "percentOfBooks": 0
+          },
+          "id": 0,
+          "addOptions": {
+            "monitor": "specificBook",
+            "searchForMissingBooks": false,
+            "booksToMonitor": [
+              "hc:427401"
+            ]
+          },
+          "audiobookQualityProfileId": 12,
+          "audiobookMetadataProfileId": 22,
+          "audiobookRootFolderPath": "/fixture/audio-alt",
+          "audiobookMonitored": true,
+          "audiobookMonitorNewItems": "none",
+          "audiobookTags": [
+            43
+          ],
+          "tags": [
+            43
+          ],
+          "monitored": true
+        },
+        "images": [
+          {
+            "url": "/MediaCoverProxy/f62f805dc29b2e47794f0a754b8a7c218914e7c098ff07d46403e5230ac85c8d/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg",
+            "coverType": "cover",
+            "extension": ".jpeg",
+            "remoteUrl": "https://assets.hardcover.app/edition/30492202/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg"
+          }
+        ],
+        "links": [],
+        "addOptions": {
+          "addType": "automatic",
+          "searchForNewBook": true
+        },
+        "remoteCover": "https://assets.hardcover.app/edition/30492202/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg",
+        "editions": [
+          {
+            "bookId": 0,
+            "foreignEditionId": "",
+            "titleSlug": "hc:427401",
+            "isbn10": "0881037559",
+            "asins": [],
+            "title": "A Wizard of Earthsea",
+            "overview": "A boy grows to manhood while attempting to subdue the evil he unleashed on the world as an apprentice to the Master Wizard.",
+            "isEbook": false,
+            "pageCount": 251,
+            "images": [
+              {
+                "url": "https://assets.hardcover.app/edition/30492202/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg",
+                "coverType": "cover",
+                "extension": ".jpeg"
+              }
+            ],
+            "links": [],
+            "ratings": {
+              "votes": 0,
+              "value": 3.937927,
+              "popularity": 0
+            },
+            "monitored": true,
+            "manualAdd": false,
+            "bookFileCount": 0,
+            "monitoredByAnotherAudiobookBook": false,
+            "narratorNames": [],
+            "hasChapters": false,
+            "chapters": []
+          }
+        ],
+        "localAudiobookBooks": [],
+        "localEbookBooks": [],
+        "mediaType": "audiobook",
+        "availableNarrators": [],
+        "narratorNames": [],
+        "hasFiles": false,
+        "isOmnibus": false,
+        "id": 0
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/book",
+      "body": {
+        "title": "A Wizard of Earthsea",
+        "authorTitle": " A Wizard of Earthsea",
+        "seriesTitle": "",
+        "overview": "A boy grows to manhood while attempting to subdue the evil he unleashed on the world as an apprentice to the Master Wizard.",
+        "authorId": 0,
+        "foreignBookId": "hc:427401",
+        "localBookId": null,
+        "foreignEditionId": "",
+        "hardcoverBookId": "hc:427401",
+        "titleSlug": "hc:427401",
+        "monitored": true,
+        "audiobookMonitored": false,
+        "ebookMonitored": true,
+        "anyEditionOk": true,
+        "ratings": {
+          "votes": 0,
+          "value": 3.937927,
+          "popularity": 0
+        },
+        "releaseDate": "1968-01-01T05:00:00Z",
+        "added": "0001-01-01T04:57:00Z",
+        "pageCount": 0,
+        "genres": [],
+        "author": {
+          "status": "continuing",
+          "ended": false,
+          "authorName": "Ursula K. Le Guin",
+          "foreignAuthorId": "hc:213830",
+          "links": [],
+          "images": [],
+          "folder": "",
+          "genres": [],
+          "pseudonyms": [],
+          "cleanName": "ursulakleguin",
+          "added": "0001-01-01T04:57:00Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0,
+            "popularity": 0
+          },
+          "lastSelectedMediaType": "audiobook",
+          "statistics": {
+            "bookFileCount": 0,
+            "bookCount": 0,
+            "availableBookCount": 0,
+            "totalBookCount": 0,
+            "sizeOnDisk": 0,
+            "percentOfBooks": 0
+          },
+          "id": 0,
+          "addOptions": {
+            "monitor": "specificBook",
+            "searchForMissingBooks": false,
+            "booksToMonitor": [
+              "hc:427401"
+            ]
+          },
+          "ebookQualityProfileId": 14,
+          "ebookMetadataProfileId": 24,
+          "ebookRootFolderPath": "/fixture/ebook-alt",
+          "ebookMonitored": false,
+          "ebookMonitorNewItems": "all",
+          "ebookTags": [],
+          "tags": [],
+          "monitored": false
+        },
+        "images": [
+          {
+            "url": "/MediaCoverProxy/f62f805dc29b2e47794f0a754b8a7c218914e7c098ff07d46403e5230ac85c8d/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg",
+            "coverType": "cover",
+            "extension": ".jpeg",
+            "remoteUrl": "https://assets.hardcover.app/edition/30492202/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg"
+          }
+        ],
+        "links": [],
+        "addOptions": {
+          "addType": "automatic",
+          "searchForNewBook": true
+        },
+        "remoteCover": "https://assets.hardcover.app/edition/30492202/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg",
+        "editions": [
+          {
+            "bookId": 0,
+            "foreignEditionId": "",
+            "titleSlug": "hc:427401",
+            "isbn10": "0881037559",
+            "asins": [],
+            "title": "A Wizard of Earthsea",
+            "overview": "A boy grows to manhood while attempting to subdue the evil he unleashed on the world as an apprentice to the Master Wizard.",
+            "isEbook": false,
+            "pageCount": 251,
+            "images": [
+              {
+                "url": "https://assets.hardcover.app/edition/30492202/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg",
+                "coverType": "cover",
+                "extension": ".jpeg"
+              }
+            ],
+            "links": [],
+            "ratings": {
+              "votes": 0,
+              "value": 3.937927,
+              "popularity": 0
+            },
+            "monitored": true,
+            "manualAdd": false,
+            "bookFileCount": 0,
+            "monitoredByAnotherAudiobookBook": false,
+            "narratorNames": [],
+            "hasChapters": false,
+            "chapters": []
+          }
+        ],
+        "localAudiobookBooks": [],
+        "localEbookBooks": [],
+        "mediaType": "ebook",
+        "availableNarrators": [],
+        "narratorNames": [],
+        "hasFiles": false,
+        "isOmnibus": false,
+        "id": 0
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/book",
+      "body": {
+        "title": "A Wizard of Earthsea: The Earthsea Cycle, Book 1",
+        "authorTitle": "le guin, ursula k. A Wizard of Earthsea: The Earthsea Cycle, Book 1",
+        "seriesTitle": "",
+        "overview": "Winner of the Boston Globe–Horn Book Award Winner of the Lewis Carroll Shelf Award One of TIME's 100 Best Fantasy Books of All Time Ged was the greatest sorcerer in Earthsea, but in his youth he was the reckless Sparrowhawk. In his hunger for power and knowledge, he tampered with long held...",
+        "authorId": 0,
+        "foreignBookId": "az:B002VA3CDO",
+        "localBookId": null,
+        "asin": "B002VA3CDO",
+        "titleSlug": "az:B002VA3CDO",
+        "monitored": true,
+        "audiobookMonitored": true,
+        "ebookMonitored": false,
+        "anyEditionOk": true,
+        "ratings": {
+          "votes": 0,
+          "value": 0,
+          "popularity": 0
+        },
+        "releaseDate": "2009-04-10T00:00:00Z",
+        "added": "0001-01-01T04:57:00Z",
+        "pageCount": 0,
+        "genres": [],
+        "author": {
+          "status": "ended",
+          "ended": true,
+          "authorName": "Ursula K. Le Guin",
+          "authorNameLastFirst": "Le Guin, Ursula K.",
+          "foreignAuthorId": "az:B0GZZ57KFW",
+          "overview": "Ursula Kroeber Le Guin was an American author who wrote more than 20 novels and 100 short stories. She's best known for her genre-bending speculative fiction, including the Earthsea fantasy series and the Hainish universe novels. Her early works, A Wizard of Earthsea (1968), The Left Hand of Darkness (1969), and The Dispossessed (1974), established her as a major figure in science fiction.",
+          "born": "1929-10-21T00:00:00Z",
+          "died": "2018-01-22T00:00:00Z",
+          "links": [
+            {
+              "url": "https://www.amazon.com/stores/author/B000AQ2M2S/about",
+              "name": "amazon"
+            },
+            {
+              "url": "https://www.goodreads.com/author/show/874602.Ursula_K_Le_Guin",
+              "name": "goodreads"
+            },
+            {
+              "url": "https://hardcover.app/authors/ursula-k-le-guin",
+              "name": "hardcover"
+            }
+          ],
+          "images": [
+            {
+              "url": "https://m.media-amazon.com/images/I/31Jz6haWaBL.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "90adf6baec3fc4b1e4991e41797abdd4471f5147"
+            },
+            {
+              "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a53989777fee8974bb4910ade55107eb7a46b820"
+            },
+            {
+              "url": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/authors/1244291425i/874602._UX200_CR0,21,200,200_.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a800a353c050d410b286168a2afed104ab1d2972"
+            }
+          ],
+          "folder": "",
+          "genres": [],
+          "pseudonyms": [],
+          "cleanName": "ursulakleguin",
+          "sortName": "ursula k. le guin",
+          "sortNameLastFirst": "le guin, ursula k.",
+          "added": "0001-01-01T04:57:00Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0,
+            "popularity": 0
+          },
+          "lastSelectedMediaType": "audiobook",
+          "statistics": {
+            "bookFileCount": 0,
+            "bookCount": 0,
+            "availableBookCount": 0,
+            "totalBookCount": 0,
+            "sizeOnDisk": 0,
+            "percentOfBooks": 0
+          },
+          "id": 0,
+          "addOptions": {
+            "monitor": "specificBook",
+            "searchForMissingBooks": false,
+            "booksToMonitor": [
+              "az:B002VA3CDO"
+            ]
+          },
+          "audiobookQualityProfileId": 12,
+          "audiobookMetadataProfileId": 22,
+          "audiobookRootFolderPath": "/fixture/audio-alt",
+          "audiobookMonitored": true,
+          "audiobookMonitorNewItems": "none",
+          "audiobookTags": [
+            43
+          ],
+          "tags": [
+            43
+          ],
+          "monitored": true
+        },
+        "images": [
+          {
+            "url": "/MediaCoverProxy/f306ff13c8a38cf9a783f3bf65c155eaaa8028912ccf67375a98cb4fa98c24c7/51dYUumvCdL._SL500_.jpg",
+            "coverType": "cover",
+            "extension": ".jpg",
+            "remoteUrl": "https://m.media-amazon.com/images/I/51dYUumvCdL._SL500_.jpg"
+          }
+        ],
+        "links": [
+          {
+            "url": "https://www.audible.com/pd/B002VA3CDO",
+            "name": "audible"
+          }
+        ],
+        "addOptions": {
+          "addType": "automatic",
+          "searchForNewBook": true
+        },
+        "remoteCover": "",
+        "editions": [
+          {
+            "bookId": 0,
+            "foreignEditionId": "az:B002VA3CDO",
+            "asin": "B002VA3CDO",
+            "asins": [],
+            "title": "A Wizard of Earthsea: The Earthsea Cycle, Book 1",
+            "overview": "Winner of the Boston Globe–Horn Book Award Winner of the Lewis Carroll Shelf Award One of TIME's 100 Best Fantasy Books of All Time Ged was the greatest sorcerer in Earthsea, but in his youth he was the reckless Sparrowhawk. In his hunger for power and knowledge, he tampered with long held...",
+            "format": "Audiobook",
+            "isEbook": false,
+            "publisher": "Recorded Books",
+            "pageCount": 0,
+            "releaseDate": "2009-04-10T00:00:00Z",
+            "images": [
+              {
+                "url": "https://m.media-amazon.com/images/I/51dYUumvCdL._SL500_.jpg",
+                "coverType": "cover",
+                "extension": ".jpg"
+              }
+            ],
+            "links": [],
+            "ratings": {
+              "votes": 0,
+              "value": 0,
+              "popularity": 0
+            },
+            "monitored": true,
+            "manualAdd": false,
+            "bookFileCount": 0,
+            "monitoredByAnotherAudiobookBook": false,
+            "narratorNames": [
+              "Rob Inglis"
+            ],
+            "hasChapters": false,
+            "chapters": []
+          }
+        ],
+        "localAudiobookBooks": [],
+        "localEbookBooks": [],
+        "mediaType": "audiobook",
+        "availableNarrators": [
+          "Rob Inglis"
+        ],
+        "narratorNames": [],
+        "duration": "07:17:00",
+        "durationMinutes": 437,
+        "hasFiles": false,
+        "isOmnibus": false,
+        "id": 0
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/book",
+      "body": {
+        "title": "A Wizard of Earthsea: The Earthsea Cycle, Book 1",
+        "authorTitle": "le guin, ursula k. A Wizard of Earthsea: The Earthsea Cycle, Book 1",
+        "seriesTitle": "",
+        "overview": "Winner of the Boston Globe–Horn Book Award Winner of the Lewis Carroll Shelf Award One of TIME's 100 Best Fantasy Books of All Time Ged was the greatest sorcerer in Earthsea, but in his youth he was the reckless Sparrowhawk. In his hunger for power and knowledge, he tampered with long held...",
+        "authorId": 0,
+        "foreignBookId": "az:B002VA3CDO",
+        "localBookId": null,
+        "asin": "B002VA3CDO",
+        "titleSlug": "az:B002VA3CDO",
+        "monitored": true,
+        "audiobookMonitored": false,
+        "ebookMonitored": true,
+        "anyEditionOk": true,
+        "ratings": {
+          "votes": 0,
+          "value": 0,
+          "popularity": 0
+        },
+        "releaseDate": "2009-04-10T00:00:00Z",
+        "added": "0001-01-01T04:57:00Z",
+        "pageCount": 0,
+        "genres": [],
+        "author": {
+          "status": "ended",
+          "ended": true,
+          "authorName": "Ursula K. Le Guin",
+          "authorNameLastFirst": "Le Guin, Ursula K.",
+          "foreignAuthorId": "az:B0GZZ57KFW",
+          "overview": "Ursula Kroeber Le Guin was an American author who wrote more than 20 novels and 100 short stories. She's best known for her genre-bending speculative fiction, including the Earthsea fantasy series and the Hainish universe novels. Her early works, A Wizard of Earthsea (1968), The Left Hand of Darkness (1969), and The Dispossessed (1974), established her as a major figure in science fiction.",
+          "born": "1929-10-21T00:00:00Z",
+          "died": "2018-01-22T00:00:00Z",
+          "links": [
+            {
+              "url": "https://www.amazon.com/stores/author/B000AQ2M2S/about",
+              "name": "amazon"
+            },
+            {
+              "url": "https://www.goodreads.com/author/show/874602.Ursula_K_Le_Guin",
+              "name": "goodreads"
+            },
+            {
+              "url": "https://hardcover.app/authors/ursula-k-le-guin",
+              "name": "hardcover"
+            }
+          ],
+          "images": [
+            {
+              "url": "https://m.media-amazon.com/images/I/31Jz6haWaBL.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "90adf6baec3fc4b1e4991e41797abdd4471f5147"
+            },
+            {
+              "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a53989777fee8974bb4910ade55107eb7a46b820"
+            },
+            {
+              "url": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/authors/1244291425i/874602._UX200_CR0,21,200,200_.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a800a353c050d410b286168a2afed104ab1d2972"
+            }
+          ],
+          "folder": "",
+          "genres": [],
+          "pseudonyms": [],
+          "cleanName": "ursulakleguin",
+          "sortName": "ursula k. le guin",
+          "sortNameLastFirst": "le guin, ursula k.",
+          "added": "0001-01-01T04:57:00Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0,
+            "popularity": 0
+          },
+          "lastSelectedMediaType": "audiobook",
+          "statistics": {
+            "bookFileCount": 0,
+            "bookCount": 0,
+            "availableBookCount": 0,
+            "totalBookCount": 0,
+            "sizeOnDisk": 0,
+            "percentOfBooks": 0
+          },
+          "id": 0,
+          "addOptions": {
+            "monitor": "specificBook",
+            "searchForMissingBooks": false,
+            "booksToMonitor": [
+              "az:B002VA3CDO"
+            ]
+          },
+          "ebookQualityProfileId": 14,
+          "ebookMetadataProfileId": 24,
+          "ebookRootFolderPath": "/fixture/ebook-alt",
+          "ebookMonitored": false,
+          "ebookMonitorNewItems": "all",
+          "ebookTags": [],
+          "tags": [],
+          "monitored": false
+        },
+        "images": [
+          {
+            "url": "/MediaCoverProxy/f306ff13c8a38cf9a783f3bf65c155eaaa8028912ccf67375a98cb4fa98c24c7/51dYUumvCdL._SL500_.jpg",
+            "coverType": "cover",
+            "extension": ".jpg",
+            "remoteUrl": "https://m.media-amazon.com/images/I/51dYUumvCdL._SL500_.jpg"
+          }
+        ],
+        "links": [
+          {
+            "url": "https://www.audible.com/pd/B002VA3CDO",
+            "name": "audible"
+          }
+        ],
+        "addOptions": {
+          "addType": "automatic",
+          "searchForNewBook": true
+        },
+        "remoteCover": "",
+        "editions": [
+          {
+            "bookId": 0,
+            "foreignEditionId": "az:B002VA3CDO",
+            "asin": "B002VA3CDO",
+            "asins": [],
+            "title": "A Wizard of Earthsea: The Earthsea Cycle, Book 1",
+            "overview": "Winner of the Boston Globe–Horn Book Award Winner of the Lewis Carroll Shelf Award One of TIME's 100 Best Fantasy Books of All Time Ged was the greatest sorcerer in Earthsea, but in his youth he was the reckless Sparrowhawk. In his hunger for power and knowledge, he tampered with long held...",
+            "format": "Audiobook",
+            "isEbook": false,
+            "publisher": "Recorded Books",
+            "pageCount": 0,
+            "releaseDate": "2009-04-10T00:00:00Z",
+            "images": [
+              {
+                "url": "https://m.media-amazon.com/images/I/51dYUumvCdL._SL500_.jpg",
+                "coverType": "cover",
+                "extension": ".jpg"
+              }
+            ],
+            "links": [],
+            "ratings": {
+              "votes": 0,
+              "value": 0,
+              "popularity": 0
+            },
+            "monitored": true,
+            "manualAdd": false,
+            "bookFileCount": 0,
+            "monitoredByAnotherAudiobookBook": false,
+            "narratorNames": [
+              "Rob Inglis"
+            ],
+            "hasChapters": false,
+            "chapters": []
+          }
+        ],
+        "localAudiobookBooks": [],
+        "localEbookBooks": [],
+        "mediaType": "ebook",
+        "availableNarrators": [
+          "Rob Inglis"
+        ],
+        "narratorNames": [],
+        "duration": "07:17:00",
+        "durationMinutes": 437,
+        "hasFiles": false,
+        "isOmnibus": false,
+        "id": 0
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/book",
+      "body": {
+        "title": "A Wizard of Earthsea: The Earthsea Cycle, Book 1",
+        "authorTitle": "le guin, ursula k. A Wizard of Earthsea: The Earthsea Cycle, Book 1",
+        "seriesTitle": "",
+        "overview": "Winner of the Boston Globe–Horn Book Award Winner of the Lewis Carroll Shelf Award One of TIME's 100 Best Fantasy Books of All Time Ged was the greatest sorcerer in Earthsea, but in his youth he was the reckless Sparrowhawk. In his hunger for power and knowledge, he tampered with long held...",
+        "authorId": 0,
+        "foreignBookId": "az:B002VA3CDO",
+        "localBookId": null,
+        "asin": "B002VA3CDO",
+        "titleSlug": "az:B002VA3CDO",
+        "monitored": true,
+        "audiobookMonitored": true,
+        "ebookMonitored": false,
+        "anyEditionOk": true,
+        "ratings": {
+          "votes": 0,
+          "value": 0,
+          "popularity": 0
+        },
+        "releaseDate": "2009-04-10T00:00:00Z",
+        "added": "0001-01-01T04:57:00Z",
+        "pageCount": 0,
+        "genres": [],
+        "author": {
+          "status": "ended",
+          "ended": true,
+          "authorName": "Ursula K. Le Guin",
+          "authorNameLastFirst": "Le Guin, Ursula K.",
+          "foreignAuthorId": "az:B0GZZ57KFW",
+          "overview": "Ursula Kroeber Le Guin was an American author who wrote more than 20 novels and 100 short stories. She's best known for her genre-bending speculative fiction, including the Earthsea fantasy series and the Hainish universe novels. Her early works, A Wizard of Earthsea (1968), The Left Hand of Darkness (1969), and The Dispossessed (1974), established her as a major figure in science fiction.",
+          "born": "1929-10-21T00:00:00Z",
+          "died": "2018-01-22T00:00:00Z",
+          "links": [
+            {
+              "url": "https://www.amazon.com/stores/author/B000AQ2M2S/about",
+              "name": "amazon"
+            },
+            {
+              "url": "https://www.goodreads.com/author/show/874602.Ursula_K_Le_Guin",
+              "name": "goodreads"
+            },
+            {
+              "url": "https://hardcover.app/authors/ursula-k-le-guin",
+              "name": "hardcover"
+            }
+          ],
+          "images": [
+            {
+              "url": "https://m.media-amazon.com/images/I/31Jz6haWaBL.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "90adf6baec3fc4b1e4991e41797abdd4471f5147"
+            },
+            {
+              "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a53989777fee8974bb4910ade55107eb7a46b820"
+            },
+            {
+              "url": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/authors/1244291425i/874602._UX200_CR0,21,200,200_.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a800a353c050d410b286168a2afed104ab1d2972"
+            }
+          ],
+          "folder": "",
+          "genres": [],
+          "pseudonyms": [],
+          "cleanName": "ursulakleguin",
+          "sortName": "ursula k. le guin",
+          "sortNameLastFirst": "le guin, ursula k.",
+          "added": "0001-01-01T04:57:00Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0,
+            "popularity": 0
+          },
+          "lastSelectedMediaType": "audiobook",
+          "statistics": {
+            "bookFileCount": 0,
+            "bookCount": 0,
+            "availableBookCount": 0,
+            "totalBookCount": 0,
+            "sizeOnDisk": 0,
+            "percentOfBooks": 0
+          },
+          "id": 0,
+          "addOptions": {
+            "monitor": "specificBook",
+            "searchForMissingBooks": false,
+            "booksToMonitor": [
+              "az:B002VA3CDO"
+            ]
+          },
+          "audiobookQualityProfileId": 12,
+          "audiobookMetadataProfileId": 22,
+          "audiobookRootFolderPath": "/fixture/audio-alt",
+          "audiobookMonitored": true,
+          "audiobookMonitorNewItems": "none",
+          "audiobookTags": [
+            43
+          ],
+          "tags": [
+            43
+          ],
+          "monitored": true
+        },
+        "images": [
+          {
+            "url": "/MediaCoverProxy/f306ff13c8a38cf9a783f3bf65c155eaaa8028912ccf67375a98cb4fa98c24c7/51dYUumvCdL._SL500_.jpg",
+            "coverType": "cover",
+            "extension": ".jpg",
+            "remoteUrl": "https://m.media-amazon.com/images/I/51dYUumvCdL._SL500_.jpg"
+          }
+        ],
+        "links": [
+          {
+            "url": "https://www.audible.com/pd/B002VA3CDO",
+            "name": "audible"
+          }
+        ],
+        "addOptions": {
+          "addType": "automatic",
+          "searchForNewBook": true
+        },
+        "remoteCover": "",
+        "editions": [
+          {
+            "bookId": 0,
+            "foreignEditionId": "az:B002VA3CDO",
+            "asin": "B002VA3CDO",
+            "asins": [],
+            "title": "A Wizard of Earthsea: The Earthsea Cycle, Book 1",
+            "overview": "Winner of the Boston Globe–Horn Book Award Winner of the Lewis Carroll Shelf Award One of TIME's 100 Best Fantasy Books of All Time Ged was the greatest sorcerer in Earthsea, but in his youth he was the reckless Sparrowhawk. In his hunger for power and knowledge, he tampered with long held...",
+            "format": "Audiobook",
+            "isEbook": false,
+            "publisher": "Recorded Books",
+            "pageCount": 0,
+            "releaseDate": "2009-04-10T00:00:00Z",
+            "images": [
+              {
+                "url": "https://m.media-amazon.com/images/I/51dYUumvCdL._SL500_.jpg",
+                "coverType": "cover",
+                "extension": ".jpg"
+              }
+            ],
+            "links": [],
+            "ratings": {
+              "votes": 0,
+              "value": 0,
+              "popularity": 0
+            },
+            "monitored": true,
+            "manualAdd": false,
+            "bookFileCount": 0,
+            "monitoredByAnotherAudiobookBook": false,
+            "narratorNames": [
+              "Rob Inglis"
+            ],
+            "hasChapters": false,
+            "chapters": []
+          }
+        ],
+        "localAudiobookBooks": [],
+        "localEbookBooks": [],
+        "mediaType": "audiobook",
+        "availableNarrators": [
+          "Rob Inglis"
+        ],
+        "narratorNames": [],
+        "duration": "07:17:00",
+        "durationMinutes": 437,
+        "hasFiles": false,
+        "isOmnibus": false,
+        "id": 0
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/book",
+      "body": {
+        "title": "A Wizard of Earthsea: The Earthsea Cycle, Book 1",
+        "authorTitle": "le guin, ursula k. A Wizard of Earthsea: The Earthsea Cycle, Book 1",
+        "seriesTitle": "",
+        "overview": "Winner of the Boston Globe–Horn Book Award Winner of the Lewis Carroll Shelf Award One of TIME's 100 Best Fantasy Books of All Time Ged was the greatest sorcerer in Earthsea, but in his youth he was the reckless Sparrowhawk. In his hunger for power and knowledge, he tampered with long held...",
+        "authorId": 0,
+        "foreignBookId": "az:B002VA3CDO",
+        "localBookId": null,
+        "asin": "B002VA3CDO",
+        "titleSlug": "az:B002VA3CDO",
+        "monitored": true,
+        "audiobookMonitored": false,
+        "ebookMonitored": true,
+        "anyEditionOk": true,
+        "ratings": {
+          "votes": 0,
+          "value": 0,
+          "popularity": 0
+        },
+        "releaseDate": "2009-04-10T00:00:00Z",
+        "added": "0001-01-01T04:57:00Z",
+        "pageCount": 0,
+        "genres": [],
+        "author": {
+          "status": "ended",
+          "ended": true,
+          "authorName": "Ursula K. Le Guin",
+          "authorNameLastFirst": "Le Guin, Ursula K.",
+          "foreignAuthorId": "az:B0GZZ57KFW",
+          "overview": "Ursula Kroeber Le Guin was an American author who wrote more than 20 novels and 100 short stories. She's best known for her genre-bending speculative fiction, including the Earthsea fantasy series and the Hainish universe novels. Her early works, A Wizard of Earthsea (1968), The Left Hand of Darkness (1969), and The Dispossessed (1974), established her as a major figure in science fiction.",
+          "born": "1929-10-21T00:00:00Z",
+          "died": "2018-01-22T00:00:00Z",
+          "links": [
+            {
+              "url": "https://www.amazon.com/stores/author/B000AQ2M2S/about",
+              "name": "amazon"
+            },
+            {
+              "url": "https://www.goodreads.com/author/show/874602.Ursula_K_Le_Guin",
+              "name": "goodreads"
+            },
+            {
+              "url": "https://hardcover.app/authors/ursula-k-le-guin",
+              "name": "hardcover"
+            }
+          ],
+          "images": [
+            {
+              "url": "https://m.media-amazon.com/images/I/31Jz6haWaBL.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "90adf6baec3fc4b1e4991e41797abdd4471f5147"
+            },
+            {
+              "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a53989777fee8974bb4910ade55107eb7a46b820"
+            },
+            {
+              "url": "https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/authors/1244291425i/874602._UX200_CR0,21,200,200_.jpg",
+              "coverType": "poster",
+              "extension": ".jpg",
+              "hash": "a800a353c050d410b286168a2afed104ab1d2972"
+            }
+          ],
+          "folder": "",
+          "genres": [],
+          "pseudonyms": [],
+          "cleanName": "ursulakleguin",
+          "sortName": "ursula k. le guin",
+          "sortNameLastFirst": "le guin, ursula k.",
+          "added": "0001-01-01T04:57:00Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0,
+            "popularity": 0
+          },
+          "lastSelectedMediaType": "audiobook",
+          "statistics": {
+            "bookFileCount": 0,
+            "bookCount": 0,
+            "availableBookCount": 0,
+            "totalBookCount": 0,
+            "sizeOnDisk": 0,
+            "percentOfBooks": 0
+          },
+          "id": 0,
+          "addOptions": {
+            "monitor": "specificBook",
+            "searchForMissingBooks": false,
+            "booksToMonitor": [
+              "az:B002VA3CDO"
+            ]
+          },
+          "ebookQualityProfileId": 14,
+          "ebookMetadataProfileId": 24,
+          "ebookRootFolderPath": "/fixture/ebook-alt",
+          "ebookMonitored": false,
+          "ebookMonitorNewItems": "all",
+          "ebookTags": [],
+          "tags": [],
+          "monitored": false
+        },
+        "images": [
+          {
+            "url": "/MediaCoverProxy/f306ff13c8a38cf9a783f3bf65c155eaaa8028912ccf67375a98cb4fa98c24c7/51dYUumvCdL._SL500_.jpg",
+            "coverType": "cover",
+            "extension": ".jpg",
+            "remoteUrl": "https://m.media-amazon.com/images/I/51dYUumvCdL._SL500_.jpg"
+          }
+        ],
+        "links": [
+          {
+            "url": "https://www.audible.com/pd/B002VA3CDO",
+            "name": "audible"
+          }
+        ],
+        "addOptions": {
+          "addType": "automatic",
+          "searchForNewBook": true
+        },
+        "remoteCover": "",
+        "editions": [
+          {
+            "bookId": 0,
+            "foreignEditionId": "az:B002VA3CDO",
+            "asin": "B002VA3CDO",
+            "asins": [],
+            "title": "A Wizard of Earthsea: The Earthsea Cycle, Book 1",
+            "overview": "Winner of the Boston Globe–Horn Book Award Winner of the Lewis Carroll Shelf Award One of TIME's 100 Best Fantasy Books of All Time Ged was the greatest sorcerer in Earthsea, but in his youth he was the reckless Sparrowhawk. In his hunger for power and knowledge, he tampered with long held...",
+            "format": "Audiobook",
+            "isEbook": false,
+            "publisher": "Recorded Books",
+            "pageCount": 0,
+            "releaseDate": "2009-04-10T00:00:00Z",
+            "images": [
+              {
+                "url": "https://m.media-amazon.com/images/I/51dYUumvCdL._SL500_.jpg",
+                "coverType": "cover",
+                "extension": ".jpg"
+              }
+            ],
+            "links": [],
+            "ratings": {
+              "votes": 0,
+              "value": 0,
+              "popularity": 0
+            },
+            "monitored": true,
+            "manualAdd": false,
+            "bookFileCount": 0,
+            "monitoredByAnotherAudiobookBook": false,
+            "narratorNames": [
+              "Rob Inglis"
+            ],
+            "hasChapters": false,
+            "chapters": []
+          }
+        ],
+        "localAudiobookBooks": [],
+        "localEbookBooks": [],
+        "mediaType": "ebook",
+        "availableNarrators": [
+          "Rob Inglis"
+        ],
+        "narratorNames": [],
+        "duration": "07:17:00",
+        "durationMinutes": 437,
+        "hasFiles": false,
+        "isOmnibus": false,
+        "id": 0
+      }
+    }
+  ],
+  "seriesRequests": [
+    {
+      "method": "POST",
+      "pathname": "/api/v1/series/add",
+      "body": {
+        "foreignSeriesId": "hc:8300",
+        "selectedMediaType": "audiobook",
+        "selectedBooks": [
+          {
+            "foreignBookId": "gr:113603",
+            "foreignAuthorId": "gr:874602",
+            "authorName": "Ursula K. Le Guin"
+          },
+          {
+            "foreignBookId": "gr:220778298",
+            "foreignAuthorId": "gr:15502566",
+            "authorName": "Fred Fordham"
+          },
+          {
+            "foreignBookId": "hc:8102",
+            "foreignAuthorId": "hc:8002"
+          }
+        ],
+        "monitor": "all",
+        "tags": [
+          41
+        ],
+        "audiobookMonitored": false,
+        "audiobookMonitorExistingMode": "all",
+        "audiobookMonitorNewItems": "new",
+        "audiobookRootFolderPath": "/fixture/audio",
+        "audiobookQualityProfileId": 11,
+        "audiobookMetadataProfileId": 21
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/series/add",
+      "body": {
+        "foreignSeriesId": "hc:8300",
+        "selectedMediaType": "audiobook",
+        "selectedBooks": [
+          {
+            "foreignBookId": "gr:113603",
+            "foreignAuthorId": "gr:874602",
+            "authorName": "Ursula K. Le Guin"
+          },
+          {
+            "foreignBookId": "gr:220778298",
+            "foreignAuthorId": "gr:15502566",
+            "authorName": "Fred Fordham"
+          },
+          {
+            "foreignBookId": "hc:8102",
+            "foreignAuthorId": "hc:8002"
+          }
+        ],
+        "monitor": "existing",
+        "tags": [],
+        "audiobookMonitored": true,
+        "audiobookMonitorExistingMode": "existing",
+        "audiobookMonitorNewItems": "none",
+        "audiobookRootFolderPath": "/fixture/audio-alt",
+        "audiobookQualityProfileId": 12,
+        "audiobookMetadataProfileId": 22
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/series/add",
+      "body": {
+        "foreignSeriesId": "hc:8300",
+        "selectedMediaType": "ebook",
+        "selectedBooks": [
+          {
+            "foreignBookId": "gr:113603",
+            "foreignAuthorId": "gr:874602",
+            "authorName": "Ursula K. Le Guin"
+          },
+          {
+            "foreignBookId": "gr:220778298",
+            "foreignAuthorId": "gr:15502566",
+            "authorName": "Fred Fordham"
+          },
+          {
+            "foreignBookId": "hc:8102",
+            "foreignAuthorId": "hc:8002"
+          }
+        ],
+        "monitor": "missing",
+        "tags": [
+          42
+        ],
+        "ebookMonitored": true,
+        "ebookMonitorExistingMode": "missing",
+        "ebookMonitorNewItems": "none",
+        "ebookRootFolderPath": "/fixture/ebook",
+        "ebookQualityProfileId": 13,
+        "ebookMetadataProfileId": 23
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/series/add",
+      "body": {
+        "foreignSeriesId": "hc:8300",
+        "selectedMediaType": "ebook",
+        "selectedBooks": [
+          {
+            "foreignBookId": "gr:113603",
+            "foreignAuthorId": "gr:874602",
+            "authorName": "Ursula K. Le Guin"
+          },
+          {
+            "foreignBookId": "gr:220778298",
+            "foreignAuthorId": "gr:15502566",
+            "authorName": "Fred Fordham"
+          },
+          {
+            "foreignBookId": "hc:8102",
+            "foreignAuthorId": "hc:8002"
+          }
+        ],
+        "monitor": "none",
+        "tags": [
+          43
+        ],
+        "ebookMonitored": false,
+        "ebookMonitorExistingMode": "none",
+        "ebookMonitorNewItems": "all",
+        "ebookRootFolderPath": "/fixture/ebook-alt",
+        "ebookQualityProfileId": 14,
+        "ebookMetadataProfileId": 24
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/series/add",
+      "body": {
+        "foreignSeriesId": "hc:8300",
+        "selectedMediaType": "audiobook",
+        "selectedBooks": [
+          {
+            "foreignBookId": "gr:113603",
+            "foreignAuthorId": "gr:874602",
+            "authorName": "Ursula K. Le Guin"
+          },
+          {
+            "foreignBookId": "gr:220778298",
+            "foreignAuthorId": "gr:15502566",
+            "authorName": "Fred Fordham"
+          },
+          {
+            "foreignBookId": "hc:8102",
+            "foreignAuthorId": "hc:8002"
+          }
+        ],
+        "monitor": "all",
+        "tags": [
+          41
+        ],
+        "audiobookMonitored": false,
+        "audiobookMonitorExistingMode": "all",
+        "audiobookMonitorNewItems": "new",
+        "audiobookRootFolderPath": "/fixture/audio",
+        "audiobookQualityProfileId": 11,
+        "audiobookMetadataProfileId": 21
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/series/add",
+      "body": {
+        "foreignSeriesId": "hc:8300",
+        "selectedMediaType": "ebook",
+        "selectedBooks": [
+          {
+            "foreignBookId": "gr:113603",
+            "foreignAuthorId": "gr:874602",
+            "authorName": "Ursula K. Le Guin"
+          },
+          {
+            "foreignBookId": "gr:220778298",
+            "foreignAuthorId": "gr:15502566",
+            "authorName": "Fred Fordham"
+          },
+          {
+            "foreignBookId": "hc:8102",
+            "foreignAuthorId": "hc:8002"
+          }
+        ],
+        "monitor": "missing",
+        "tags": [
+          42
+        ],
+        "ebookMonitored": true,
+        "ebookMonitorExistingMode": "missing",
+        "ebookMonitorNewItems": "none",
+        "ebookRootFolderPath": "/fixture/ebook",
+        "ebookQualityProfileId": 13,
+        "ebookMetadataProfileId": 23
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/series/add",
+      "body": {
+        "foreignSeriesId": "hc:8300",
+        "selectedMediaType": "audiobook",
+        "selectedBooks": [
+          {
+            "foreignBookId": "gr:113603",
+            "foreignAuthorId": "gr:874602",
+            "authorName": "Ursula K. Le Guin"
+          },
+          {
+            "foreignBookId": "gr:220778298",
+            "foreignAuthorId": "gr:15502566",
+            "authorName": "Fred Fordham"
+          },
+          {
+            "foreignBookId": "hc:8102",
+            "foreignAuthorId": "hc:8002"
+          }
+        ],
+        "monitor": "existing",
+        "tags": [],
+        "audiobookMonitored": true,
+        "audiobookMonitorExistingMode": "existing",
+        "audiobookMonitorNewItems": "none",
+        "audiobookRootFolderPath": "/fixture/audio-alt",
+        "audiobookQualityProfileId": 12,
+        "audiobookMetadataProfileId": 22
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/series/add",
+      "body": {
+        "foreignSeriesId": "hc:8300",
+        "selectedMediaType": "ebook",
+        "selectedBooks": [
+          {
+            "foreignBookId": "gr:113603",
+            "foreignAuthorId": "gr:874602",
+            "authorName": "Ursula K. Le Guin"
+          },
+          {
+            "foreignBookId": "gr:220778298",
+            "foreignAuthorId": "gr:15502566",
+            "authorName": "Fred Fordham"
+          },
+          {
+            "foreignBookId": "hc:8102",
+            "foreignAuthorId": "hc:8002"
+          }
+        ],
+        "monitor": "none",
+        "tags": [
+          43
+        ],
+        "ebookMonitored": false,
+        "ebookMonitorExistingMode": "none",
+        "ebookMonitorNewItems": "all",
+        "ebookRootFolderPath": "/fixture/ebook-alt",
+        "ebookQualityProfileId": 14,
+        "ebookMetadataProfileId": 24
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/series/add",
+      "body": {
+        "foreignSeriesId": "hc:8300",
+        "selectedMediaType": "audiobook",
+        "selectedBooks": [
+          {
+            "foreignBookId": "gr:113603",
+            "foreignAuthorId": "gr:874602",
+            "authorName": "Ursula K. Le Guin"
+          },
+          {
+            "foreignBookId": "gr:220778298",
+            "foreignAuthorId": "gr:15502566",
+            "authorName": "Fred Fordham"
+          },
+          {
+            "foreignBookId": "hc:8102",
+            "foreignAuthorId": "hc:8002"
+          }
+        ],
+        "monitor": "missing",
+        "tags": [],
+        "audiobookMonitored": true,
+        "audiobookMonitorExistingMode": "missing",
+        "audiobookMonitorNewItems": "none",
+        "audiobookRootFolderPath": "/fixture/audio-alt",
+        "audiobookQualityProfileId": 12,
+        "audiobookMetadataProfileId": 22
+      }
+    },
+    {
+      "method": "POST",
+      "pathname": "/api/v1/series/add",
+      "body": {
+        "foreignSeriesId": "hc:8300",
+        "selectedMediaType": "ebook",
+        "selectedBooks": [
+          {
+            "foreignBookId": "gr:113603",
+            "foreignAuthorId": "gr:874602",
+            "authorName": "Ursula K. Le Guin"
+          },
+          {
+            "foreignBookId": "gr:220778298",
+            "foreignAuthorId": "gr:15502566",
+            "authorName": "Fred Fordham"
+          },
+          {
+            "foreignBookId": "hc:8102",
+            "foreignAuthorId": "hc:8002"
+          }
+        ],
+        "monitor": "none",
+        "tags": [
+          43
+        ],
+        "ebookMonitored": false,
+        "ebookMonitorExistingMode": "none",
+        "ebookMonitorNewItems": "all",
+        "ebookRootFolderPath": "/fixture/ebook-alt",
+        "ebookQualityProfileId": 14,
+        "ebookMetadataProfileId": 24
+      }
+    }
+  ]
+}

@@ -1,6 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using FluentValidation;
+using FluentValidation.Results;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.RootFolders;
 
@@ -10,7 +15,7 @@ namespace NzbDrone.Core.Books
     {
         string BuildPath(Author author, bool useExistingRelativeFolder);
         string BuildPathForQuality(Author author, NzbDrone.Core.Qualities.Quality quality, bool useExistingRelativeFolder);
-        void EnsureAuthorPaths(Author author, bool useExistingRelativeFolder);
+        void EnsureAuthorPaths(Author author, bool useExistingRelativeFolder, Author previous = null);
     }
 
     public class AuthorPathBuilder : IBuildAuthorPaths
@@ -24,7 +29,93 @@ namespace NzbDrone.Core.Books
             _rootFolderService = rootFolderService;
         }
 
-        public void EnsureAuthorPaths(Author author, bool useExistingRelativeFolder)
+        public static List<MoveAuthorCommand> ChangeFolders(Author author, string audiobookFolder, string ebookFolder,
+            List<RootFolder> roots, bool moveFiles)
+        {
+            var audioChanged = audiobookFolder != null && !audiobookFolder.PathEquals(author.AudiobookPath);
+            var ebookChanged = ebookFolder != null && !ebookFolder.PathEquals(author.EbookPath);
+            var shared = author.AudiobookPath.IsNotNullOrWhiteSpace() && author.AudiobookPath.PathEquals(author.EbookPath);
+            if (moveFiles && shared && (audioChanged || ebookChanged))
+            {
+                if (audioChanged && ebookChanged && !audiobookFolder.PathEquals(ebookFolder))
+                {
+                    throw new ValidationException("A shared author folder cannot be moved to two destinations. Choose one folder for both formats.");
+                }
+
+                audiobookFolder = ebookFolder = audioChanged ? audiobookFolder : ebookFolder;
+                audioChanged = ebookChanged = true;
+            }
+
+            var audioSource = author.AudiobookPath.IsNotNullOrWhiteSpace() ? author.AudiobookPath :
+                author.EbookRootFolderPath.IsNullOrWhiteSpace() && author.EbookPath.IsNullOrWhiteSpace() ? author.Path : null;
+            var ebookSource = author.EbookPath.IsNotNullOrWhiteSpace() ? author.EbookPath :
+                author.AudiobookRootFolderPath.IsNullOrWhiteSpace() && author.AudiobookPath.IsNullOrWhiteSpace() ? author.Path : null;
+            var changes = new[]
+            {
+                (Changed: audioChanged, Folder: audiobookFolder, Source: audioSource, SourceRoot: author.AudiobookRootFolderPath, Media: "audiobook"),
+                (Changed: ebookChanged, Folder: ebookFolder, Source: ebookSource, SourceRoot: author.EbookRootFolderPath, Media: "ebook")
+            }.Where(change => change.Changed).Select(change =>
+            {
+                var field = change.Media == "ebook" ? "EbookFolder" : "AudiobookFolder";
+                var path = change.Folder;
+                RootFolder root = null;
+                if (path.IsNotNullOrWhiteSpace() && Path.IsPathFullyQualified(path))
+                {
+                    path = Path.GetFullPath(path).GetCleanPath();
+                    root = roots.Where(folder => folder.Path.IsParentPath(path))
+                        .OrderByDescending(folder => folder.Path.Length).FirstOrDefault();
+                }
+
+                if (root == null || IsUnsafePath(path, roots) ||
+                    (root.FolderType != FolderType.Mixed && root.FolderType != (change.Media == "ebook" ? FolderType.Ebook : FolderType.Audiobook)))
+                {
+                    throw new ValidationException(new[] { new ValidationFailure(field,
+                        $"The {change.Media} folder must be inside a configured root folder that supports {change.Media}s.") });
+                }
+
+                if (moveFiles && change.Source.IsNotNullOrWhiteSpace() && change.Source.IsParentPath(path))
+                {
+                    throw new ValidationException(new[] { new ValidationFailure(field, "An author folder cannot be moved inside itself.") });
+                }
+
+                return (change.Media, change.Source, change.SourceRoot, Path: path, Root: root.Path);
+            }).ToList();
+
+            var moves = new List<MoveAuthorCommand>();
+            foreach (var change in changes)
+            {
+                if (moveFiles && change.Source.IsNotNullOrWhiteSpace() && !change.Source.PathEquals(change.Path) &&
+                    !moves.Any(move => move.SourcePath.PathEquals(change.Source) && move.DestinationPath.PathEquals(change.Path)))
+                {
+                    moves.Add(new MoveAuthorCommand
+                    {
+                        AuthorId = author.Id, SourcePath = change.Source, DestinationPath = change.Path,
+                        MediaType = change.Media, SourceRootFolder = change.SourceRoot,
+                        SharedFolder = shared && audioChanged && ebookChanged
+                    });
+                }
+
+                if (change.Media == "audiobook")
+                {
+                    author.AudiobookPath = change.Path;
+                    author.AudiobookRootFolderPath = change.Root;
+                }
+                else
+                {
+                    author.EbookPath = change.Path;
+                    author.EbookRootFolderPath = change.Root;
+                }
+            }
+
+            if (changes.Count > 0)
+            {
+                author.Path = author.AudiobookPath.IsNotNullOrWhiteSpace() ? author.AudiobookPath : author.EbookPath;
+            }
+
+            return moves;
+        }
+
+        public void EnsureAuthorPaths(Author author, bool useExistingRelativeFolder, Author previous = null)
         {
             if (author == null)
             {
@@ -39,7 +130,15 @@ namespace NzbDrone.Core.Books
             var hasAudiobookRoot = audiobookRoot.IsNotNullOrWhiteSpace();
             var hasEbookRoot = ebookRoot.IsNotNullOrWhiteSpace();
 
-            if (hasAudiobookRoot && hasEbookRoot && audiobookRoot.PathEquals(ebookRoot))
+            // An unrelated save must not relocate an existing tracked library in the database.
+            // Initial setup and a deliberate root change still build the affected format's path.
+            var updateAudio = hasAudiobookRoot && (previous == null || author.AudiobookPath.IsNullOrWhiteSpace() ||
+                !audiobookRoot.PathEquals(previous.AudiobookRootFolderPath));
+            var updateEbook = hasEbookRoot && (previous == null || author.EbookPath.IsNullOrWhiteSpace() ||
+                !ebookRoot.PathEquals(previous.EbookRootFolderPath));
+
+            if ((updateAudio || updateEbook) && hasAudiobookRoot && hasEbookRoot && audiobookRoot.PathEquals(ebookRoot) &&
+                (author.AudiobookPath.IsNullOrWhiteSpace() || author.EbookPath.IsNullOrWhiteSpace() || author.AudiobookPath.PathEquals(author.EbookPath)))
             {
                 var sharedRoot = audiobookRoot;
                 var authorFolder = _fileNameBuilder.GetAuthorFolder(author); // Mixed/shared root uses a single author folder format
@@ -53,12 +152,13 @@ namespace NzbDrone.Core.Books
                     ? author.AudiobookPath
                     : (author.EbookPath.IsNotNullOrWhiteSpace() ? author.EbookPath : author.Path);
 
-                var sharedPath = BuildPathUnderRoot(sharedRoot, existingPath, authorFolder, useExistingRelativeFolder);
+                var sharedPath = !updateAudio ? author.AudiobookPath : !updateEbook ? author.EbookPath :
+                    BuildPathUnderRoot(sharedRoot, existingPath, authorFolder, useExistingRelativeFolder, rootFolders);
 
-                author.AudiobookPath = sharedPath;
-                author.EbookPath = sharedPath;
+                if (updateAudio) author.AudiobookPath = sharedPath;
+                if (updateEbook) author.EbookPath = sharedPath;
 
-                if (NeedsPrimaryPathRepair(author.Path, sharedRoot, rootFolders))
+                if (NeedsPathRepair(author.Path, sharedRoot, rootFolders))
                 {
                     author.Path = sharedPath;
                 }
@@ -66,38 +166,39 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            if (hasAudiobookRoot)
+            if (updateAudio)
             {
                 var audiobookFolder = _fileNameBuilder.GetAuthorFolder(author, mediaType: "audiobook");
                 if (audiobookFolder.IsNotNullOrWhiteSpace() &&
-                    NeedsPerTypePathRepair(author.AudiobookPath, audiobookRoot, rootFolders))
+                    NeedsPathRepair(author.AudiobookPath, audiobookRoot, rootFolders))
                 {
                     var existingPath = author.AudiobookPath.IsNotNullOrWhiteSpace() ? author.AudiobookPath : author.Path;
-                    author.AudiobookPath = BuildPathUnderRoot(audiobookRoot, existingPath, audiobookFolder, useExistingRelativeFolder);
+                    author.AudiobookPath = BuildPathUnderRoot(audiobookRoot, existingPath, audiobookFolder, useExistingRelativeFolder, rootFolders);
                 }
             }
 
-            if (hasEbookRoot)
+            if (updateEbook)
             {
                 var ebookFolder = _fileNameBuilder.GetAuthorFolder(author, mediaType: "ebook");
                 if (ebookFolder.IsNotNullOrWhiteSpace() &&
-                    NeedsPerTypePathRepair(author.EbookPath, ebookRoot, rootFolders))
+                    NeedsPathRepair(author.EbookPath, ebookRoot, rootFolders))
                 {
                     var existingPath = author.EbookPath.IsNotNullOrWhiteSpace()
                         ? author.EbookPath
                         : (author.AudiobookRootFolderPath.IsNullOrWhiteSpace() ? author.Path : null);
 
-                    author.EbookPath = BuildPathUnderRoot(ebookRoot, existingPath, ebookFolder, useExistingRelativeFolder);
+                    author.EbookPath = BuildPathUnderRoot(ebookRoot, existingPath, ebookFolder, useExistingRelativeFolder, rootFolders);
                 }
             }
 
             var primaryRoot = hasAudiobookRoot ? audiobookRoot : ebookRoot;
-            if (primaryRoot.IsNullOrWhiteSpace())
+            if (primaryRoot.IsNullOrWhiteSpace() || (previous != null && author.Path.IsNotNullOrWhiteSpace() &&
+                !(hasAudiobookRoot ? updateAudio : updateEbook)))
             {
                 return;
             }
 
-            if (NeedsPrimaryPathRepair(author.Path, primaryRoot, rootFolders))
+            if (NeedsPathRepair(author.Path, primaryRoot, rootFolders))
             {
                 var desiredPrimary = hasAudiobookRoot ? author.AudiobookPath : author.EbookPath;
                 if (desiredPrimary.IsNotNullOrWhiteSpace() && primaryRoot.IsParentPath(desiredPrimary))
@@ -112,7 +213,7 @@ namespace NzbDrone.Core.Books
 
                     if (primaryFolder.IsNotNullOrWhiteSpace())
                     {
-                        author.Path = BuildPathUnderRoot(primaryRoot, author.Path, primaryFolder, useExistingRelativeFolder);
+                        author.Path = BuildPathUnderRoot(primaryRoot, author.Path, primaryFolder, useExistingRelativeFolder, rootFolders);
                     }
                 }
             }
@@ -197,7 +298,8 @@ namespace NzbDrone.Core.Books
             return rootFolderPath.GetRelativePath(author.Path);
         }
 
-        private static bool NeedsPrimaryPathRepair(string path, string root, System.Collections.Generic.List<RootFolder> rootFolders)
+
+        private static bool NeedsPathRepair(string path, string root, System.Collections.Generic.List<RootFolder> rootFolders)
         {
             return path.IsNullOrWhiteSpace() ||
                    IsUnsafePath(path, rootFolders) ||
@@ -205,15 +307,7 @@ namespace NzbDrone.Core.Books
                    !root.IsParentPath(path);
         }
 
-        private static bool NeedsPerTypePathRepair(string path, string root, System.Collections.Generic.List<RootFolder> rootFolders)
-        {
-            return path.IsNullOrWhiteSpace() ||
-                   IsUnsafePath(path, rootFolders) ||
-                   path.PathEquals(root) ||
-                   !root.IsParentPath(path);
-        }
-
-        private string BuildPathUnderRoot(string root, string existingPath, string authorFolder, bool useExistingRelativeFolder)
+        private string BuildPathUnderRoot(string root, string existingPath, string authorFolder, bool useExistingRelativeFolder, List<RootFolder> rootFolders)
         {
             if (root.IsNullOrWhiteSpace())
             {
@@ -232,7 +326,7 @@ namespace NzbDrone.Core.Books
 
             try
             {
-                var rootFolderPath = _rootFolderService.GetBestRootFolderPath(existingPath);
+                var rootFolderPath = _rootFolderService.GetBestRootFolderPath(existingPath, rootFolders);
                 if (rootFolderPath.IsParentPath(existingPath))
                 {
                     var relativePath = rootFolderPath.GetRelativePath(existingPath);

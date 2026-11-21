@@ -4,6 +4,9 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 {
     public class TrackedDownloadStatusMessage
     {
+        internal bool IsCompletionFallback { get; set; }
+        internal string SourcePath { get; set; }
+
         public string Title { get; set; }
         public List<string> Messages { get; set; }
 

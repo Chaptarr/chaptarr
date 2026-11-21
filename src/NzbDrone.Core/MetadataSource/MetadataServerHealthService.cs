@@ -120,33 +120,44 @@ namespace NzbDrone.Core.MetadataSource
             lock (_syncRoot)
             {
                 var status = GetOrCreateStatus(sourceName);
-                var now = DateTime.UtcNow;
-                retryAfter = TimeSpan.Zero;
+                if (!CanBeginRequest(status, out retryAfter)) return false;
 
-                if (status.IsHealthy && !status.IsRateLimited)
+                if (!status.IsHealthy || status.IsRateLimited)
                 {
-                    return true;
+                    status.ProbeInProgress = true;
+                    status.ProbeStartedAt = DateTime.UtcNow;
+                    _logger.Debug("Metadata server {0} cooldown expired; allowing one recovery probe", sourceName);
                 }
-
-                if (status.RateLimitedUntil.HasValue && status.RateLimitedUntil.Value > now)
-                {
-                    retryAfter = status.RateLimitedUntil.Value - now;
-                    return false;
-                }
-
-                if (status.ProbeInProgress &&
-                    status.ProbeStartedAt.HasValue &&
-                    now - status.ProbeStartedAt.Value < _probeTimeout)
-                {
-                    retryAfter = TimeSpan.FromSeconds(30);
-                    return false;
-                }
-
-                status.ProbeInProgress = true;
-                status.ProbeStartedAt = now;
-                _logger.Debug("Metadata server {0} cooldown expired; allowing one recovery probe", sourceName);
                 return true;
             }
+        }
+
+        // A scheduling check may avoid local preparation, but must not reserve the
+        // probe. Only the actual HTTP request claims it and reports its outcome.
+        public bool CanBeginRequest(string sourceName, out TimeSpan retryAfter)
+        {
+            lock (_syncRoot)
+            {
+                return CanBeginRequest(GetOrCreateStatus(sourceName), out retryAfter);
+            }
+        }
+
+        private static bool CanBeginRequest(MetadataServerStatus status, out TimeSpan retryAfter)
+        {
+            var now = DateTime.UtcNow;
+            retryAfter = TimeSpan.Zero;
+            if (status.IsHealthy && !status.IsRateLimited) return true;
+            if (status.RateLimitedUntil.HasValue && status.RateLimitedUntil.Value > now)
+            {
+                retryAfter = status.RateLimitedUntil.Value - now;
+                return false;
+            }
+            if (status.ProbeInProgress && status.ProbeStartedAt.HasValue && now - status.ProbeStartedAt.Value < _probeTimeout)
+            {
+                retryAfter = TimeSpan.FromSeconds(30);
+                return false;
+            }
+            return true;
         }
 
         public bool CanAttemptWithoutProbe(string sourceName, out TimeSpan retryAfter)

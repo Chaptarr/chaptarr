@@ -84,7 +84,7 @@ namespace Chaptarr.Core.Test.Profiles.Quality
             public void Update(QualityProfile profile) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
             public QualityProfile Get(int id) => throw new NotImplementedException();
-            public bool Exists(int id) => throw new NotImplementedException();
+            public bool Exists(int id, ProfileType? profileType = null) => throw new NotImplementedException();
         }
 
         private sealed class TestQualityProfileController : QualityApi.QualityProfileController

@@ -3,12 +3,14 @@ import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { Redirect } from 'react-router-dom';
 import { createSelector } from 'reselect';
+import authorStyles from 'Author/Details/AuthorDetails.css';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import NotFound from 'Components/NotFound';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
 import { fetchAuthor } from 'Store/Actions/authorActions';
 import { fetchBooks } from 'Store/Actions/bookActions';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import BookDetailsConnector from './BookDetailsConnector';
 
@@ -30,23 +32,6 @@ function getScopedMediaType(mediaScope) {
   return null;
 }
 
-function findBookByRouteSlug(items, routeBookKey, scopedMediaType) {
-  const slug = (routeBookKey || '').toString().toLowerCase();
-  const matches = items.filter((book) => {
-    if ((book.titleSlug || '').toString().toLowerCase() !== slug) {
-      return false;
-    }
-
-    if (!scopedMediaType) {
-      return true;
-    }
-
-    return (book.mediaType || '').toString().toLowerCase() === scopedMediaType;
-  });
-
-  return matches.sort((left, right) => left.id - right.id)[0];
-}
-
 function createMapStateToProps() {
   return createSelector(
     (state, { match }) => match,
@@ -62,7 +47,7 @@ function createMapStateToProps() {
       // Find the book if it exists
       const book = isNumericRoute ?
         books.items.find((b) => b.id === numericBookId) :
-        findBookByRouteSlug(books.items, routeBookKey, scopedMediaType);
+        null;
       const hasBook = !!book;
       const bookId = book?.id ?? numericBookId;
       const authorId = book?.authorId;
@@ -86,6 +71,7 @@ function createMapStateToProps() {
         siblingCount,
         needsBookFetch,
         needsAuthorFetch,
+        authorError: needsAuthorFetch ? author.error : null,
         isFetching,
         isPopulated: hasBook && !needsAuthorFetch
       };
@@ -103,27 +89,31 @@ class BookDetailsPageConnector extends Component {
   constructor(props) {
     super(props);
     this.state = { hasMounted: false };
+    this._bookRequest = null;
+    this._lastAuthorFetchId = null;
     this._lastSiblingFetchKey = null;
   }
   //
   // Lifecycle
 
   componentDidMount() {
+    this._isMounted = true;
     this.populate();
   }
 
   componentDidUpdate(prevProps) {
-    const { routeBookKey, scopedMediaType, bookId, needsBookFetch, needsAuthorFetch, authorId, book } = this.props;
-
-    if (routeBookKey !== prevProps.routeBookKey ||
-        scopedMediaType !== prevProps.scopedMediaType ||
-        bookId !== prevProps.bookId ||
-        (needsBookFetch && !prevProps.needsBookFetch) ||
-        (needsAuthorFetch && !prevProps.needsAuthorFetch) ||
-        (authorId && authorId !== prevProps.authorId) ||
-        (book && !prevProps.book)) {
-      this.populate();
+    if (this.props.routeBookKey !== prevProps.routeBookKey ||
+        this.props.scopedMediaType !== prevProps.scopedMediaType) {
+      this._bookRequest = null;
+      this._lastAuthorFetchId = null;
+      this._lastSiblingFetchKey = null;
     }
+
+    this.populate();
+  }
+
+  componentWillUnmount() {
+    this._isMounted = false;
   }
 
   //
@@ -138,10 +128,13 @@ class BookDetailsPageConnector extends Component {
       authorId,
       book,
       bookMediaType,
-      siblingCount
+      siblingCount,
+      isFetching
     } = this.props;
 
-    if (needsBookFetch && routeBookKey) {
+    if (needsBookFetch && routeBookKey && !this._bookRequest) {
+      const pending = {};
+      this._bookRequest = pending;
       // Fetch the specific book data. bookId may be either the local numeric id
       // or a Readarr-compatible titleSlug from an external service link.
       const fetchParams = { bookId: routeBookKey.toString() };
@@ -150,10 +143,27 @@ class BookDetailsPageConnector extends Component {
         fetchParams.mediaType = scopedMediaType;
       }
 
-      this.props.fetchBooks(fetchParams);
+      this.props.fetchBooks({
+        ...fetchParams,
+        onComplete: (error, data) => {
+          if (!this._isMounted || this._bookRequest !== pending) {
+            return;
+          }
+
+          // A superseded request did not establish whether this book exists.
+          this._bookRequest = error?.aborted ? null : {
+            error,
+            routeBookKey,
+            scopedMediaType,
+            resolvedBookId: !error && !isNumericBookRoute(routeBookKey) ? data?.[0]?.id : null
+          };
+          this.setState({ hasMounted: true });
+        }
+      });
     }
 
-    if (needsAuthorFetch && authorId) {
+    if (needsAuthorFetch && authorId && this._lastAuthorFetchId !== authorId && !isFetching) {
+      this._lastAuthorFetchId = authorId;
       // Fetch the author data
       this.props.fetchAuthor({ id: authorId });
     }
@@ -161,7 +171,7 @@ class BookDetailsPageConnector extends Component {
     // Deep-link safety net: the book details connector computes previous/next from
     // books in the Redux store. When a book page is loaded directly, we only have
     // a single book in-state; fetch siblings for navigation.
-    if (book && authorId && bookMediaType && siblingCount < 2) {
+    if (book && authorId && bookMediaType && siblingCount < 2 && !isFetching) {
       const mediaType = bookMediaType;
       const key = `${authorId}_${mediaType}`;
 
@@ -171,7 +181,9 @@ class BookDetailsPageConnector extends Component {
       }
     }
 
-    this.setState({ hasMounted: true });
+    if (!this.state.hasMounted) {
+      this.setState({ hasMounted: true });
+    }
   };
 
   //
@@ -193,10 +205,13 @@ class BookDetailsPageConnector extends Component {
       );
     }
 
-    if (routeUsesScopedPrefix && bookId) {
+    const resolvedBookId = this._bookRequest?.routeBookKey === this.props.routeBookKey &&
+      this._bookRequest?.scopedMediaType === this.props.scopedMediaType ? this._bookRequest.resolvedBookId : null;
+
+    if (resolvedBookId || (routeUsesScopedPrefix && bookId)) {
       return (
         <Redirect
-          to={`/book/${bookId}`}
+          to={`/book/${resolvedBookId || bookId}`}
         />
       );
     }
@@ -219,6 +234,15 @@ class BookDetailsPageConnector extends Component {
       );
     }
 
+    const error = this._bookRequest?.error || this.props.authorError;
+    if (error && error.status !== 404) {
+      return (
+        <div className={authorStyles.errorMessage}>
+          {getErrorMessage(error, translate('NarratorDetailsUnableToLoadBooks'))}
+        </div>
+      );
+    }
+
     return (
       <NotFound
         message={translate('SorryThatBookCannotBeFound')}
@@ -238,6 +262,7 @@ BookDetailsPageConnector.propTypes = {
   siblingCount: PropTypes.number,
   needsBookFetch: PropTypes.bool,
   needsAuthorFetch: PropTypes.bool,
+  authorError: PropTypes.object,
   match: PropTypes.shape({ params: PropTypes.shape({ bookId: PropTypes.string.isRequired }).isRequired }).isRequired,
   fetchBooks: PropTypes.func.isRequired,
   fetchAuthor: PropTypes.func.isRequired,

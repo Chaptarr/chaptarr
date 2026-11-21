@@ -11,5 +11,7 @@ namespace NzbDrone.Core.Parser.Model
         public int AudioBits { get; set; }
         public int AudioSampleRate { get; set; }
         public TimeSpan Duration { get; set; }
+
+        internal MediaInfoModel Clone() => (MediaInfoModel)MemberwiseClone();
     }
 }

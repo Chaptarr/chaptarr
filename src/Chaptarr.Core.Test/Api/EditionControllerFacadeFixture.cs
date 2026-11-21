@@ -79,26 +79,23 @@ namespace Chaptarr.Core.Test.Api
             }
         }
 
-        private class BookServiceProxy : DispatchProxy
+        private class CopyFinderProxy : DispatchProxy
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IBookService.GetBooks))
+                if (targetMethod?.Name == nameof(IWantedEditionCopyFinder.FindWantedEditionCopies))
                 {
-                    return new List<Book>
+                    var books = new List<Book>
                     {
                         new Book
                         {
                             Id = 10,
                             AuthorId = 1,
-                            MediaType = BookMediaType.Ebook
+                            MediaType = BookMediaType.Ebook,
+                            Editions = DispatchProxy.Create<IEditionService, EditionServiceProxy>().GetEditionsByBook(new[] { 10 })
                         }
                     };
-                }
-
-                if (targetMethod?.Name == nameof(IBookService.GetBooksByAuthor))
-                {
-                    return new List<Book>();
+                    return (books, new Dictionary<int, Book>(), 0, 2, 0, 0);
                 }
 
                 throw new NotImplementedException(targetMethod?.Name);
@@ -109,8 +106,7 @@ namespace Chaptarr.Core.Test.Api
         public void should_emit_facade_edition_id_for_edition_book_lookup()
         {
             var controller = new EditionController(
-                DispatchProxy.Create<IEditionService, EditionServiceProxy>(),
-                DispatchProxy.Create<IBookService, BookServiceProxy>(),
+                DispatchProxy.Create<IWantedEditionCopyFinder, CopyFinderProxy>(),
                 DispatchProxy.Create<IMediaCoverProxy, MediaCoverProxy>())
             {
                 ControllerContext = new ControllerContext
@@ -132,8 +128,7 @@ namespace Chaptarr.Core.Test.Api
         public void narrator_search_should_load_each_edition_own_cover_without_persisting_or_borrowing_book_art()
         {
             var controller = new EditionController(
-                DispatchProxy.Create<IEditionService, EditionServiceProxy>(),
-                DispatchProxy.Create<IBookService, BookServiceProxy>(),
+                DispatchProxy.Create<IWantedEditionCopyFinder, CopyFinderProxy>(),
                 DispatchProxy.Create<IMediaCoverProxy, MediaCoverProxy>())
             {
                 ControllerContext = new ControllerContext

@@ -36,8 +36,8 @@ namespace Chaptarr.Core.Test.Download
                 return TorrentDetails;
             }
 
-            public void AddTorrentFromUrl(string torrentUrl, string downloadDirectory, TransmissionSettings settings) => throw new NotImplementedException();
-            public void AddTorrentFromData(byte[] torrentData, string downloadDirectory, TransmissionSettings settings) => throw new NotImplementedException();
+            public bool AddTorrentFromUrl(string torrentUrl, string downloadDirectory, TransmissionSettings settings) => throw new NotImplementedException();
+            public bool AddTorrentFromData(byte[] torrentData, string downloadDirectory, TransmissionSettings settings) => throw new NotImplementedException();
             public void SetTorrentSeedingConfiguration(string hash, TorrentSeedConfiguration seedConfiguration, TransmissionSettings settings) => throw new NotImplementedException();
             public TransmissionConfig GetConfig(TransmissionSettings settings) => throw new NotImplementedException();
             public string GetProtocolVersion(TransmissionSettings settings) => throw new NotImplementedException();

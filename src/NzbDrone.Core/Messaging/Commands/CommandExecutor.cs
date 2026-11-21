@@ -71,6 +71,10 @@ namespace NzbDrone.Core.Messaging.Commands
 
                 _logger.Trace("{0} -> {1}", command.GetType().Name, handler.GetType().Name);
 
+                cancellationTokenSource = new CancellationTokenSource();
+                _commandQueueManager.RegisterCancellationToken(commandModel.Id, cancellationTokenSource);
+                cancellationTokenSource.Token.ThrowIfCancellationRequested();
+
                 _commandQueueManager.Start(commandModel);
                 BroadcastCommandUpdate(commandModel);
 
@@ -78,10 +82,6 @@ namespace NzbDrone.Core.Messaging.Commands
                 {
                     ProgressMessageContext.CommandModel = commandModel;
                 }
-
-                // Create and register cancellation token for this command
-                cancellationTokenSource = new CancellationTokenSource();
-                _commandQueueManager.RegisterCancellationToken(commandModel.Id, cancellationTokenSource);
 
                 // Start a lightweight heartbeat to update LastProgressAt while the command runs
                 heartbeatCancellation = new CancellationTokenSource();
@@ -106,6 +106,7 @@ namespace NzbDrone.Core.Messaging.Commands
                 // Try to execute with cancellation token if handler supports it
                 try
                 {
+                    cancellationTokenSource.Token.ThrowIfCancellationRequested();
                     var executeMethod = handler.GetType().GetMethod("Execute", new[] { typeof(TCommand), typeof(CancellationToken) });
                     if (executeMethod != null)
                     {
@@ -126,25 +127,27 @@ namespace NzbDrone.Core.Messaging.Commands
 
                 _commandQueueManager.Complete(commandModel, command.CompletionMessage ?? commandModel.Message);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (command.SupportsCancellation || cancellationTokenSource?.IsCancellationRequested == true)
             {
-                // Since we no longer cancel the token for pause, this is a real cancellation
                 _logger.Info("Command {0} (ID: {1}) was cancelled", command.GetType().Name, commandModel.Id);
-                _commandQueueManager.SetMessage(commandModel, "Cancelled");
-                _commandQueueManager.SetResult(commandModel, CommandResult.Successful);
-                commandModel.Status = CommandStatus.Cancelled;
-                commandModel.EndedAt = DateTime.UtcNow;
-                commandModel.Duration = commandModel.EndedAt.Value.Subtract(commandModel.StartedAt.Value);
+                lock (commandModel)
+                {
+                    if (commandModel.Status != CommandStatus.Cancelled)
+                    {
+                        _commandQueueManager.SetMessage(commandModel, "Cancelled");
+                        commandModel.Status = CommandStatus.Cancelled;
+                    }
+
+                    _commandQueueManager.Complete(commandModel, commandModel.Message);
+                }
             }
             catch (CommandFailedException ex)
             {
-                _commandQueueManager.SetMessage(commandModel, "Failed");
                 _commandQueueManager.Fail(commandModel, ex.Message, ex);
                 throw;
             }
             catch (Exception ex)
             {
-                _commandQueueManager.SetMessage(commandModel, "Failed");
                 _commandQueueManager.Fail(commandModel, "Failed", ex);
                 throw;
             }

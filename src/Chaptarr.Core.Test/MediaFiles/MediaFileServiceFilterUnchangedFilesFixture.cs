@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Datastore;
@@ -46,7 +47,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IIngestQueueRepository.PurgeUnderPath))
+                if (targetMethod?.Name == nameof(IIngestQueueRepository.PurgePaths))
                 {
                     return 0;
                 }
@@ -58,7 +59,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         [Test]
         public void matched_filter_should_exclude_mapped_files_even_when_timestamps_drift()
         {
-            var root = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"mediafiles_filter_{Guid.NewGuid():N}");
+            var root = Path.Combine(TestContext.CurrentContext.WorkDirectory.GetActualCasing(), $"mediafiles_filter_{Guid.NewGuid():N}");
             var authorDir = Path.Combine(root, "books", "Andrzej Sapkowski");
 
             Directory.CreateDirectory(authorDir);
@@ -112,7 +113,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 };
 
                 var ingestQueue = DispatchProxy.Create<IIngestQueueRepository, IngestQueueRepositoryProxy>();
-                var sut = new MediaFileService(repo, new StubEventAggregator(), ingestQueue, LogManager.GetLogger("test"));
+                var sut = new MediaFileService(repo, new StubEventAggregator(), ingestQueue, null, LogManager.GetLogger("test"));
 
                 var result = sut.FilterUnchangedFiles(new List<IFileInfo> { mappedDisk, unmappedDisk }, FilterFilesType.Matched);
                 var resultPaths = result.Select(f => f.FullName).ToList();

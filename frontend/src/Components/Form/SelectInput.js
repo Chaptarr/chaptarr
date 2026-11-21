@@ -22,6 +22,7 @@ class SelectInput extends Component {
     const {
       className,
       disabledClassName,
+      'aria-label': ariaLabel,
       name,
       value,
       values,
@@ -41,6 +42,7 @@ class SelectInput extends Component {
           isDisabled && disabledClassName
         )}
         disabled={isDisabled}
+        aria-label={ariaLabel}
         name={name}
         value={value}
         autoFocus={autoFocus}
@@ -76,6 +78,7 @@ class SelectInput extends Component {
 SelectInput.propTypes = {
   className: PropTypes.string,
   disabledClassName: PropTypes.string,
+  'aria-label': PropTypes.string,
   name: PropTypes.string.isRequired,
   value: PropTypes.oneOfType([PropTypes.string, PropTypes.number, PropTypes.func]).isRequired,
   values: PropTypes.arrayOf(PropTypes.object).isRequired,

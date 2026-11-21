@@ -14,6 +14,10 @@ import styles from './HistoryDetailsModal.css';
 
 function getHeaderTitle(eventType) {
   switch (eventType) {
+    case 'authorsMerged':
+      return translate('AuthorsMerged');
+    case 'authorSplit':
+      return translate('AuthorSplit');
     case 'grabbed':
       return 'Grabbed';
     case 'downloadFailed':

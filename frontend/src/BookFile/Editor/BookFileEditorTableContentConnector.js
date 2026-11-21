@@ -51,11 +51,12 @@ function createMapStateToProps() {
       schema,
       author
     ) => {
-      let {
-        items,
+      const {
+        items: bookFileItems,
         ...otherProps
       } = bookFiles;
-      
+      let items = bookFileItems;
+
       // CRITICAL FIX: Filter by authorId to prevent showing files from other authors during imports
       // This fixes the bug where SignalR broadcasts add all files to the global store
       // Also filter by bookId when rendering a book-scoped view to avoid cross-book leakage.
@@ -64,7 +65,7 @@ function createMapStateToProps() {
       }
 
       if (authorId) {
-        items = items.filter(file => {
+        items = items.filter((file) => {
           // Check if the file has an authorId directly
           if (file.authorId === authorId) {
             return true;
@@ -80,33 +81,33 @@ function createMapStateToProps() {
           return false;
         });
       }
-      
+
       // Apply media type filter
       if (selectedMediaType) {
         // Both selectedMediaType and bookFile.mediaType use lowercase
         // selectedMediaType is 'audiobook' or 'ebook'
         // bookFile.mediaType is 'audiobook' or 'ebook' (from BookFile.DetermineMediaType)
         const mediaTypeFilter = selectedMediaType === 'audiobook' ? 'audiobook' : 'ebook';
-        items = items.filter(file => 
+        items = items.filter((file) =>
           file.mediaType === mediaTypeFilter
         );
       }
-      
+
       // Apply search filter
       if (filterValue && filterValue.trim()) {
         const searchTerm = filterValue.toLowerCase().trim();
-        items = items.filter(file => {
+        items = items.filter((file) => {
           // Search in path (includes filename and extension)
           const pathMatch = file.path && file.path.toLowerCase().includes(searchTerm);
           // Search in book title
           const titleMatch = file.book && file.book.title && file.book.title.toLowerCase().includes(searchTerm);
           // Search in author name
           const authorMatch = file.book && file.book.authorTitle && file.book.authorTitle.toLowerCase().includes(searchTerm);
-          
+
           return pathMatch || titleMatch || authorMatch;
         });
       }
-      
+
       return {
         ...schema,
         items,

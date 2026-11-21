@@ -7,7 +7,6 @@ using System.Threading;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
-using NzbDrone.Core.Configuration;
 using NzbDrone.Core.MediaFiles;
 
 namespace Chaptarr.Core.Test.MediaFiles
@@ -112,14 +111,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
-        private class ThrowingProxy<T> : DispatchProxy where T : class
-        {
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                throw new NotImplementedException($"Unexpected {typeof(T).Name}.{targetMethod.Name}");
-            }
-        }
-
         [Test]
         public void should_stream_progress_without_quieting_m4b_tool()
         {
@@ -133,7 +124,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             subject.ConvertToM4b(
@@ -172,7 +162,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             subject.ConvertToM4b(
@@ -221,7 +210,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             subject.ConvertToM4b(
@@ -270,7 +258,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             subject.ConvertToM4b(
@@ -320,7 +307,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             subject.ConvertToM4b(
@@ -356,7 +342,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             subject.ConvertToM4b(
@@ -394,7 +379,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             var result = subject.ConvertToM4b(
@@ -424,7 +408,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             var result = subject.ConvertToM4b(
@@ -434,7 +417,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             Assert.That(result.Success, Is.False);
             Assert.That(result.FailureCategory, Is.EqualTo(ConversionFailureCategory.OutputInvalid));
-            Assert.That(result.RetainOutputOnFailure, Is.False);
+            Assert.That(result.RetainOutputOnFailure, Is.True, "Readable audio remains available for explicit manual import; automatic import stays rejected");
             Assert.That(result.ErrorMessage, Does.Contain("duration looks wrong"));
         }
 
@@ -454,7 +437,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             var result = subject.ConvertToM4b(
@@ -483,7 +465,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             subject.ConvertToM4b(
@@ -512,7 +493,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             var result = subject.ConvertToM4b(
@@ -541,7 +521,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             var result = subject.ConvertToM4b(
@@ -570,7 +549,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             var result = subject.ConvertToM4b(
@@ -598,7 +576,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             var result = subject.ConvertToM4b(
@@ -626,7 +603,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             var subject = new M4bConversionService(
                 externalTools,
                 diskProvider,
-                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             var result = subject.ConvertToM4b(

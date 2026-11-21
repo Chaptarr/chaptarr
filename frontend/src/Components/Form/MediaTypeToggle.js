@@ -18,9 +18,9 @@ function MediaTypeToggle(props) {
   const ebookDisabled = !hasEbookRootFolder;
   const bothDisabled = includeBoth && (audiobookDisabled || ebookDisabled);
 
-  const effectiveMediaType = (!includeBoth && selectedMediaType === 'both')
-    ? 'audiobook'
-    : selectedMediaType;
+  const effectiveMediaType = (!includeBoth && selectedMediaType === 'both') ?
+    'audiobook' :
+    selectedMediaType;
 
   const options = [
     {
@@ -56,7 +56,7 @@ function MediaTypeToggle(props) {
 }
 
 MediaTypeToggle.propTypes = {
-  selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook', 'both']).isRequired,
+  selectedMediaType: PropTypes.oneOf(['', 'audiobook', 'ebook', 'both']).isRequired,
   onMediaTypeChange: PropTypes.func.isRequired,
   hasAudiobookRootFolder: PropTypes.bool,
   hasEbookRootFolder: PropTypes.bool,

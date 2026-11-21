@@ -24,23 +24,24 @@ namespace NzbDrone.Core.Books
         Edition GetEditionByGoogleBooksEditionId(string googleBooksEditionId);
         Edition GetEditionByProviderAndId(string providerPrefix, string providerId);
         List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId);
+        Dictionary<string, List<Edition>> GetEditionsByProviderIds(string provider, IEnumerable<string> ids) => throw new NotImplementedException();
         List<Edition> GetAllMonitoredEditions();
         void InsertMany(List<Edition> editions);
         void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction);
+        void RefreshProviderAliases(List<Edition> editions);
         void UpdateMany(List<Edition> editions);
+        void UpdateMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction, Edition selectedEdition = null);
+        void UpdateSelection(List<Edition> editions);
         void DeleteMany(List<Edition> editions);
         List<Edition> GetEditionsForRefresh(int bookId);
         List<Edition> GetEditionsByBook(int bookId);
         List<Edition> GetEditionsByBook(IEnumerable<int> bookIds);
-        List<Edition> GetEditionsByAuthor(int authorId);
-        Edition FindByTitle(int authorId, string title);
-        Edition FindByTitleInexact(int authorId, string title);
-        List<Edition> GetCandidates(int authorId, string title);
+        List<Edition> GetEditionRowsByBook(IEnumerable<int> bookIds) => GetEditionsByBook(bookIds);
+        List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false);
         List<Edition> SetMonitored(Edition edition, bool isManualSelection = false);
     }
 
-    public class EditionService : IEditionService,
-        IHandle<BookDeletedEvent>
+    public class EditionService : IEditionService
     {
         private readonly IEditionRepository _editionRepository;
         private readonly IEventAggregator _eventAggregator;
@@ -116,30 +117,15 @@ namespace NzbDrone.Core.Books
             var prefix = providerPrefix.Trim().ToLowerInvariant();
             var id = providerId.Trim();
 
+            if (prefix is "hc" or "gr" or "ol" or "gb")
+            {
+                var normalized = BookEditionIdentity.NormalizeRequestedEditionProviderId(id);
+                if (normalized.StartsWith(prefix + ":", StringComparison.OrdinalIgnoreCase)) normalized = normalized.Substring(prefix.Length + 1);
+                return _editionRepository.FindAllByProviderIds(prefix, new[] { normalized }).GetValueOrDefault(normalized) ?? new List<Edition>();
+            }
+
             switch (prefix)
             {
-                case "hc":
-                    _logger.Debug("Looking up Hardcover edition with ID: {0}", providerId);
-                    return _editionRepository.FindAllByHardcoverEditionId(id);
-
-                case "gr":
-                    if (long.TryParse(id, out var goodreadsId))
-                    {
-                        _logger.Debug("Looking up Goodreads edition with ID: {0}", goodreadsId);
-                        return _editionRepository.FindAllByGoodreadsEditionId(goodreadsId);
-                    }
-
-                    _logger.Error("Invalid Goodreads edition ID format: {0} (expected numeric)", id);
-                    return new List<Edition>();
-
-                case "ol":
-                    _logger.Debug("Looking up OpenLibrary edition with ID: {0}", providerId);
-                    return _editionRepository.FindAllByOpenLibraryEditionId(id);
-
-                case "gb":
-                    _logger.Debug("Looking up Google Books edition with ID: {0}", providerId);
-                    return _editionRepository.FindAllByGoogleBooksEditionId(id);
-
                 case "az":
                     {
                         var normalized = id.ToUpperInvariant();
@@ -164,6 +150,11 @@ namespace NzbDrone.Core.Books
                     _logger.Warn("Unknown provider prefix: {0}. Supported providers: hc, gr, ol, gb, az, isbn", providerPrefix);
                     return new List<Edition>();
             }
+        }
+
+        public Dictionary<string, List<Edition>> GetEditionsByProviderIds(string provider, IEnumerable<string> ids)
+        {
+            return _editionRepository.FindAllByProviderIds(provider, ids);
         }
 
         private Edition ChooseOldestProviderEdition(List<Edition> editions, string providerPrefix, string providerId)
@@ -271,20 +262,6 @@ namespace NzbDrone.Core.Books
                 }
 
                 _editionRepository.InsertMany(editions);
-
-	                if (_logger.IsDebugEnabled)
-                {
-	                    // Verify images were persisted
-	                    _logger.Debug("Verifying edition images after insertion");
-	                    foreach (var edition in editions.Take(5))
-                    {
-                        var savedEdition = _editionRepository.FindByForeignEditionId(edition.ForeignEditionId);
-                        if (savedEdition != null)
-                        {
-                            _logger.Debug("Saved edition '{0}' has {1} images", savedEdition.Title, savedEdition.Images?.Count ?? 0);
-                        }
-                    }
-                }
             }
             catch (SqliteException ex) when (IsEditionTitleSlugUniqueViolation(ex))
             {
@@ -332,14 +309,7 @@ namespace NzbDrone.Core.Books
                 }
 
                 var baseSlug = edition.TitleSlug.Trim();
-                var finalSlug = baseSlug;
-                var counter = 2;
-
-                while (reservedSlugs.Contains(finalSlug))
-                {
-                    finalSlug = $"{baseSlug}_{counter}";
-                    counter++;
-                }
+                var finalSlug = TitleSlugAllocator.FindAvailable(baseSlug, reservedSlugs.Contains);
 
                 if (!string.Equals(edition.TitleSlug, finalSlug, StringComparison.Ordinal))
                 {
@@ -402,13 +372,32 @@ namespace NzbDrone.Core.Books
 
         public void UpdateMany(List<Edition> editions)
         {
-            // Compute MatchingTitle for FTS matching (canonical normalization)
+            PrepareMatchingTitles(editions);
+            _editionRepository.UpdateMany(editions);
+        }
+
+        public void UpdateMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction, Edition selectedEdition = null)
+        {
+            PrepareMatchingTitles(editions);
+            _editionRepository.UpdateMany(editions, connection, transaction, selectedEdition);
+        }
+
+        private static void PrepareMatchingTitles(IEnumerable<Edition> editions)
+        {
             foreach (var edition in editions)
             {
                 edition.MatchingTitle = StringSuperNormalizer.ComputeMatchingTitle(edition.Title);
             }
+        }
 
-            _editionRepository.UpdateMany(editions);
+        public void RefreshProviderAliases(List<Edition> editions)
+        {
+            _editionRepository.RefreshProviderAliases(editions);
+        }
+
+        public void UpdateSelection(List<Edition> editions)
+        {
+            _editionRepository.UpdateSelection(editions);
         }
 
         public void DeleteMany(List<Edition> editions)
@@ -435,93 +424,19 @@ namespace NzbDrone.Core.Books
             return _editionRepository.FindByBook(bookIds);
         }
 
-        public List<Edition> GetEditionsByAuthor(int authorId)
+        public List<Edition> GetEditionRowsByBook(IEnumerable<int> bookIds)
         {
-            return _editionRepository.FindByAuthor(authorId);
+            return _editionRepository.FindRowsByBook(bookIds);
         }
 
-        public Edition FindByTitle(int authorId, string title)
+        public List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false)
         {
-            return _editionRepository.FindByTitle(authorId, title);
-        }
-
-        public Edition FindByTitleInexact(int authorId, string title)
-        {
-            var books = _editionRepository.FindByAuthorId(authorId, true);
-
-            foreach (var func in EditionScoringFunctions(title))
-            {
-                var results = FindByStringInexact(books, func.Item1, func.Item2);
-                if (results.Count == 1)
-                {
-                    return results[0];
-                }
-            }
-
-            return null;
-        }
-
-        public List<Edition> GetCandidates(int authorId, string title)
-        {
-            var books = _editionRepository.FindByAuthorId(authorId, true);
-            var output = new List<Edition>();
-
-            foreach (var func in EditionScoringFunctions(title))
-            {
-                output.AddRange(FindByStringInexact(books, func.Item1, func.Item2));
-            }
-
-            return output.DistinctBy(x => x.Id).ToList();
+            return _editionRepository.FindByAuthor(authorId, onlyMonitored);
         }
 
         public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false)
         {
             return _editionRepository.SetMonitored(edition, isManualSelection);
         }
-
-        public void Handle(BookDeletedEvent message)
-        {
-            // BookService snapshots editions before deletion so notifications and
-            // asynchronous cleanup retain the full book shape. Reuse that snapshot
-            // instead of querying the same editions again for every deleted book.
-            var editions = message.Book.Editions ?? GetEditionsByBook(message.Book.Id);
-            DeleteMany(editions);
-        }
-
-        private List<Tuple<Func<Edition, string, double>, string>> EditionScoringFunctions(string title)
-        {
-            Func<Func<Edition, string, double>, string, Tuple<Func<Edition, string, double>, string>> tc = Tuple.Create;
-            var scoringFunctions = new List<Tuple<Func<Edition, string, double>, string>>
-            {
-                tc((a, t) => a.Title.Equals(t, StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, title),
-                tc((a, t) => a.Title.Equals(t, StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, title.RemoveBracketsAndContents().CleanAuthorName()),
-                tc((a, t) => a.Title.Equals(t, StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, title.RemoveAfterDash().CleanAuthorName()),
-                tc((a, t) => a.Title.Equals(t, StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, title.RemoveBracketsAndContents().RemoveAfterDash().CleanAuthorName()),
-                tc((a, t) => t.Contains(a.Title) || a.Title.Contains(t) ? 0.8 : 0.0, title)
-            };
-
-            return scoringFunctions;
-        }
-
-        private List<Edition> FindByStringInexact(List<Edition> editions, Func<Edition, string, double> scoreFunction, string title)
-        {
-            const double fuzzThreshold = 0.7;
-            const double fuzzGap = 0.4;
-
-            var sortedEditions = editions.Select(s => new
-            {
-                MatchProb = scoreFunction(s, title),
-                Edition = s
-            })
-                .ToList()
-                .OrderByDescending(s => s.MatchProb)
-                .ToList();
-
-            return sortedEditions.TakeWhile((x, i) => i == 0 || sortedEditions[i - 1].MatchProb - x.MatchProb < fuzzGap)
-                .TakeWhile((x, i) => x.MatchProb > fuzzThreshold || (i > 0 && sortedEditions[i - 1].MatchProb > fuzzThreshold))
-                .Select(x => x.Edition)
-                .ToList();
-        }
-
     }
 }

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Calibre;
@@ -12,12 +11,12 @@ using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Qualities;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.DecisionEngine.Specifications
 {
     public class ReleaseLanguageSpecification : IDecisionEngineSpecification
     {
-        private static readonly Regex TokenRegex = new Regex(@"[\p{L}\p{Nd}]+", RegexOptions.Compiled);
 
         // Full names and common 3-letter markers are safe to treat as explicit language signals.
         // Short 2-letter markers are only used near the end of the title to reduce false positives.
@@ -220,7 +219,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 yield break;
             }
 
-            var tokens = TokenRegex.Matches(Parser.Parser.CleanReleaseTitleForParsing(title))
+            var tokens = UnicodeComparisonNormalizer.WordSpans(Parser.Parser.CleanReleaseTitleForParsing(title))
                 .Select(m => m.Value?.Trim().ToLowerInvariant())
                 .Where(t => !string.IsNullOrWhiteSpace(t))
                 .ToList();
@@ -303,7 +302,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         private static void ProtectMatchingTokenSpans(IReadOnlyList<string> releaseTokens, bool[] protectedTokens, string variant)
         {
-            var variantTokens = TokenRegex.Matches(variant ?? string.Empty)
+            var variantTokens = UnicodeComparisonNormalizer.WordSpans(variant)
                 .Select(m => m.Value?.Trim().ToLowerInvariant())
                 .Where(t => !string.IsNullOrWhiteSpace(t))
                 .ToList();
@@ -342,7 +341,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         private static int GetTokenCount(string value)
         {
-            return string.IsNullOrWhiteSpace(value) ? 0 : TokenRegex.Matches(value).Count;
+            return UnicodeComparisonNormalizer.WordSpans(value).Count();
         }
 
         private static Dictionary<string, string> BuildTitleLanguageTokens()

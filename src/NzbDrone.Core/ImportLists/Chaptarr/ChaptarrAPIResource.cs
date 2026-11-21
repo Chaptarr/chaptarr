@@ -28,6 +28,9 @@ namespace NzbDrone.Core.ImportLists.Chaptarr
         public string Overview { get; set; }
         public List<MediaCover.MediaCover> Images { get; set; }
         public bool Monitored { get; set; }
+        public int? ReadingFormatId { get; set; }
+        public string Narrator { get; set; }
+        public List<string> NarratorNames { get; set; }
     }
 
     public class ChaptarrBook
@@ -38,6 +41,7 @@ namespace NzbDrone.Core.ImportLists.Chaptarr
         public string Overview { get; set; }
         public List<MediaCover.MediaCover> Images { get; set; }
         public bool Monitored { get; set; }
+        public bool? AnyEditionOk { get; set; }
         public bool? AudiobookMonitored { get; set; }
         public bool? EbookMonitored { get; set; }
         public string MediaType { get; set; }

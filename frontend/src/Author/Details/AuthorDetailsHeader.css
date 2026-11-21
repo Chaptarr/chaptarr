@@ -30,11 +30,11 @@
 
 .poster {
   flex-shrink: 0;
-  margin-right: 35px;
-  height: 250px;
-  width: 200px;
-  object-fit: cover;
   overflow: hidden;
+  margin-right: 35px;
+  width: 200px;
+  height: 250px;
+  object-fit: cover;
 }
 
 .info {
@@ -45,10 +45,9 @@
 }
 
 .titleRow {
-  position: relative;
-  display: flex;
-  justify-content: space-between;
   flex: 0 0 auto;
+  /* Reserve the overlaid navigation, including its padding. */
+  padding-right: 150px;
 }
 
 .titleContainer {
@@ -57,6 +56,8 @@
 }
 
 .title {
+  flex: 1;
+  min-width: 0;
   font-weight: 300;
   font-size: 50px;
   line-height: 60px;
@@ -64,6 +65,7 @@
 
 .toggleMonitoredContainer {
   align-self: center;
+  flex-shrink: 0;
 }
 
 .monitorToggleButton {
@@ -79,30 +81,8 @@
 
 .alternateTitlesIconContainer {
   align-self: flex-end;
+  flex-shrink: 0;
   margin-left: 20px;
-}
-
-.authorNavigationButtons {
-  position: absolute;
-  right: 0;
-  z-index: 1;
-  margin-top: 10px;
-  padding: 30px;
-  white-space: nowrap;
-}
-
-.authorUpButton,
-.authorNavigationButton {
-  composes: button from '~Components/Link/IconButton.css';
-
-  margin-left: 5px;
-  width: 30px;
-  color: #e1e2e3;
-  white-space: nowrap;
-
-  &:hover {
-    color: var(--iconButtonHoverLightColor);
-  }
 }
 
 .details {
@@ -137,6 +117,16 @@
 @media only screen and (max-width: $breakpointSmall) {
   .headerContent {
     padding: 15px;
+  }
+
+  .titleRow {
+    padding-right: 60px;
+  }
+
+  /* The shorter mobile title has no spare height for the desktop offset;
+     lifting it clips the monitoring icon against the info container. */
+  .titleContainer {
+    margin-top: 0;
   }
 
   .title {

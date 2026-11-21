@@ -8,6 +8,7 @@ import { createThunk } from 'Store/thunks';
 // Variables
 
 const section = 'settings.general';
+const saveSettings = createSaveHandler(section, '/config/host');
 
 //
 // Actions Types
@@ -15,12 +16,14 @@ const section = 'settings.general';
 export const FETCH_GENERAL_SETTINGS = 'settings/general/fetchGeneralSettings';
 export const SET_GENERAL_SETTINGS_VALUE = 'settings/general/setGeneralSettingsValue';
 export const SAVE_GENERAL_SETTINGS = 'settings/general/saveGeneralSettings';
+export const SAVE_GENERAL_SETTINGS_FIELDS = 'settings/general/saveGeneralSettingsFields';
 
 //
 // Action Creators
 
 export const fetchGeneralSettings = createThunk(FETCH_GENERAL_SETTINGS);
 export const saveGeneralSettings = createThunk(SAVE_GENERAL_SETTINGS);
+export const saveGeneralSettingsFields = createThunk(SAVE_GENERAL_SETTINGS_FIELDS);
 export const setGeneralSettingsValue = createAction(SET_GENERAL_SETTINGS_VALUE, (payload) => {
   return {
     section,
@@ -51,7 +54,8 @@ export default {
 
   actionHandlers: {
     [FETCH_GENERAL_SETTINGS]: createFetchHandler(section, '/config/host'),
-    [SAVE_GENERAL_SETTINGS]: createSaveHandler(section, '/config/host')
+    [SAVE_GENERAL_SETTINGS]: saveSettings,
+    [SAVE_GENERAL_SETTINGS_FIELDS]: (getState, payload, dispatch) => saveSettings(getState, payload, dispatch, true)
   },
 
   //

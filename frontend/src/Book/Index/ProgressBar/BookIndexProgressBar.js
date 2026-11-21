@@ -1,30 +1,39 @@
 import PropTypes from 'prop-types';
 import React from 'react';
 import ProgressBar from 'Components/ProgressBar';
-import { sizes } from 'Helpers/Props';
-import getProgressBarKind from 'Utilities/Author/getProgressBarKind';
+import { kinds, sizes } from 'Helpers/Props';
+import isBefore from 'Utilities/Date/isBefore';
 import translate from 'Utilities/String/translate';
 import styles from './BookIndexProgressBar.css';
 
 function BookIndexProgressBar(props) {
   const {
     monitored,
-    bookCount,
     bookFileCount,
-    totalBookCount,
+    releaseDate,
     posterWidth,
     detailedProgressBar
   } = props;
 
-  const progress = bookFileCount && bookCount ? (totalBookCount / bookCount) * 100 : 0;
-  const text = `${bookFileCount ? bookCount : 0} / ${totalBookCount}`;
+  const hasBookFile = bookFileCount > 0;
+  let kind = kinds.WARNING;
+
+  if (hasBookFile) {
+    kind = kinds.SUCCESS;
+  } else if (monitored) {
+    kind = isBefore(releaseDate) ? kinds.DANGER : kinds.PRIMARY;
+  }
+
+  const bookCount = hasBookFile ? 1 : 0;
+  const totalBookCount = 1;
+  const text = `${bookCount} / ${totalBookCount}`;
 
   return (
     <ProgressBar
       className={styles.progressBar}
       containerClassName={styles.progress}
       progress={100}
-      kind={getProgressBarKind('ended', monitored, progress)}
+      kind={kind}
       size={detailedProgressBar ? sizes.MEDIUM : sizes.SMALL}
       showText={detailedProgressBar}
       text={text}
@@ -40,9 +49,8 @@ function BookIndexProgressBar(props) {
 
 BookIndexProgressBar.propTypes = {
   monitored: PropTypes.bool.isRequired,
-  bookCount: PropTypes.number.isRequired,
   bookFileCount: PropTypes.number.isRequired,
-  totalBookCount: PropTypes.number.isRequired,
+  releaseDate: PropTypes.string,
   posterWidth: PropTypes.number.isRequired,
   detailedProgressBar: PropTypes.bool.isRequired
 };

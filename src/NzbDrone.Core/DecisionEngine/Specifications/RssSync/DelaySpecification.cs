@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using NLog;
 using NzbDrone.Core.Download;
@@ -34,6 +36,12 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
         public SpecificationPriority Priority => SpecificationPriority.Database;
         public RejectionType Type => RejectionType.Temporary;
 
+        public IReadOnlyDictionary<(int AuthorId, int BookId), DateTime> GetOldestPendingPublishDates()
+        {
+            _pendingReleaseService.GetPending(out var oldestPublishDates);
+            return oldestPublishDates;
+        }
+
         public virtual Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria)
         {
             if (searchCriteria != null && searchCriteria.UserInvokedSearch)
@@ -42,14 +50,16 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
                 return Decision.Accept();
             }
 
-            var qualityProfile = subject.Author.GetQualityProfileForQuality(subject.ParsedBookInfo.Quality.Quality);
+            var qualityProfile = subject.GetQualityProfile();
+            var mediaType = subject.GetMediaType();
             if (qualityProfile == null)
             {
-                return Decision.Reject("No quality profile configured for {0} files", subject.ParsedBookInfo.Quality.Quality.Name);
+                return mediaType.HasValue
+                    ? Decision.Reject("No quality profile configured for {0} files", subject.ParsedBookInfo.Quality.Quality.Name)
+                    : Decision.Reject("Unable to determine release media type");
             }
 
-            var mediaType = subject.GetPreferredMediaType();
-            var tags = subject.Author.GetTagsForMediaType(mediaType);
+            var tags = subject.Author.GetTagsForMediaType(mediaType.Value);
             var delayProfile = _delayProfileService.BestForTags(tags);
             var delay = delayProfile.GetProtocolDelay(subject.Release.DownloadProtocol);
             var isPreferredProtocol = subject.Release.DownloadProtocol == delayProfile.PreferredProtocol;
@@ -64,7 +74,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
             if (isPreferredProtocol)
             {
-                foreach (var book in subject.Books)
+                foreach (var book in subject.GetBooksMatchingReleaseMediaType())
                 {
                     var bookFiles = _mediaFileService.GetFilesByBook(book.Id);
 
@@ -111,9 +121,18 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
             var bookIds = subject.Books.Select(e => e.Id);
 
-            var oldest = _pendingReleaseService.OldestPendingRelease(subject.Author.Id, bookIds.ToArray());
+            DateTime? oldestDate;
+            if (subject.PreparedPendingReleaseDates != null)
+            {
+                oldestDate = bookIds.Select(id => subject.PreparedPendingReleaseDates.TryGetValue((subject.Author.Id, id), out var date)
+                    ? (DateTime?)date : null).Min();
+            }
+            else
+            {
+                oldestDate = _pendingReleaseService.OldestPendingRelease(subject.Author.Id, bookIds.ToArray())?.Release.PublishDate;
+            }
 
-            if (oldest != null && oldest.Release.AgeMinutes > delay)
+            if (oldestDate.HasValue && (DateTime.UtcNow - oldestDate.Value).TotalMinutes > delay)
             {
                 return Decision.Accept();
             }
@@ -121,7 +140,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
             if (subject.Release.AgeMinutes < delay)
             {
                 _logger.Trace("Waiting for better quality release, There is a {0} minute delay on {1}", delay, subject.Release.DownloadProtocol);
-                return Decision.Reject("Waiting for better quality release");
+                return Decision.RejectHardFilter("Waiting for better quality release", "Delay");
             }
 
             return Decision.Accept();

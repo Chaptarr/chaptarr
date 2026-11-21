@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using NLog;
@@ -71,12 +72,9 @@ namespace NzbDrone.Core.MediaCover
             
             // Also download covers for all books by this author
             var books = _bookService.GetBooksByAuthor(author.Id);
-            if (!_deferredCoverService.MarkBooksForCoverDownload(books.Select(b => b.Id)))
+            if (!_deferredCoverService.MarkBooksForCoverDownload(books.Select(book => book.Id)))
             {
-                foreach (var book in books)
-                {
-                    _mediaCoverService.EnsureBookCovers(book);
-                }
+                _mediaCoverService.EnsureBookCoversForBooks(books);
             }
 
             // Publish event to notify UI and other subsystems
@@ -85,6 +83,28 @@ namespace NzbDrone.Core.MediaCover
 
         public void Execute(DownloadBookMediaCommand message)
         {
+            var bookIds = message.BookIds?.Where(id => id > 0).Distinct().ToList() ?? new List<int>();
+            if (bookIds.Count > 0)
+            {
+                var books = _bookService.GetExistingBooks(bookIds);
+                if (books.Count != bookIds.Count)
+                {
+                    _logger.Warn("Skipping cover downloads for {0} deleted books", bookIds.Count - books.Count);
+                }
+
+                if (message.ForceDownload)
+                {
+                    foreach (var selectedBook in books)
+                    {
+                        _mediaCoverService.DeleteBookCovers(selectedBook.Id);
+                    }
+                }
+
+                _logger.Debug("Downloading media for {0} books", books.Count);
+                _mediaCoverService.EnsureBookCoversForBooks(books);
+                return;
+            }
+
             Book book;
             try
             {
@@ -100,16 +120,11 @@ namespace NzbDrone.Core.MediaCover
 
             if (message.ForceDownload)
             {
-                // Delete existing covers to force re-download
-                var bookCoverPath = Path.Combine(_diskProvider.GetParentFolder(_mediaCoverService.GetCoverPath(book.Id, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".jpg")));
-                if (_diskProvider.FolderExists(bookCoverPath))
-                {
-                    _logger.Debug("Deleting existing covers for forced download");
-                    _diskProvider.DeleteFolder(bookCoverPath, true);
-                }
+                _mediaCoverService.DeleteBookCovers(book.Id);
             }
 
             _mediaCoverService.EnsureBookCovers(book);
         }
+
     }
 }

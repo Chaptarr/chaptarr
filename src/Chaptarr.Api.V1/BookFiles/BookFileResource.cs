@@ -17,12 +17,23 @@ namespace Chaptarr.Api.V1.BookFiles
         public string Path { get; set; }
         public long Size { get; set; }
         public DateTime DateAdded { get; set; }
+        private bool? _audioProductionOverride;
+        public bool? AudioProductionOverride
+        {
+            get => _audioProductionOverride;
+            set { _audioProductionOverride = value; AudioProductionOverrideSpecified = true; }
+        }
+
+        [global::System.Text.Json.Serialization.JsonIgnore]
+        public bool AudioProductionOverrideSpecified { get; private set; }
+
         public QualityModel Quality { get; set; }
         public int QualityWeight { get; set; }
         public int? IndexerFlags { get; set; }
         public MediaInfoResource MediaInfo { get; set; }
         public string MediaType { get; set; }
         public string Narrator { get; set; }
+        public bool IsGraphicAudio { get; set; }
         public Dictionary<string, List<string>> Tags { get; set; }
         public MatchProvenance MatchProvenance { get; set; }
         public string ImportUnitKey { get; set; }
@@ -66,6 +77,8 @@ namespace Chaptarr.Api.V1.BookFiles
                 MediaInfo = model.MediaInfo.ToResource(),
                 MediaType = model.MediaType,
                 Narrator = model.Narrator,
+                AudioProductionOverride = model.AudioProductionOverride,
+                IsGraphicAudio = AudioProductionDetector.IsDramatized(model),
                 MatchProvenance = model.MatchProvenance,
                 ImportUnitKey = model.EditionId == 0 ? BookImportUnitGroupingService.BuildFallbackUnitKey(model) : null,
                 ImportUnitRoot = model.EditionId == 0 ? BookImportUnitGroupingService.GetFallbackUnitRoot(model.Path) : null
@@ -93,6 +106,8 @@ namespace Chaptarr.Api.V1.BookFiles
                 MediaInfo = model.MediaInfo.ToResource(),
                 MediaType = model.MediaType,
                 Narrator = model.Narrator,
+                AudioProductionOverride = model.AudioProductionOverride,
+                IsGraphicAudio = AudioProductionDetector.IsDramatized(model),
                 MatchProvenance = model.MatchProvenance,
                 QualityCutoffNotMet = author.GetQualityProfileForQuality(model.Quality.Quality) != null ? upgradableSpecification.QualityCutoffNotMet(author.GetQualityProfileForQuality(model.Quality.Quality), model.Quality) : false,
                 IndexerFlags = (int)model.IndexerFlags,

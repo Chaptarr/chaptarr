@@ -13,11 +13,13 @@ using NzbDrone.Core.MediaFiles.TorrentInfo;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
+using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.Download.Clients.Blackhole
 {
     public class TorrentBlackhole : TorrentClientBase<TorrentBlackholeSettings>
     {
+        private readonly IRootFolderService _rootFolders;
         private readonly IScanWatchFolder _scanWatchFolder;
 
         public TimeSpan ScanGracePeriod { get; set; }
@@ -31,9 +33,11 @@ namespace NzbDrone.Core.Download.Clients.Blackhole
                                 IDiskProvider diskProvider,
                                 IRemotePathMappingService remotePathMappingService,
                                 IBlocklistService blocklistService,
-                                Logger logger)
+                                Logger logger,
+                                IRootFolderService rootFolders)
             : base(torrentFileInfoReader, httpClient, configService, diskProvider, remotePathMappingService, blocklistService, logger)
         {
+            _rootFolders = rootFolders;
             _scanWatchFolder = scanWatchFolder;
 
             ScanGracePeriod = TimeSpan.FromSeconds(30);
@@ -111,6 +115,8 @@ namespace NzbDrone.Core.Download.Clients.Blackhole
 
         public override void RemoveItem(DownloadClientItem item, bool deleteData)
         {
+            if (deleteData) EnsureCanDeleteItemData(item, _rootFolders);
+
             if (!deleteData)
             {
                 throw new NotSupportedException("Blackhole cannot remove DownloadItem without deleting the data as well, ignoring.");

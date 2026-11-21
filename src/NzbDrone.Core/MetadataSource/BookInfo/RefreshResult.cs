@@ -1,5 +1,6 @@
 using System.Net;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Exceptions;
 
 namespace NzbDrone.Core.MetadataSource.BookInfo
 {
@@ -11,6 +12,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
         public string ETag { get; set; }
         public HttpStatusCode? HttpStatus { get; set; }
         public string Message { get; set; }
+        public AuthorTerminalException Terminal { get; set; }
 
         // Factory methods for clarity
         public static RefreshResult NoChanges(string etag = null) => new RefreshResult

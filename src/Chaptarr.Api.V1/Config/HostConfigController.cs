@@ -11,6 +11,7 @@ using Chaptarr.Http.REST;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Filters;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http.Proxy;
@@ -54,6 +55,20 @@ namespace Chaptarr.Api.V1.Config
                            .ValidIpAddress()
                            .When(c => c.BindAddress != "*" && c.BindAddress != "localhost");
 
+            SharedValidator.RuleFor(c => c.AllowedHosts)
+                           .Must(value => AllowedHostsParser.Parse(value).All(host => AllowedHostsParser.IsValidHost(host) && !AllowedHostsParser.IsBindAddress(host)))
+                           .WithMessage("Enter hostnames or IP addresses without schemes, ports or paths. Leave empty to allow all hosts.");
+
+            SharedValidator.RuleFor(c => c.AllowedHosts)
+                           .Must(value => !AllowedHostsParser.IsUnrestricted(value))
+                           .When(c => c.AuthenticationRequired != AuthenticationRequiredType.Enabled)
+                           .WithMessage("Allowed Hosts is required when authentication is not required for every address.");
+
+            SharedValidator.RuleFor(c => c.AuthenticationMethod)
+                           .Must(method => method == _configFileProvider.ConfiguredAuthenticationMethod)
+                           .When(c => c.AuthenticationMethod == AuthenticationType.None || c.AuthenticationMethod == AuthenticationType.External)
+                           .WithMessage("Switching authentication to None or External is not permitted through the API. Configure External in config.xml or the environment if authentication is provided by a reverse proxy.");
+
             SharedValidator.RuleFor(c => c.Port).ValidPort();
 
             SharedValidator.RuleFor(c => c.UrlBase).ValidUrlBase();
@@ -92,6 +107,13 @@ namespace Chaptarr.Api.V1.Config
                            .WithMessage("Must use https:// unless the provider is running on localhost")
                            .When(c => c.AuthenticationMethod == AuthenticationType.Oidc && c.OidcAuthority.IsNotNullOrWhiteSpace());
 
+            SharedValidator.RuleFor(c => c.OidcAllowedEmailDomains)
+                           .Must(OidcAccessList.HasValidDomains)
+                           .When(c => c.AuthenticationMethod == AuthenticationType.Oidc &&
+                                      (_configFileProvider.ConfiguredAuthenticationMethod != AuthenticationType.Oidc ||
+                                       c.OidcAllowedEmailDomains != _configFileProvider.OidcAllowedEmailDomains))
+                           .WithMessage("Enter exact email domains such as family.org. Omit URL prefixes, @ signs, wildcards and trailing dots.");
+
             SharedValidator.RuleFor(c => c.OidcClientId).NotEmpty().When(c => c.AuthenticationMethod == AuthenticationType.Oidc);
             SharedValidator.RuleFor(c => c.OidcClientSecret)
                            .NotEmpty()
@@ -123,7 +145,7 @@ namespace Chaptarr.Api.V1.Config
                            .WithMessage("Proxy type must be Http, Socks4, or Socks5");
 
             SharedValidator.RuleFor(c => c.BackupFolder).IsValidPath().When(c => Path.IsPathRooted(c.BackupFolder));
-            SharedValidator.RuleFor(c => c.BackupInterval).InclusiveBetween(1, 7);
+            SharedValidator.RuleFor(c => c.BackupInterval).InclusiveBetween(0, 7);
             SharedValidator.RuleFor(c => c.BackupRetention).InclusiveBetween(1, 90);
         }
 
@@ -193,6 +215,16 @@ namespace Chaptarr.Api.V1.Config
             return resource;
         }
 
+        public override void OnActionExecuting(ActionExecutingContext context)
+        {
+            foreach (var resource in context.ActionArguments.Values.OfType<HostConfigResource>())
+            {
+                resource.AllowedHosts ??= _configFileProvider.AllowedHosts;
+            }
+
+            base.OnActionExecuting(context);
+        }
+
         [RestPutById]
         public async Task<ActionResult<HostConfigResource>> SaveHostConfig([FromBody] HostConfigResource resource)
         {
@@ -239,9 +271,7 @@ namespace Chaptarr.Api.V1.Config
                  !string.Equals(resource.Username.Trim().ToLowerInvariant(), currentUser.Username ?? string.Empty, StringComparison.Ordinal));
 
             if (resource.AuthenticationMethod == AuthenticationType.Oidc &&
-                resource.OidcAllowedEmails.IsNullOrWhiteSpace() &&
-                resource.OidcAllowedEmailDomains.IsNullOrWhiteSpace() &&
-                !resource.OidcAllowAnyVerifiedUser)
+                OidcAccessList.HasNoAccessRule(resource.OidcAllowedEmails, resource.OidcAllowedEmailDomains, resource.OidcAllowAnyVerifiedUser))
             {
                 throw new ValidationException(new[]
                 {

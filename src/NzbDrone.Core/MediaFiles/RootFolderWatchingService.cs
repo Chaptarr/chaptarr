@@ -301,7 +301,7 @@ namespace NzbDrone.Core.MediaFiles
             var cleaned = cleanPath.CleanFilePathBasic();
 
             // Skip partial/backup
-            if (cleanPath.EndsWith(".partial~") ||
+            if (DiskScanService.IsPartialFile(cleanPath) ||
                 cleanPath.EndsWith(".backup~"))
             {
                 return true;
@@ -380,7 +380,7 @@ namespace NzbDrone.Core.MediaFiles
         {
             var cleanedRawPath = rawPath.CleanFilePathBasic();
 
-            if (cleanedRawPath.EndsWith(".partial~") ||
+            if (DiskScanService.IsPartialFile(cleanedRawPath) ||
                 cleanedRawPath.EndsWith(".backup~"))
             {
                 return true;

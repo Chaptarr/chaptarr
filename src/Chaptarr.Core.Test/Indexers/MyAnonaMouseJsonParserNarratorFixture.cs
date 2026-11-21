@@ -8,6 +8,10 @@ using NzbDrone.Common.Http;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.MyAnonaMouse;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.Qualities;
+using Chaptarr.Api.V1.Indexers;
 
 namespace Chaptarr.Core.Test.Indexers
 {
@@ -208,7 +212,7 @@ namespace Chaptarr.Core.Test.Indexers
         }
 
         [Test]
-        public void should_extract_narrator_from_explicit_description_label_after_html_cleanup()
+        public void should_preserve_description_for_known_target_narrator_matching_after_html_cleanup()
         {
             var settings = new MyAnonaMouseSettings
             {
@@ -251,7 +255,82 @@ namespace Chaptarr.Core.Test.Indexers
             var releases = parser.ParseResponse(indexerResponse);
 
             var torrent = releases.OfType<TorrentInfo>().Single();
-            Assert.That(torrent.Narrator, Is.EqualTo("Scott Brick"));
+            Assert.That(torrent.Narrator, Is.Null);
+            Assert.That(torrent.NarratorEvidenceFields, Is.EqualTo(new[] { "Format: MP3 Narrated by Scott Brick; 64 kbps" }));
+            var book = new Book
+            {
+                MediaType = BookMediaType.Audiobook, AnyEditionOk = false,
+                Editions = new List<Edition> { new Edition { ReadingFormatId = 2, ManualAdd = true, NarratorNames = new List<string> { "Scott Brick" } } }
+            };
+            var remote = new RemoteBook
+            {
+                Books = new List<Book> { book }, Release = torrent,
+                ParsedBookInfo = new ParsedBookInfo { Quality = new QualityModel(Quality.MP3) }
+            };
+            Assert.That(new DownloadDecision(remote).ToResource().Narrator, Is.EqualTo("Scott Brick"));
         }
+
+        [Test]
+        public void should_preserve_structured_series_memberships_without_treating_a_single_position_as_a_pack()
+        {
+            var settings = new MyAnonaMouseSettings { BaseUrl = "https://www.myanonamouse.net" };
+            var payload = new JObject
+            {
+                ["data"] = new JArray
+                {
+                    new JObject
+                    {
+                        ["id"] = 1226159,
+                        ["title"] = "Dune",
+                        ["dl"] = "hash",
+                        ["size"] = "500 MiB",
+                        ["seeders"] = 12,
+                        ["leechers"] = 0,
+                        ["added"] = "2026-03-08 17:55:01",
+                        ["series_info"] = "{\"12922\":[\"Dune Chronicles\",\"1\",1.0],\"28664\":[\"Dune Universe\",\"10\",10.0],\"37638\":[\"Dungeons &amp; Dragons 5th Edition\",\"\",9999.0]}",
+                        ["category"] = 39,
+                        ["main_cat"] = 13,
+                        ["mediatype"] = 1,
+                        ["catname"] = "Audiobooks"
+                    }
+                }
+            };
+
+            var request = new HttpRequest("https://example.com/api");
+            var indexerRequest = new IndexerRequest(request);
+            var headers = new HttpHeader { ContentType = "application/json" };
+            var response = new HttpResponse(request, headers, payload.ToString(Formatting.None), HttpStatusCode.OK);
+            var releases = new MyAnonaMouseJsonParser(settings).ParseResponse(new IndexerResponse(indexerRequest, response));
+            var torrent = releases.OfType<TorrentInfo>().Single();
+
+            Assert.That(torrent.SeriesInfo.Select(series => (series.ProviderId, series.Name, series.Position)), Is.EquivalentTo(new[]
+            {
+                ("12922", "Dune Chronicles", "1"),
+                ("28664", "Dune Universe", "10"),
+                ("37638", "Dungeons & Dragons 5th Edition", null)
+            }));
+        }
+        [Test]
+        public void structured_cast_should_keep_every_person_without_a_count_placeholder()
+        {
+            var payload = new JObject
+            {
+                ["data"] = new JArray { new JObject
+                {
+                    ["id"] = 1234567, ["title"] = "A voice book", ["dl"] = "hash", ["size"] = "100 MiB",
+                    ["seeders"] = 2, ["leechers"] = 0, ["added"] = "2026-03-08 17:55:01",
+                    ["narrator_info"] = JsonConvert.SerializeObject(new Dictionary<string, string>
+                    { ["1"] = "Anna Mueller", ["2"] = "Ben Reader", ["3"] = "Cara Reader" }),
+                    ["category"] = 39, ["main_cat"] = 13, ["mediatype"] = 1, ["catname"] = "Audiobooks"
+                } }
+            };
+            var request = new HttpRequest("https://example.com/api");
+            var response = new HttpResponse(request, new HttpHeader { ContentType = "application/json" },
+                payload.ToString(Formatting.None), HttpStatusCode.OK);
+            var release = new MyAnonaMouseJsonParser(new MyAnonaMouseSettings { BaseUrl = "https://www.myanonamouse.net" })
+                .ParseResponse(new IndexerResponse(new IndexerRequest(request), response)).Single();
+            Assert.That(release.Narrator, Is.EqualTo("Anna Mueller, Ben Reader, Cara Reader"));
+        }
+
     }
 }

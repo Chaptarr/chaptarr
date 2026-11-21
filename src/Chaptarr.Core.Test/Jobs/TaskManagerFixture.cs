@@ -143,6 +143,34 @@ namespace Chaptarr.Core.Test.Jobs
         }
 
         [Test]
+        public void should_schedule_author_refresh_retries_each_minute_at_low_priority()
+        {
+            var repository = DispatchProxy.Create<IScheduledTaskRepository, ScheduledTaskRepositoryProxy>();
+            var config = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            new TaskManager(repository, config, new CacheManager(), LogManager.GetCurrentClassLogger()).Handle(new ApplicationStartedEvent());
+            var task = ((ScheduledTaskRepositoryProxy)(object)repository).UpsertedTasks.Single(item =>
+                item.TypeName == typeof(NzbDrone.Core.Books.Commands.RetryAuthorRefreshCommand).FullName);
+            Assert.That(task.Interval, Is.EqualTo(1));
+            Assert.That(task.Priority, Is.EqualTo(NzbDrone.Core.Messaging.Commands.CommandPriority.Low));
+        }
+
+        [TestCase(0, 0)]
+        [TestCase(1, 1440)]
+        [TestCase(7, 10080)]
+        public void backup_interval_should_disable_only_the_scheduled_task(int days, int minutes)
+        {
+            var repository = DispatchProxy.Create<IScheduledTaskRepository, ScheduledTaskRepositoryProxy>();
+            var config = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            ((ConfigServiceProxy)(object)config).BackupIntervalValue = days;
+            var subject = new TaskManager(repository, config, new CacheManager(), LogManager.GetCurrentClassLogger());
+            subject.Handle(new ApplicationStartedEvent());
+            var task = subject.GetAll().Single(item => item.TypeName == typeof(BackupCommand).FullName);
+            Assert.That(task.Interval, Is.EqualTo(minutes));
+            task.LastExecution = DateTime.UtcNow.AddDays(-100);
+            Assert.That(subject.GetPending().Any(item => item.TypeName == typeof(BackupCommand).FullName), Is.EqualTo(days != 0));
+        }
+
+        [Test]
         public void should_update_task_cache_when_config_is_saved_before_startup_cache_is_populated()
         {
             var repository = DispatchProxy.Create<IScheduledTaskRepository, ScheduledTaskRepositoryProxy>();

@@ -9,7 +9,7 @@ using NzbDrone.Common.Disk;
 namespace Chaptarr.Core.Test.Common
 {
     [TestFixture]
-    public class DiskProviderBaseUnicodePathResolutionFixture
+    public partial class DiskProviderBaseUnicodePathResolutionFixture
     {
         private sealed class TestDiskProvider : DiskProviderBase
         {

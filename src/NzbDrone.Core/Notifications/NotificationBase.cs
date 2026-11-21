@@ -19,7 +19,6 @@ namespace NzbDrone.Core.Notifications
         protected const string BOOK_FILE_DELETED_TITLE = "Book File Deleted";
         protected const string HEALTH_ISSUE_TITLE = "Health Check Failure";
         protected const string DOWNLOAD_FAILURE_TITLE = "Download Failed";
-        protected const string IMPORT_FAILURE_TITLE = "Import Failed";
         protected const string BOOK_RETAGGED_TITLE = "Book File Tags Updated";
         protected const string APPLICATION_UPDATE_TITLE = "Application Updated";
 
@@ -32,7 +31,6 @@ namespace NzbDrone.Core.Notifications
         protected const string BOOK_FILE_DELETED_TITLE_BRANDED = "Chaptarr - " + BOOK_FILE_DELETED_TITLE;
         protected const string HEALTH_ISSUE_TITLE_BRANDED = "Chaptarr - " + HEALTH_ISSUE_TITLE;
         protected const string DOWNLOAD_FAILURE_TITLE_BRANDED = "Chaptarr - " + DOWNLOAD_FAILURE_TITLE;
-        protected const string IMPORT_FAILURE_TITLE_BRANDED = "Chaptarr - " + IMPORT_FAILURE_TITLE;
         protected const string BOOK_RETAGGED_TITLE_BRANDED = "Chaptarr - " + BOOK_RETAGGED_TITLE;
         protected const string APPLICATION_UPDATE_TITLE_BRANDED = "Chaptarr - " + APPLICATION_UPDATE_TITLE;
 

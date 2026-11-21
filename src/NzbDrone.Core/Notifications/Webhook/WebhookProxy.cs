@@ -39,6 +39,8 @@ namespace NzbDrone.Core.Notifications.Webhook
                     .Accept(HttpAccept.Json)
                     .Build();
 
+                request.RedactUrlInLogs = true;
+
                 request.Method = settings.Method switch
                 {
                     (int)WebhookMethod.POST => HttpMethod.Post,

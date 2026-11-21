@@ -82,11 +82,11 @@ class RootFolders extends Component {
     if (setRootFolderValue) {
       setRootFolderValue({ name: 'name', value: 'Media Library' });
       setRootFolderValue({ name: 'audiobookMonitored', value: true });
-      setRootFolderValue({ name: 'audiobookMonitorExistingMode', value: 'all' });
-      setRootFolderValue({ name: 'audiobookMonitorNewItems', value: 'all' });
+      setRootFolderValue({ name: 'audiobookMonitorExistingMode', value: 'none' });
+      setRootFolderValue({ name: 'audiobookMonitorNewItems', value: 'none' });
       setRootFolderValue({ name: 'ebookMonitored', value: true });
-      setRootFolderValue({ name: 'ebookMonitorExistingMode', value: 'all' });
-      setRootFolderValue({ name: 'ebookMonitorNewItems', value: 'all' });
+      setRootFolderValue({ name: 'ebookMonitorExistingMode', value: 'none' });
+      setRootFolderValue({ name: 'ebookMonitorNewItems', value: 'none' });
       setRootFolderValue({ name: 'defaultTags', value: [] });
     }
 

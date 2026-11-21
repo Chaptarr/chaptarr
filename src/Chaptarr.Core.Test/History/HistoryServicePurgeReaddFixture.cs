@@ -84,6 +84,12 @@ namespace Chaptarr.Core.Test.History
                     case nameof(IDownloadHistoryRepository.GetByAuthorId):
                         return Items.Where(history => history.AuthorId == (int)args[0]).ToList();
 
+                    case nameof(IDownloadHistoryRepository.GetLatestDownloadHistoryItems):
+                        var ids = ((IEnumerable<string>)args[0]).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        return Items.Where(history => ids.Contains(history.DownloadId))
+                            .GroupBy(history => history.DownloadId)
+                            .Select(group => group.OrderByDescending(history => history.Date).First()).ToList();
+
                     case nameof(IDownloadHistoryRepository.FindByDownloadId):
                     {
                         var downloadId = ((string)args[0])?.ToUpperInvariant();
@@ -172,7 +178,6 @@ namespace Chaptarr.Core.Test.History
 
             // A fresh service instance models the post-restart lookup before the queued rematch runs.
             var restartedDownloadHistory = new DownloadHistoryService(downloadRepository, historyService);
-            Assert.That(restartedDownloadHistory.DownloadAlreadyImported("keep"), Is.True);
             Assert.That(restartedDownloadHistory.GetLatestDownloadHistoryItem("keep").EventType, Is.EqualTo(DownloadHistoryEventType.DownloadImported));
 
             var newAuthor = new Author { Id = 60, Name = "New Author" };
@@ -192,7 +197,7 @@ namespace Chaptarr.Core.Test.History
             Assert.That(entityItems.Single(history => history.EventType == EntityHistoryEventType.BookFileImported).Data.Keys,
                 Has.None.EqualTo("PurgeReaddPending"));
             Assert.That(downloadProxy.Items, Has.All.Matches<DownloadHistory>(history => history.AuthorId == 60 && history.BookId == 70));
-            Assert.That(restartedDownloadHistory.DownloadAlreadyImported("keep"), Is.True);
+            Assert.That(restartedDownloadHistory.GetLatestDownloadHistoryItem("keep").EventType, Is.EqualTo(DownloadHistoryEventType.DownloadImported));
         }
 
         [Test]

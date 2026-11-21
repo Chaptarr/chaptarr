@@ -8,9 +8,10 @@ namespace NzbDrone.Core.Profiles.Delay
 {
     public interface IDelayProfileService
     {
-        DelayProfile Add(DelayProfile profile);
+        DelayProfile Add(DelayProfile profile, int? order = null);
         DelayProfile Update(DelayProfile profile);
         void Delete(int id);
+        void Delete(IEnumerable<int> ids);
         List<DelayProfile> All();
         DelayProfile Get(int id);
         List<DelayProfile> AllForTag(int tagId);
@@ -30,9 +31,9 @@ namespace NzbDrone.Core.Profiles.Delay
             _bestForTagsCache = cacheManager.GetCache<DelayProfile>(GetType(), "best");
         }
 
-        public DelayProfile Add(DelayProfile profile)
+        public DelayProfile Add(DelayProfile profile, int? order = null)
         {
-            profile.Order = _repo.Count();
+            profile.Order = order ?? _repo.Count();
 
             var result = _repo.Insert(profile);
             _bestForTagsCache.Clear();
@@ -47,9 +48,11 @@ namespace NzbDrone.Core.Profiles.Delay
             return result;
         }
 
-        public void Delete(int id)
+        public void Delete(int id) => Delete(new[] { id });
+
+        public void Delete(IEnumerable<int> ids)
         {
-            _repo.Delete(id);
+            _repo.DeleteMany(ids);
 
             var all = All().OrderBy(d => d.Order).ToList();
 

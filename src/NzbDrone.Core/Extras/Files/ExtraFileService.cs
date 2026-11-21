@@ -24,6 +24,7 @@ namespace NzbDrone.Core.Extras.Files
         void Upsert(List<TExtraFile> extraFiles);
         void Delete(int id);
         void DeleteMany(IEnumerable<int> ids);
+        void DeleteBookFiles(Book book);
     }
 
     public abstract class ExtraFileService<TExtraFile> : IExtraFileService<TExtraFile>,
@@ -36,7 +37,7 @@ namespace NzbDrone.Core.Extras.Files
         private readonly IAuthorService _authorService;
         private readonly IDiskProvider _diskProvider;
         private readonly IRecycleBinProvider _recycleBinProvider;
-        private readonly Logger _logger;
+        protected readonly Logger _logger;
 
         public ExtraFileService(IExtraFileRepository<TExtraFile> repository,
                                 IAuthorService authorService,
@@ -104,9 +105,8 @@ namespace NzbDrone.Core.Extras.Files
         }
 
         /// <summary>
-        /// Extras that belong to the book rather than to one of its files — the cover a whole book
-        /// folder shares, for instance — are not reachable from any single book file, so they have to
-        /// be cleared here or they outlive the book and keep its folder from ever being empty.
+        /// Remove the book's extra-file inventory after deletion commits. Mandatory physical
+        /// cleanup runs before that commit through DeleteBookFiles.
         /// </summary>
         public void Handle(BookDeletedEvent message)
         {
@@ -117,43 +117,108 @@ namespace NzbDrone.Core.Extras.Files
                 return;
             }
 
-            var authorId = book.AuthorId;
+            _repository.DeleteForBook(book.AuthorId, book.Id);
+        }
 
-            if (message.DeleteFiles)
+        public void DeleteBookFiles(Book book)
+        {
+            var author = book.Author ?? GetAuthorOrNull(book.AuthorId);
+            if (author == null) return;
+
+            foreach (var extra in _repository.GetFilesByBook(book.AuthorId, book.Id))
             {
-                var author = book.Author ?? GetAuthorOrNull(authorId);
-
-                if (author != null)
-                {
-                    var preferredBase = author.GetPathForMediaType(book.MediaType == BookMediaType.Audiobook);
-
-                    foreach (var extra in _repository.GetFilesByBook(authorId, book.Id))
-                    {
-                        RecycleExtraFile(author, extra, preferredBase);
-                    }
-                }
+                var path = ExtraFilePathHelper.ResolveOwnedSidecarPath(author, extra, book.BookFiles ?? new List<BookFile>(), _diskProvider);
+                RecycleExtraFile(author, extra, path, new[] { path });
             }
-
-            // The rows go regardless: they point at a book that no longer exists.
-            _repository.DeleteForBook(authorId, book.Id);
         }
 
         public void Handle(BookFileDeletedEvent message)
         {
             var bookFile = message.BookFile;
 
-            if (message.Reason == DeleteMediaFileReason.NoLinkedEpisodes)
+            if (message.Reason == DeleteMediaFileReason.MissingFromDisk)
+            {
+                var kept = (message.Context?.GetExtras(_repository, bookFile.Id) ?? _repository.GetFilesByBookFile(bookFile.Id)).ToList();
+                foreach (var extra in kept)
+                {
+                    extra.BookId ??= bookFile.Edition?.BookId;
+                    extra.BookFileId = null;
+                }
+
+                if (kept.Count > 0) Upsert(kept);
+                _logger.Debug("Kept {0} sidecar records after the primary file went missing: {1}", kept.Count, bookFile.Path);
+                return;
+            }
+
+            if (!message.Reason.RemovesFiles())
             {
                 _logger.Debug("Removing track file from DB as part of cleanup routine, not deleting extra files from disk.");
             }
             else
             {
                 var author = bookFile.Author;
-                var preferredBase = ExtraFilePathHelper.GetPreferredBasePath(author, bookFile);
 
-                foreach (var extra in _repository.GetFilesByBookFile(bookFile.Id))
+                var retained = new List<TExtraFile>();
+                var removed = new List<int>();
+                var explicitDeletion = message.Reason == DeleteMediaFileReason.Manual || message.Reason == DeleteMediaFileReason.ManualOverride;
+                var extras = explicitDeletion
+                    ? message.Context?.GetExtrasForDeletion(_repository, bookFile) ?? _repository.GetFilesForDeletion(new[] { bookFile })
+                    : message.Context?.GetExtras(_repository, bookFile.Id) ?? _repository.GetFilesByBookFile(bookFile.Id);
+                try
                 {
-                    RecycleExtraFile(author, extra, preferredBase);
+                    foreach (var extra in extras)
+                    {
+                        var path = ExtraFilePathHelper.ResolveOwnedSidecarPath(author, extra, new[] { bookFile }, _diskProvider);
+                        var successor = path == null ? null : message.Context?.FindReplacement(bookFile.Edition?.BookId ?? 0, path);
+                        var retainOwnership = false;
+                        var preserveInPlace = false;
+                        try
+                        {
+                            retainOwnership = successor != null && _diskProvider.FileExistsCanonical(successor.Path);
+                            if (path != null && message.Context?.HasReplacement(bookFile.Edition?.BookId ?? 0) == true)
+                            {
+                                preserveInPlace = !PrepareForReplacement(extra, path);
+                            }
+                        }
+                        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                        {
+                            _logger.Warn(ex, "Keeping sidecar tracking after replacement verification failed: {0}", path);
+                            preserveInPlace = true;
+                        }
+                        var confirmedReplacement = message.ConfirmedAssociatedPaths?.Any(confirmed => confirmed.PathEquals(path)) == true;
+                        if ((retainOwnership || preserveInPlace) && !confirmedReplacement)
+                        {
+                            // A same-folder successor inherits tracking. Edited metadata in an old
+                            // folder remains attached to the book, without claiming the new file.
+                            extra.BookId ??= bookFile.Edition?.BookId;
+                            extra.BookFileId = retainOwnership ? successor.Id : null;
+                            retained.Add(extra);
+                            continue;
+                        }
+
+                        if (RecycleExtraFile(author, extra, path, message.ConfirmedAssociatedPaths ?? new[] { path }))
+                        {
+                            removed.Add(extra.Id);
+                            message.Context?.MarkExtraRemoved(extra);
+                        }
+                        else if (explicitDeletion && extra.BookFileId.HasValue)
+                        {
+                            // A shared/unresolved sidecar stays tracked after its producer is removed.
+                            extra.BookId ??= bookFile.Edition?.BookId;
+                            extra.BookFileId = null;
+                            retained.Add(extra);
+                        }
+                    }
+                }
+                finally
+                {
+                    // Keep successful recycling reflected in the database even if a later file fails.
+                    if (removed.Count > 0) _repository.DeleteMany(removed);
+                }
+
+                if (retained.Count > 0)
+                {
+                    Upsert(retained);
                 }
             }
 
@@ -161,20 +226,27 @@ namespace NzbDrone.Core.Extras.Files
             _repository.DeleteForBookFile(bookFile.Id);
         }
 
-        private void RecycleExtraFile(Author author, TExtraFile extra, string preferredBase)
-        {
-            var path = ExtraFilePathHelper.ResolveFullPath(author, extra.RelativePath, _diskProvider.FileExists, preferredBase);
+        protected virtual bool PrepareForReplacement(TExtraFile extra, string path) => true;
 
-            if (path.IsNullOrWhiteSpace() || !_diskProvider.FileExists(path))
+        private bool RecycleExtraFile(Author author, TExtraFile extra, string path, IReadOnlyCollection<string> confirmedPaths)
+        {
+            if (path.IsNullOrWhiteSpace())
             {
-                return;
+                _logger.Warn("Keeping sidecar with unresolved physical ownership: {0}", extra.RelativePath);
+                return false;
+            }
+
+            if (!confirmedPaths.Any(confirmed => confirmed.PathEquals(path)))
+            {
+                _logger.Warn("Keeping sidecar not included in replacement confirmation: {0}", path);
+                return false;
             }
 
             // Send to the recycling bin so they can be recovered if necessary
             var basePath = ExtraFilePathHelper.GetAuthorBasePaths(author)
                 .Where(p => p.IsParentPath(path) || p.PathEquals(path))
                 .OrderByDescending(p => p.Length)
-                .FirstOrDefault() ?? preferredBase;
+                .FirstOrDefault();
 
             string subfolder;
             try
@@ -188,6 +260,7 @@ namespace NzbDrone.Core.Extras.Files
             }
 
             _recycleBinProvider.DeleteFile(path, subfolder);
+            return true;
         }
 
         private Author GetAuthorOrNull(int authorId)

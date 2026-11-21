@@ -59,6 +59,7 @@ class ImportListExclusion extends Component {
       id,
       authorName,
       foreignId,
+      mediaType,
       isSelected,
       onSelectedChange
     } = this.props;
@@ -73,6 +74,7 @@ class ImportListExclusion extends Component {
 
         <TableRowCell className={styles.foreignId}>{foreignId}</TableRowCell>
         <TableRowCell className={styles.name}>{authorName}</TableRowCell>
+        <TableRowCell>{translate(mediaType === 'audiobook' ? 'Audiobooks' : mediaType === 'ebook' ? 'Ebooks' : 'AuthorDeleteBothFormats')}</TableRowCell>
 
         <TableRowCell className={styles.actions}>
           <Link
@@ -107,6 +109,7 @@ ImportListExclusion.propTypes = {
   id: PropTypes.number.isRequired,
   authorName: PropTypes.string.isRequired,
   foreignId: PropTypes.string.isRequired,
+  mediaType: PropTypes.string,
   isSelected: PropTypes.bool.isRequired,
   onSelectedChange: PropTypes.func.isRequired,
   onConfirmDeleteImportListExclusion: PropTypes.func.isRequired

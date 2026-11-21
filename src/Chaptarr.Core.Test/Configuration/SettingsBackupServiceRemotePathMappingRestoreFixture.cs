@@ -70,7 +70,8 @@ namespace Chaptarr.Core.Test.Configuration
                 null,
                 null,
                 null,
-                remotePathMappingService);
+                remotePathMappingService,
+                null, delayProfileService: null, releaseProfileService: null, qualityDefinitionService: null, mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
             var package = new SettingsBackupPackage
             {
                 RemotePathMappings = new List<RemotePathMappingBackup>

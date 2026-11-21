@@ -91,7 +91,7 @@ namespace NzbDrone.Core.Notifications.Email
 
         public override void OnImportFailure(BookDownloadMessage message)
         {
-            SendEmail(Settings, IMPORT_FAILURE_TITLE_BRANDED, message.Message);
+            SendEmail(Settings, "Chaptarr - " + message.ImportStatusTitle, message.Message);
         }
 
         public override void OnApplicationUpdate(ApplicationUpdateMessage updateMessage)

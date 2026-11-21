@@ -16,8 +16,8 @@ namespace NzbDrone.Core.Download.Clients.Transmission
     {
         List<TransmissionTorrent> GetTorrents(TransmissionSettings settings);
         TransmissionTorrent GetTorrentDetails(string hashString, TransmissionSettings settings);
-        void AddTorrentFromUrl(string torrentUrl, string downloadDirectory, TransmissionSettings settings);
-        void AddTorrentFromData(byte[] torrentData, string downloadDirectory, TransmissionSettings settings);
+        bool AddTorrentFromUrl(string torrentUrl, string downloadDirectory, TransmissionSettings settings);
+        bool AddTorrentFromData(byte[] torrentData, string downloadDirectory, TransmissionSettings settings);
         void SetTorrentSeedingConfiguration(string hash, TorrentSeedConfiguration seedConfiguration, TransmissionSettings settings);
         TransmissionConfig GetConfig(TransmissionSettings settings);
         string GetProtocolVersion(TransmissionSettings settings);
@@ -66,7 +66,7 @@ namespace NzbDrone.Core.Download.Clients.Transmission
             return torrents.FirstOrDefault();
         }
 
-        public void AddTorrentFromUrl(string torrentUrl, string downloadDirectory, TransmissionSettings settings)
+        public bool AddTorrentFromUrl(string torrentUrl, string downloadDirectory, TransmissionSettings settings)
         {
             var arguments = new Dictionary<string, object>();
             arguments.Add("filename", torrentUrl);
@@ -77,10 +77,10 @@ namespace NzbDrone.Core.Download.Clients.Transmission
                 arguments.Add("download-dir", downloadDirectory);
             }
 
-            ProcessRequest("torrent-add", arguments, settings);
+            return !ProcessRequest("torrent-add", arguments, settings).Arguments.ContainsKey("torrent-duplicate");
         }
 
-        public void AddTorrentFromData(byte[] torrentData, string downloadDirectory, TransmissionSettings settings)
+        public bool AddTorrentFromData(byte[] torrentData, string downloadDirectory, TransmissionSettings settings)
         {
             var arguments = new Dictionary<string, object>();
             arguments.Add("metainfo", Convert.ToBase64String(torrentData));
@@ -91,7 +91,7 @@ namespace NzbDrone.Core.Download.Clients.Transmission
                 arguments.Add("download-dir", downloadDirectory);
             }
 
-            ProcessRequest("torrent-add", arguments, settings);
+            return !ProcessRequest("torrent-add", arguments, settings).Arguments.ContainsKey("torrent-duplicate");
         }
 
         public void SetTorrentSeedingConfiguration(string hash, TorrentSeedConfiguration seedConfiguration, TransmissionSettings settings)
@@ -104,13 +104,18 @@ namespace NzbDrone.Core.Download.Clients.Transmission
             var arguments = new Dictionary<string, object>();
             arguments.Add("ids", new[] { hash });
 
-            if (seedConfiguration.Ratio != null)
+            if (seedConfiguration.KeepSeeding)
+            {
+                arguments.Add("seedRatioMode", 2);
+                arguments.Add("seedIdleMode", 2);
+            }
+            else if (seedConfiguration.Ratio != null)
             {
                 arguments.Add("seedRatioLimit", seedConfiguration.Ratio.Value);
                 arguments.Add("seedRatioMode", 1);
             }
 
-            if (seedConfiguration.SeedTime != null)
+            if (!seedConfiguration.KeepSeeding && seedConfiguration.SeedTime != null)
             {
                 arguments.Add("seedIdleLimit", Convert.ToInt32(seedConfiguration.SeedTime.Value.TotalMinutes));
                 arguments.Add("seedIdleMode", 1);

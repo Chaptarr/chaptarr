@@ -49,7 +49,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 File("/library/rowling/05.m4b", Tags(("ALBUM", "Harry Potter and the Order of the Phoenix"), ("ALBUMARTIST", "J.K. Rowling"), ("TITLE", "Track 5")))
             };
 
-            var result = (Dictionary<string, List<string>>)method.Invoke(service, new object[] { files });
+            var result = (Dictionary<string, List<string>>)method.Invoke(service, new object[] { files, false });
             Assert.That(result, Is.Not.Null);
             Assert.That(result.ContainsKey("ALBUM"), Is.True);
             Assert.That(result["ALBUM"], Contains.Item("Harry Potter and the Order of the Phoenix"));
@@ -71,7 +71,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     Tags(("ALBUM", "Dune"), ("ALBUMARTIST", "Frank Herbert"), ("TITLE", $"Track {index}"))));
             }
 
-            var result = (Dictionary<string, List<string>>)method.Invoke(service, new object[] { files });
+            var result = (Dictionary<string, List<string>>)method.Invoke(service, new object[] { files, false });
             Assert.That(result, Is.Not.Null);
             Assert.That(result.ContainsKey("ALBUM"), Is.True);
             Assert.That(result["ALBUM"], Is.EquivalentTo(new[] { "Dune" }));
@@ -95,7 +95,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 File("/library/mixed/06.mp3", Tags(("ALBUM", "Deathly Hallows"), ("TITLE", "Track 6")))
             };
 
-            var result = (Dictionary<string, List<string>>)method.Invoke(service, new object[] { files });
+            var result = (Dictionary<string, List<string>>)method.Invoke(service, new object[] { files, false });
             Assert.That(result, Is.Empty, "large groups without stable consensus should fail closed instead of reusing the representative tags");
         }
 

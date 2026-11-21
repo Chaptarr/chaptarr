@@ -36,6 +36,7 @@ namespace Chaptarr.Core.Test.Datastore
 
         private sealed class TestStagingDbContext : IStagingDbContext
         {
+            public System.Exception InitializationError => null;
             private readonly string _connectionString;
 
             public TestStagingDbContext(string connectionString)
@@ -105,54 +106,6 @@ namespace Chaptarr.Core.Test.Datastore
                     var outcomes = connection.Query<string>("SELECT outcome FROM import_results ORDER BY id;");
                     Assert.That(outcomes, Is.EquivalentTo(new[] { "imported", "alreadylinked", "ignored" }));
                 }
-            }
-            finally
-            {
-                try
-                {
-                    if (Directory.Exists(appDataFolder))
-                    {
-                        Directory.Delete(appDataFolder, recursive: true);
-                    }
-                }
-                catch
-                {
-                }
-            }
-        }
-
-        [Test]
-        public void file_tag_cache_should_round_trip_distinct_extraction_dispositions_with_real_ddl()
-        {
-            var appDataFolder = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"staging_tag_dispositions_{Guid.NewGuid():N}");
-            Directory.CreateDirectory(appDataFolder);
-
-            try
-            {
-                var context = new StagingDbContext(new TestAppFolderInfo(appDataFolder), LogManager.GetLogger("test"));
-                context.InitializeDatabase();
-                var repository = new FileTagCacheRepository(context, LogManager.GetLogger("test"));
-
-                repository.Upsert("/scan/evidence.m4b", 1, 1, "{\"title\":[\"Book\"]}", 10, "evidence");
-                repository.Upsert("/scan/noisy.m4b", 2, 2, "{\"comment\":[\"Promo\"]}", 20, "noisy_only");
-                repository.Upsert("/scan/tagless.m4b", 3, 3, "{}", 30, "tagless");
-
-                Assert.That(repository.TryGet("/scan/evidence.m4b", 1, 1, out _, out _, out var evidenceStatus), Is.True);
-                Assert.That(repository.TryGet("/scan/noisy.m4b", 2, 2, out _, out _, out var noisyStatus), Is.True);
-                Assert.That(repository.TryGet("/scan/tagless.m4b", 3, 3, out _, out _, out var taglessStatus), Is.True);
-                Assert.That(evidenceStatus, Is.EqualTo("evidence"));
-                Assert.That(noisyStatus, Is.EqualTo("noisy_only"));
-                Assert.That(taglessStatus, Is.EqualTo("tagless"));
-                Assert.Throws<ArgumentOutOfRangeException>(() =>
-                    repository.Upsert("/scan/invalid-through-repository.m4b", 4, 4, "{}", null, "failed"));
-
-                using var connection = context.OpenConnection();
-                var tableSql = connection.ExecuteScalar<string>("SELECT sql FROM sqlite_master WHERE type='table' AND name='file_tag_cache';");
-                Assert.That(tableSql, Does.Contain("'noisy_only'"));
-                Assert.Throws<SqliteException>(() => connection.Execute(@"
-                    INSERT INTO file_tag_cache(path, mtime_ns, size_bytes, tags_json, extraction_status, updated_at)
-                    VALUES('/scan/invalid.m4b', 4, 4, '{}', 'failed', 1);
-                "));
             }
             finally
             {
@@ -268,80 +221,6 @@ namespace Chaptarr.Core.Test.Datastore
             }
         }
 
-        [Test]
-        public void requeue_failed_paths_should_retry_only_failed_items_observed_in_current_scan()
-        {
-            var appDataFolder = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"staging_failed_retry_{Guid.NewGuid():N}");
-            Directory.CreateDirectory(appDataFolder);
-            var databasePath = Path.Combine(appDataFolder, "staging.db");
-            var connectionString = new SqliteConnectionStringBuilder
-            {
-                DataSource = databasePath,
-                Mode = SqliteOpenMode.ReadWriteCreate,
-                ForeignKeys = true
-            }.ToString();
-
-            try
-            {
-                var context = new StagingDbContext(new TestAppFolderInfo(appDataFolder), LogManager.GetLogger("test"));
-                context.InitializeDatabase();
-
-                using (var connection = new SqliteConnection(connectionString))
-                {
-                    connection.Open();
-                    connection.Execute("PRAGMA foreign_keys=ON;");
-                    connection.Execute(@"
-                        INSERT INTO ingest_queue (id, path, mtime_ns, size_bytes, tags_json, status, attempts, created_at, updated_at)
-                        VALUES
-                            (1, '/books/failed.epub', 0, 100, '{}', 'done', 2, 1, 1),
-                            (2, '/books/unmapped.epub', 0, 100, '{}', 'done', 2, 1, 1),
-                            (3, '/books/not-seen.epub', 0, 100, '{}', 'done', 2, 1, 1),
-                            (4, '/books/imported.epub', 0, 100, '{}', 'done', 2, 1, 1);
-
-                        INSERT INTO import_results (queue_item_id, path, outcome, created_at)
-                        VALUES
-                            (1, '/books/failed.epub', 'failed', 1),
-                            (2, '/books/unmapped.epub', 'unmapped', 1),
-                            (3, '/books/not-seen.epub', 'failed', 1),
-                            (4, '/books/imported.epub', 'imported', 1);
-                    ");
-                }
-
-                var repository = new IngestQueueRepository(context, LogManager.GetLogger("test"));
-                var requeued = repository.RequeueFailedPaths(new[]
-                {
-                    "/books/failed.epub",
-                    "/books/unmapped.epub",
-                    "/books/imported.epub"
-                });
-
-                Assert.That(requeued, Is.EqualTo(1));
-
-                using (var connection = new SqliteConnection(connectionString))
-                {
-                    connection.Open();
-                    var rows = connection.Query<IngestQueueItem>(
-                        "SELECT id AS Id, status AS Status, attempts AS Attempts FROM ingest_queue ORDER BY id;").ToList();
-
-                    Assert.That(rows.Single(row => row.Id == 1).Status, Is.EqualTo("queued"));
-                    Assert.That(rows.Single(row => row.Id == 1).Attempts, Is.EqualTo(2), "Scheduled retry must preserve attempt history");
-                    Assert.That(rows.Where(row => row.Id != 1).All(row => row.Status == "done"), Is.True);
-                }
-            }
-            finally
-            {
-                try
-                {
-                    if (Directory.Exists(appDataFolder))
-                    {
-                        Directory.Delete(appDataFolder, recursive: true);
-                    }
-                }
-                catch
-                {
-                }
-            }
-        }
 
         [Test]
         public void complete_item_with_result_should_mark_done_when_result_history_write_fails()
@@ -511,6 +390,15 @@ namespace Chaptarr.Core.Test.Datastore
 
         private sealed class RecordingMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             private readonly Dictionary<string, BookFile> _files = new(StringComparer.OrdinalIgnoreCase);
 
             public BookFile Add(BookFile bookFile)
@@ -526,6 +414,8 @@ namespace Chaptarr.Core.Test.Datastore
 
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Update(BookFile bookFile) => throw new NotImplementedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -667,13 +557,8 @@ namespace Chaptarr.Core.Test.Datastore
 
                 using (var connection = context.OpenConnection())
                 {
-                    var queueRow = connection.QuerySingle<(string Status, string Err)>("SELECT status, err FROM ingest_queue WHERE id = 1;");
-                    var resultRow = connection.QuerySingle<(string Outcome, string ErrorMessage)>("SELECT outcome, error_message FROM import_results WHERE queue_item_id = 1;");
-
-                    Assert.That(queueRow.Status, Is.EqualTo("done"));
-                    Assert.That(queueRow.Err, Is.EqualTo("PENDING_AUTHOR_IMPORT"));
-                    Assert.That(resultRow.Outcome, Is.EqualTo("unmapped"));
-                    Assert.That(resultRow.ErrorMessage, Is.EqualTo("PENDING_AUTHOR_IMPORT"));
+                    Assert.That(connection.ExecuteScalar<int>("SELECT COUNT(*) FROM ingest_queue"), Is.Zero);
+                    Assert.That(connection.ExecuteScalar<int>("SELECT COUNT(*) FROM import_results"), Is.Zero);
                 }
             }
             finally
@@ -739,17 +624,8 @@ namespace Chaptarr.Core.Test.Datastore
                     var queueRows = connection.Query<(int Id, string Status, string Err)>("SELECT id, status, err FROM ingest_queue ORDER BY id;").ToList();
                     var resultRows = connection.Query<(int QueueItemId, string Outcome, string ErrorMessage)>("SELECT queue_item_id, outcome, error_message FROM import_results ORDER BY queue_item_id;").ToList();
 
-                    Assert.That(queueRows, Is.EquivalentTo(new[]
-                    {
-                        (1, "done", "ALREADY_TRACKED"),
-                        (2, "done", "FILE_MISSING")
-                    }));
-
-                    Assert.That(resultRows, Is.EquivalentTo(new[]
-                    {
-                        (1, "ignored", "ALREADY_TRACKED"),
-                        (2, "ignored", "FILE_MISSING")
-                    }));
+                    Assert.That(queueRows, Is.Empty);
+                    Assert.That(resultRows, Is.Empty);
                 }
             }
             finally

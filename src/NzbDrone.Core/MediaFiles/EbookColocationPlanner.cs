@@ -50,38 +50,29 @@ namespace NzbDrone.Core.MediaFiles
 
     public sealed class RenameBatchContext
     {
-        public Dictionary<string, string> AudiobookFolderRemap { get; } = new Dictionary<string, string>(PathEqualityComparer.Instance);
+        public IReadOnlyList<Book> AuthorBooks { get; set; }
+        public ILookup<int, BookFile> FilesByBook { get; set; }
 
-        public void AddAudiobookFolderRemap(string oldFolder, string newFolder)
+        private readonly Dictionary<int, (string Original, string Planned)> _audiobookFolders = new();
+
+        public void AddAudiobookFolderRemap(int fileId, string oldFolder, string newFolder)
         {
             if (oldFolder.IsNullOrWhiteSpace() || newFolder.IsNullOrWhiteSpace() || oldFolder.PathEquals(newFolder))
             {
                 return;
             }
 
-            AudiobookFolderRemap[oldFolder] = newFolder;
+            _audiobookFolders[fileId] = (oldFolder, newFolder);
         }
 
-        public string GetPlannedFolder(string currentFolder)
+        public string GetPlannedFolder(int fileId, string currentFolder)
         {
-            if (currentFolder.IsNullOrWhiteSpace())
-            {
-                return currentFolder;
-            }
-
-            return AudiobookFolderRemap.TryGetValue(currentFolder, out var plannedFolder) ? plannedFolder : currentFolder;
+            return _audiobookFolders.TryGetValue(fileId, out var folders) ? folders.Planned : currentFolder;
         }
 
-        public string GetOriginalFolder(string plannedFolder)
+        public string GetOriginalFolder(int fileId, string currentFolder)
         {
-            if (plannedFolder.IsNullOrWhiteSpace())
-            {
-                return null;
-            }
-
-            return AudiobookFolderRemap
-                .FirstOrDefault(kvp => kvp.Value.PathEquals(plannedFolder))
-                .Key;
+            return _audiobookFolders.TryGetValue(fileId, out var folders) ? folders.Original : currentFolder;
         }
     }
 
@@ -175,8 +166,8 @@ namespace NzbDrone.Core.MediaFiles
                 return results.Values.ToList();
             }
 
-            var audiobookSiblings = _bookService.GetBooksByAuthorId(ebookBook.AuthorId)
-                .Where(b => b != null && b.MediaType == BookMediaType.Audiobook)
+            var audiobookSiblings = (batchContext.AuthorBooks ?? _bookService.GetBooksByAuthorId(ebookBook.AuthorId))
+                .Where(b => b != null && b.AuthorId == ebookBook.AuthorId && b.MediaType == BookMediaType.Audiobook)
                 .Where(b => WorkIdMatcher.WorkProviderIdMatches(ebookBook, b))
                 .OrderBy(b => b.Id)
                 .ToList();
@@ -190,7 +181,7 @@ namespace NzbDrone.Core.MediaFiles
 
             foreach (var audiobookBook in audiobookSiblings)
             {
-                var files = _mediaFileService.GetFilesByBook(audiobookBook.Id)
+                var files = (batchContext.FilesByBook?[audiobookBook.Id] ?? _mediaFileService.GetFilesByBook(audiobookBook.Id))
                     .Where(f => f != null && f.Path.IsNotNullOrWhiteSpace())
                     .OrderBy(f => f.Id)
                     .ThenBy(f => f.Path ?? string.Empty, StringComparer.OrdinalIgnoreCase)
@@ -209,8 +200,8 @@ namespace NzbDrone.Core.MediaFiles
                         continue;
                     }
 
-                    var plannedFolder = batchContext.GetPlannedFolder(fileFolder);
-                    var originalFolder = batchContext.GetOriginalFolder(plannedFolder) ?? fileFolder;
+                    var plannedFolder = batchContext.GetPlannedFolder(file.Id, fileFolder);
+                    var originalFolder = batchContext.GetOriginalFolder(file.Id, fileFolder);
 
                     var best = _rootFolderService.GetBestRootFolder(plannedFolder, allRootFolders);
                     if (best == null || best.Id != mixedRootFolder.Id)

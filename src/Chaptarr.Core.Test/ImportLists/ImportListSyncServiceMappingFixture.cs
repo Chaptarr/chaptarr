@@ -1,4 +1,6 @@
 using System;
+using NzbDrone.Core.MediaFiles;
+using Chaptarr.Core.Test.Common;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -20,42 +22,6 @@ namespace Chaptarr.Core.Test.ImportLists
     [TestFixture]
     public class ImportListSyncServiceMappingFixture
     {
-        private class AuthorLookupProxy : DispatchProxy
-        {
-            public Author Author { get; set; }
-
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                if (targetMethod?.Name == nameof(IAuthorService.GetAuthor) &&
-                    args?.Length == 1 &&
-                    args[0] is int id &&
-                    Author != null &&
-                    Author.Id == id)
-                {
-                    return Author;
-                }
-
-                throw new NotImplementedException($"Test proxy does not implement IAuthorService.{targetMethod?.Name}");
-            }
-        }
-
-        private class BookRepositoryLookupProxy : DispatchProxy
-        {
-            public Book Book { get; set; }
-
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                if (targetMethod?.Name == "Find" &&
-                    args?.Length == 1 &&
-                    args[0] is int id)
-                {
-                    return Book != null && Book.Id == id ? Book : null;
-                }
-
-                throw new NotImplementedException($"Test proxy does not implement IBookRepository.{targetMethod?.Name}");
-            }
-        }
-
         private sealed class StubEditionService : IEditionService
         {
             public Edition GetEdition(int id) => throw new NotImplementedException();
@@ -70,52 +36,20 @@ namespace Chaptarr.Core.Test.ImportLists
             public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
+            public void UpdateMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, Edition selectedEdition = null) => throw new System.NotSupportedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
             public List<Edition> GetEditionsByBook(int bookId) => throw new NotImplementedException();
             public List<Edition> GetEditionsByBook(IEnumerable<int> bookIds) => throw new NotImplementedException();
-            public List<Edition> GetEditionsByAuthor(int authorId) => throw new NotImplementedException();
+            public List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false) => throw new NotImplementedException();
             public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
-        }
 
-        private sealed class LocalEditionService : IEditionService
-        {
-            public Edition Edition { get; set; }
-
-            public Edition GetEdition(int id) => throw new NotImplementedException();
-            public List<Edition> GetEditions(IEnumerable<int> ids) => throw new NotImplementedException();
-            public Edition GetEditionByForeignEditionId(string foreignEditionId) => null;
-            public Edition GetEditionByHardcoverEditionId(string hardcoverEditionId) => null;
-            public Edition GetEditionByGoodreadsEditionId(long goodreadsEditionId)
-            {
-                return Edition != null && Edition.GoodreadsEditionId == goodreadsEditionId ? Edition : null;
-            }
-
-            public Edition GetEditionByGoogleBooksEditionId(string googleBooksEditionId)
-            {
-                return Edition != null && Edition.GoogleBooksEditionId == googleBooksEditionId ? Edition : null;
-            }
-
-            public Edition GetEditionByOpenLibraryEditionId(string openLibraryEditionId) => null;
-            public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => null;
-            public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
-            public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
-            public void InsertMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
-            public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
-            public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
-            public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
-            public List<Edition> GetEditionsByBook(int bookId) => throw new NotImplementedException();
-            public List<Edition> GetEditionsByBook(IEnumerable<int> bookIds) => throw new NotImplementedException();
-            public List<Edition> GetEditionsByAuthor(int authorId) => throw new NotImplementedException();
-            public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
-            public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
-            public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
-            public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
+            public void RefreshProviderAliases(List<Edition> editions) { }
+            public void UpdateSelection(List<Edition> editions) => UpdateMany(editions);
         }
 
         private sealed class StubBookInfoProxy : IProvideBookInfo
@@ -178,11 +112,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 bookInfoProxy: bookInfoProxy,
                 authorService: DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
                 bookService: DispatchProxy.Create<IBookService, ThrowingProxy<IBookService>>(),
-                bookRepository: DispatchProxy.Create<IBookRepository, ThrowingProxy<IBookRepository>>(),
                 editionService: editionService,
-                editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
-                editionSelector: new EditionSelector(LogManager.GetCurrentClassLogger()),
-                authorLibraryService: DispatchProxy.Create<IAuthorLibraryService, ThrowingProxy<IAuthorLibraryService>>(),
                 pendingAuthorImportService: DispatchProxy.Create<IPendingAuthorImportService, ThrowingProxy<IPendingAuthorImportService>>(),
                 rootFolderService: DispatchProxy.Create<IRootFolderService, ThrowingProxy<IRootFolderService>>(),
                 rootFolderSettingsResolver: DispatchProxy.Create<IRootFolderSettingsResolver, ThrowingProxy<IRootFolderSettingsResolver>>(),
@@ -192,15 +122,21 @@ namespace Chaptarr.Core.Test.ImportLists
                 bookIdentityCacheRepository: identityCacheRepository ?? DispatchProxy.Create<IImportListBookIdentityCacheRepository, IdentityCacheRepositoryProxy>());
         }
 
-        private static void MapBookReport(ImportListSyncService service, ImportListItemInfo report)
+        private static void MapBookReport(ImportListSyncService service, ImportListItemInfo report, Book book = null, Author author = null)
         {
-            var method = typeof(ImportListSyncService).GetMethod("MapBookReport", BindingFlags.NonPublic | BindingFlags.Instance);
+            var method = typeof(ImportListSyncService).GetMethod("MapBookReportWithMappings", BindingFlags.NonPublic | BindingFlags.Instance);
             if (method == null)
             {
-                throw new InvalidOperationException("Could not find ImportListSyncService.MapBookReport via reflection");
+                throw new InvalidOperationException("Could not find ImportListSyncService.MapBookReportWithMappings via reflection");
             }
 
-            method.Invoke(service, new object[] { report });
+            var lookupType = typeof(ImportListSyncService).GetNestedType("ImportListLocalLookup", BindingFlags.NonPublic);
+            var lookup = Activator.CreateInstance(lookupType, nonPublic: true);
+            lookupType.GetMethod("AddAuthor").Invoke(lookup, new object[] { author });
+            lookupType.GetMethod("AddBook").Invoke(lookup, new object[] { book });
+            var stats = Activator.CreateInstance(typeof(ImportListSyncService).GetNestedType("ImportListSyncStats", BindingFlags.NonPublic), true);
+            var args = new object[] { report, lookup, null, stats };
+            method.Invoke(service, method.GetParameters().Length == 5 ? args.Append(null).ToArray() : args);
         }
 
         [Test]
@@ -217,6 +153,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 Title = "Mapped Book",
                 GoodreadsWorkId = "gr:123",
                 GoodreadsBookId = "gr:456",
+                Editions = new List<Edition> { new() { GoodreadsEditionId = 456 } },
                 Author = author
             };
 
@@ -225,7 +162,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 GetEditionInfoFunc = id =>
                 {
                     Assert.That(id, Is.EqualTo("gr:456"));
-                    return Tuple.Create(id, book, new List<Author> { author });
+                    return Tuple.Create(author.GoodreadsAuthorId, book, new List<Author> { author });
                 }
             };
 
@@ -248,26 +185,33 @@ namespace Chaptarr.Core.Test.ImportLists
             Assert.That(report.Author, Is.EqualTo("Mapped Author"));
 
             var upsert = ((IdentityCacheRepositoryProxy)(object)identityCacheRepository).Upserts.Single();
-            Assert.That(upsert.SourceProviderId, Is.EqualTo("gr:456"));
+            Assert.That(upsert.SourceProviderId, Is.EqualTo("edition:gr:456"));
             Assert.That(upsert.BookProviderId, Is.EqualTo("gr:123"));
             Assert.That(upsert.AuthorProviderId, Is.EqualTo("gr:789"));
         }
 
         [Test]
-        public void should_map_goodreads_bookshelf_book_id_from_identity_cache()
+        public void should_recheck_a_cached_pair_without_local_primary_ownership()
         {
             var identityCacheRepository = DispatchProxy.Create<IImportListBookIdentityCacheRepository, IdentityCacheRepositoryProxy>();
             ((IdentityCacheRepositoryProxy)(object)identityCacheRepository).Cache = new ImportListBookIdentityCache
             {
-                SourceProviderId = "gr:456",
+                SourceProviderId = "edition:gr:456",
                 BookProviderId = "gr:123",
                 AuthorProviderId = "gr:789",
                 Book = "Cached Book",
-                Author = "Cached Author"
+                Author = "Cached Author",
+                EditionHasNarration = false
             };
 
             var service = BuildService(
-                DispatchProxy.Create<IProvideBookInfo, ThrowingProxy<IProvideBookInfo>>(),
+                new StubBookInfoProxy
+                {
+                    GetEditionInfoFunc = id => Tuple.Create("gr:321",
+                        new Book { Title = "Verified Book", GoodreadsWorkId = "gr:123",
+                            Editions = new List<Edition> { new() { GoodreadsEditionId = 456 } } },
+                        new List<Author> { new() { GoodreadsAuthorId = "gr:321", Name = "Verified Primary" } })
+                },
                 new StubEditionService(),
                 identityCacheRepository);
 
@@ -282,9 +226,10 @@ namespace Chaptarr.Core.Test.ImportLists
 
             Assert.That(report.EditionGoodreadsId, Is.EqualTo("gr:456"));
             Assert.That(report.BookGoodreadsId, Is.EqualTo("gr:123"));
-            Assert.That(report.AuthorGoodreadsId, Is.EqualTo("gr:789"));
-            Assert.That(report.Book, Is.EqualTo("Cached Book"));
-            Assert.That(report.Author, Is.EqualTo("Cached Author"));
+            Assert.That(report.AuthorGoodreadsId, Is.EqualTo("gr:321"));
+            Assert.That(report.Book, Is.EqualTo("Verified Book"));
+            Assert.That(report.Author, Is.EqualTo("Verified Primary"));
+            Assert.That(((IdentityCacheRepositoryProxy)(object)identityCacheRepository).Upserts.Single().AuthorProviderId, Is.EqualTo("gr:321"));
         }
 
         [Test]
@@ -336,33 +281,8 @@ namespace Chaptarr.Core.Test.ImportLists
                 GoodreadsEditionId = 456
             };
 
-            var editionService = new LocalEditionService { Edition = edition };
-
-            var authorService = DispatchProxy.Create<IAuthorService, AuthorLookupProxy>();
-            ((AuthorLookupProxy)(object)authorService).Author = author;
-
-            var bookRepository = DispatchProxy.Create<IBookRepository, BookRepositoryLookupProxy>();
-            ((BookRepositoryLookupProxy)(object)bookRepository).Book = book;
-
-            var service = new ImportListSyncService(
-                importListFactory: DispatchProxy.Create<IImportListFactory, ThrowingProxy<IImportListFactory>>(),
-                importListExclusionService: DispatchProxy.Create<IImportListExclusionService, ThrowingProxy<IImportListExclusionService>>(),
-                listFetcherAndParser: DispatchProxy.Create<IFetchAndParseImportList, ThrowingProxy<IFetchAndParseImportList>>(),
-                bookInfoProxy: DispatchProxy.Create<IProvideBookInfo, ThrowingProxy<IProvideBookInfo>>(),
-                authorService: authorService,
-                bookService: DispatchProxy.Create<IBookService, ThrowingProxy<IBookService>>(),
-                bookRepository: bookRepository,
-                editionService: editionService,
-                editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
-                editionSelector: new EditionSelector(LogManager.GetCurrentClassLogger()),
-                authorLibraryService: DispatchProxy.Create<IAuthorLibraryService, ThrowingProxy<IAuthorLibraryService>>(),
-                pendingAuthorImportService: DispatchProxy.Create<IPendingAuthorImportService, ThrowingProxy<IPendingAuthorImportService>>(),
-                rootFolderService: DispatchProxy.Create<IRootFolderService, ThrowingProxy<IRootFolderService>>(),
-                rootFolderSettingsResolver: DispatchProxy.Create<IRootFolderSettingsResolver, ThrowingProxy<IRootFolderSettingsResolver>>(),
-                eventAggregator: DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
-                commandQueueManager: DispatchProxy.Create<IManageCommandQueue, ThrowingProxy<IManageCommandQueue>>(),
-                logger: LogManager.GetCurrentClassLogger(),
-                bookIdentityCacheRepository: DispatchProxy.Create<IImportListBookIdentityCacheRepository, IdentityCacheRepositoryProxy>());
+            book.Editions = new List<Edition> { edition };
+            var service = BuildService(DispatchProxy.Create<IProvideBookInfo, ThrowingProxy<IProvideBookInfo>>(), new StubEditionService());
 
             var report = new ImportListItemInfo
             {
@@ -371,11 +291,11 @@ namespace Chaptarr.Core.Test.ImportLists
                 Author = null
             };
 
-            MapBookReport(service, report);
+            MapBookReport(service, report, book, author);
 
             Assert.That(report.BookGoodreadsId, Is.EqualTo("gr:123"));
             Assert.That(report.AuthorGoodreadsId, Is.EqualTo("gr:789"));
-            Assert.That(report.Book, Is.EqualTo("Local Edition"));
+            Assert.That(report.Book, Is.EqualTo("Local Book"));
             Assert.That(report.Author, Is.EqualTo("Local Author"));
         }
 
@@ -392,6 +312,7 @@ namespace Chaptarr.Core.Test.ImportLists
             {
                 Title = "Mapped Book",
                 HardcoverBookId = "hc:123",
+                Editions = new List<Edition> { new() { HardcoverEditionId = "hc:456" } },
                 Author = author
             };
 
@@ -400,7 +321,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 GetEditionInfoFunc = id =>
                 {
                     Assert.That(id, Is.EqualTo("hc-ed:456"));
-                    return Tuple.Create(id, book, new List<Author> { author });
+                    return Tuple.Create(author.HardcoverAuthorId, book, new List<Author> { author });
                 }
             };
 
@@ -421,5 +342,49 @@ namespace Chaptarr.Core.Test.ImportLists
             Assert.That(report.Book, Is.EqualTo("Mapped Book"));
             Assert.That(report.Author, Is.EqualTo("Mapped Author"));
         }
+        [Test]
+        public void primary_mapping_should_retain_local_owner_proof_when_cached_narration_is_incomplete_and_source_pending()
+        {
+            var author = new Author { Id = 42, GoodreadsAuthorId = "gr:789", Name = "Local Primary" };
+            var book = new Book { Id = 100, AuthorId = author.Id, GoodreadsWorkId = "gr:123", Title = "Known Work", Editions = new List<Edition>() };
+            var cache = DispatchProxy.Create<IImportListBookIdentityCacheRepository, IdentityCacheRepositoryProxy>();
+            ((IdentityCacheRepositoryProxy)(object)cache).Cache = new ImportListBookIdentityCache
+            {
+                SourceProviderId = "edition:gr:456", BookProviderId = "gr:123", AuthorProviderId = "gr:789",
+                EditionHasNarration = true, UpdatedAt = DateTime.UtcNow
+            };
+            var calls = 0;
+            var metadata = new StubBookInfoProxy
+            {
+                GetEditionInfoFunc = _ =>
+                {
+                    calls++;
+                    throw new NzbDrone.Core.Exceptions.BookNotFoundException("gr:456");
+                }
+            };
+            var report = new ImportListItemInfo { EditionProviderId = "gr:456", AuthorProviderId = "gr:987", Book = "Known Work" };
+            MapBookReport(BuildService(metadata, new StubEditionService(), cache), report, book, author);
+            Assert.That(calls, Is.EqualTo(1));
+            Assert.That(report.BookProviderId, Is.EqualTo("gr:123"));
+            Assert.That(report.AuthorProviderId, Is.EqualTo(author.GoodreadsAuthorId));
+            Assert.That(report.Author, Is.EqualTo(author.Name));
+            Assert.That(((IdentityCacheRepositoryProxy)(object)cache).Upserts, Is.Empty);
+        }
+
+        [Test]
+        public void primary_mapping_should_prefer_identified_book_primary_over_secondary_tuple_credit()
+        {
+            var primary = new Author { HardcoverAuthorId = "hc:1111", Name = "Selected Primary" };
+            var contributor = new Author { HardcoverAuthorId = "hc:2222", Name = "Secondary Contributor" };
+            var book = new Book { HardcoverBookId = "hc:3333", Author = primary,
+                Editions = new List<Edition> { new() { HardcoverEditionId = "hc:4444" } } };
+            var metadata = new StubBookInfoProxy { GetEditionInfoFunc = id => Tuple.Create(primary.HardcoverAuthorId, book, new List<Author> { contributor }) };
+            var report = new ImportListItemInfo { EditionProviderId = "hc-ed:4444", AuthorProviderId = contributor.HardcoverAuthorId };
+            MapBookReport(BuildService(metadata, new StubEditionService()), report);
+            Assert.That(report.BookProviderId, Is.EqualTo("hc:3333"));
+            Assert.That(report.AuthorProviderId, Is.EqualTo(primary.HardcoverAuthorId));
+            Assert.That(report.Author, Is.EqualTo(primary.Name));
+        }
+
     }
 }

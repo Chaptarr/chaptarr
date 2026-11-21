@@ -102,12 +102,14 @@ class ImportList extends Component {
           {
             enableAutomaticAdd &&
               <Label kind={kinds.SUCCESS}>
-                {translate('AutomaticAdd')}
+                {translate('Enabled')}
               </Label>
           }
 
+          {!enableAutomaticAdd && <Label kind={kinds.DEFAULT}>{translate('Disabled')}</Label>}
+
           {
-            shouldSearch &&
+            enableAutomaticAdd && shouldSearch &&
               <Label kind={kinds.SUCCESS}>
                 {translate('AutomaticSearch')}
               </Label>

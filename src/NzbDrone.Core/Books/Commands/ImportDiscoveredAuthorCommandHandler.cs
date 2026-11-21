@@ -267,9 +267,7 @@ namespace NzbDrone.Core.Books.Commands
                 if (author.AudiobookTags == null && settings.Tags != null)
                 {
                     author.AudiobookTags = new System.Collections.Generic.HashSet<int>(settings.Tags);
-                    author.Tags = (author.AudiobookTags ?? new System.Collections.Generic.HashSet<int>())
-                        .Concat(author.EbookTags ?? new System.Collections.Generic.HashSet<int>())
-                        .ToHashSet();
+                    author.Tags = author.GetCombinedTags();
                     changed = true;
                 }
             }
@@ -308,9 +306,7 @@ namespace NzbDrone.Core.Books.Commands
                 if (author.EbookTags == null && settings.Tags != null)
                 {
                     author.EbookTags = new System.Collections.Generic.HashSet<int>(settings.Tags);
-                    author.Tags = (author.AudiobookTags ?? new System.Collections.Generic.HashSet<int>())
-                        .Concat(author.EbookTags ?? new System.Collections.Generic.HashSet<int>())
-                        .ToHashSet();
+                    author.Tags = author.GetCombinedTags();
                     changed = true;
                 }
             }

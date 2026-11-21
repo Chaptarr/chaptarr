@@ -13,7 +13,7 @@ import {
   setInteractiveImportMode,
   setInteractiveImportSort,
   updateInteractiveImportItem } from 'Store/Actions/interactiveImportActions';
-import { fetchMediaManagementSettings, saveMediaManagementSettings, setMediaManagementSettingsValue } from 'Store/Actions/settingsActions';
+import { fetchMediaManagementSettings, saveMediaManagementSettingsFields } from 'Store/Actions/settingsActions';
 import createClientSideCollectionSelector from 'Store/Selectors/createClientSideCollectionSelector';
 import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
 import InteractiveImportModalContent from './InteractiveImportModalContent';
@@ -44,8 +44,7 @@ const mapDispatchToProps = {
   saveInteractiveImportItem,
   executeCommand,
   fetchMediaManagementSettings,
-  setMediaManagementSettingsValue,
-  saveMediaManagementSettings
+  saveMediaManagementSettings: saveMediaManagementSettingsFields
 };
 
 class InteractiveImportModalContentConnector extends Component {
@@ -58,6 +57,7 @@ class InteractiveImportModalContentConnector extends Component {
 
     this.state = {
       interactiveImportErrorMessage: null,
+      pathFallbackSaveError: null,
       filterExistingFiles: props.filterExistingFiles,
       replaceExistingFiles: props.replaceExistingFiles
     };
@@ -173,14 +173,10 @@ class InteractiveImportModalContentConnector extends Component {
   onPathFallbackChange = ({ value }) => {
     const { mediaManagementSettings } = this.props;
 
-    if (mediaManagementSettings.settings?.bookMatchingStrictness?.value === 'strict' && value) {
+    if (!mediaManagementSettings.isPopulated || mediaManagementSettings.error || mediaManagementSettings.isFetching || mediaManagementSettings.isSaving ||
+        (mediaManagementSettings.settings?.bookMatchingStrictness?.value === 'strict' && value)) {
       return;
     }
-
-    this.props.setMediaManagementSettingsValue({
-      name: 'usePathAsTagsFallback',
-      value
-    });
 
     const promise = this.props.saveMediaManagementSettings({
       usePathAsTagsFallback: value
@@ -188,12 +184,13 @@ class InteractiveImportModalContentConnector extends Component {
 
     if (promise && promise.done) {
       promise.done(() => {
+        this.setState({ pathFallbackSaveError: null });
         this.refetchItems();
-      });
+      }).fail((pathFallbackSaveError) => this.setState({ pathFallbackSaveError }));
     }
   };
 
-  onImportSelectedPress = (selected, importMode) => {
+  onImportSelectedPress = (selected, importMode, confirmedReplacementFiles) => {
     const files = [];
     const previewFiles = this.props.items.map((item) => {
       const {
@@ -203,7 +200,7 @@ class InteractiveImportModalContentConnector extends Component {
       return {
         path: item.path,
         bookId: book && book.id ? book.id : 0,
-        downloadId: this.props.downloadId
+        downloadId: item.downloadId || this.props.downloadId
       };
     });
     let validationError = null;
@@ -228,6 +225,7 @@ class InteractiveImportModalContentConnector extends Component {
           book,
           editionId,
           quality,
+          releaseGroup,
           indexerFlags,
           disableReleaseSwitching
         } = item;
@@ -273,8 +271,10 @@ class InteractiveImportModalContentConnector extends Component {
           foreignEditionTitle: useMetadataSuggestion ? suggestedEditionTitle : undefined,
           selectionSource: useMetadataSuggestion ? 'userMetadataSuggestion' : 'automatic',
           quality,
+          releaseGroup,
           indexerFlags,
-          downloadId: this.props.downloadId,
+          ...(item.audioProductionOverrideChanged ? { audioProductionOverride: item.audioProductionOverride } : {}),
+          downloadId: item.downloadId || this.props.downloadId,
           disableReleaseSwitching
         });
       }
@@ -297,6 +297,7 @@ class InteractiveImportModalContentConnector extends Component {
       previewFiles,
       importMode,
       replaceExistingFiles: this.state.replaceExistingFiles,
+      confirmedReplacementFiles,
       commandFinished: this.props.onImportComplete
     });
 
@@ -316,6 +317,7 @@ class InteractiveImportModalContentConnector extends Component {
     return (
       <InteractiveImportModalContent
         {...this.props}
+        pathFallbackSaveError={this.state.pathFallbackSaveError}
         interactiveImportErrorMessage={interactiveImportErrorMessage}
         filterExistingFiles={filterExistingFiles}
         replaceExistingFiles={replaceExistingFiles}
@@ -324,6 +326,7 @@ class InteractiveImportModalContentConnector extends Component {
         onReplaceExistingFilesChange={this.onReplaceExistingFilesChange}
         onImportModeChange={this.onImportModeChange}
         onPathFallbackChange={this.onPathFallbackChange}
+        onRetrySettings={() => this.props.fetchMediaManagementSettings()}
         onImportSelectedPress={this.onImportSelectedPress}
       />
     );
@@ -347,7 +350,6 @@ InteractiveImportModalContentConnector.propTypes = {
   updateInteractiveImportItem: PropTypes.func.isRequired,
   mediaManagementSettings: PropTypes.object.isRequired,
   fetchMediaManagementSettings: PropTypes.func.isRequired,
-  setMediaManagementSettingsValue: PropTypes.func.isRequired,
   saveMediaManagementSettings: PropTypes.func.isRequired,
   executeCommand: PropTypes.func.isRequired,
   onImportComplete: PropTypes.func,

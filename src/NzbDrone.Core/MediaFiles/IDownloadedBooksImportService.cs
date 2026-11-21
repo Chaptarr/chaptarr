@@ -8,6 +8,7 @@ namespace NzbDrone.Core.MediaFiles
 {
     public interface IDownloadedBooksImportService
     {
+        List<ImportResult> ProcessIncludedMedia(DownloadClientItem downloadClientItem, RemoteBook remoteBook, List<NzbDrone.Core.History.EntityHistory> history);
         List<ImportResult> ProcessPath(string path, ImportMode importMode = ImportMode.Auto, Author author = null, DownloadClientItem downloadClientItem = null, RemoteBook remoteBook = null, bool requireDefaultRootFolderForMissingAuthors = false);
         List<ImportResult> ProcessFolder(string path, ImportMode importMode = ImportMode.Auto, Author author = null, DownloadClientItem downloadClientItem = null, RemoteBook remoteBook = null, bool requireDefaultRootFolderForMissingAuthors = false);
         List<ImportResult> ProcessFile(string path, ImportMode importMode = ImportMode.Auto, Author author = null, DownloadClientItem downloadClientItem = null, RemoteBook remoteBook = null, bool requireDefaultRootFolderForMissingAuthors = false);

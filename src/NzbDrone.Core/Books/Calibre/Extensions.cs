@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -48,6 +49,27 @@ namespace NzbDrone.Core.Books.Calibre
             NameMap = InitializeDictionary(assembly, "name_map.json");
 
             KnownLanguages = ByThree.Keys.ToHashSet();
+        }
+
+        internal static IReadOnlyCollection<string> GetLanguageAliases(string canonicalLanguage)
+        {
+            var canonical = canonicalLanguage.CanonicalizeLanguage();
+            if (string.IsNullOrWhiteSpace(canonical))
+            {
+                return Array.Empty<string>();
+            }
+
+            return TwoToThree
+                .Where(pair => string.Equals(pair.Value, canonical, StringComparison.OrdinalIgnoreCase))
+                .Select(pair => pair.Key)
+                .Concat(ByThree.Keys.Where(alias => string.Equals(alias, canonical, StringComparison.OrdinalIgnoreCase)))
+                .Concat(BtoTmap.Where(pair => string.Equals(pair.Value, canonical, StringComparison.OrdinalIgnoreCase)).Select(pair => pair.Key))
+                .Concat(NameMap.Where(pair => string.Equals(pair.Value, canonical, StringComparison.OrdinalIgnoreCase)).Select(pair => pair.Key))
+                .Append(canonical)
+                .Where(alias => string.Equals(alias.CanonicalizeLanguage(), canonical, StringComparison.OrdinalIgnoreCase))
+                .Select(alias => alias.ToLowerInvariant())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
         }
 
         private static Dictionary<string, string> InitializeDictionary(Assembly assembly, string resource)

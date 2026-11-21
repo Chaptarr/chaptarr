@@ -1,15 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
-using NzbDrone.Core.Books.Services;
-using NzbDrone.Core.Utilities;
+using NzbDrone.Core.Parser;
 
 namespace NzbDrone.Core.Authors
 {
@@ -24,9 +21,8 @@ namespace NzbDrone.Core.Authors
         string FindAuthorFolderByWalkingUp(string filePath, string rootFolderPath, Author author);
 
         /// <summary>
-        /// Validates that a folder name matches an author name using fuzzy matching.
-        /// Returns true if the folder name is close enough to the author name (>= 0.90 confidence).
-        /// This prevents assigning folders like "Frank Herbert" to author "Brian Herbert".
+        /// Validates a complete author name with the shared ordered name rule.
+        /// A longer surname or conflicting supplied name part must not assign another author's folder.
         /// </summary>
         /// <param name="folderPath">The folder path to validate</param>
         /// <param name="authorName">The author name to match against</param>
@@ -50,10 +46,6 @@ namespace NzbDrone.Core.Authors
 
     public class AuthorFolderMatchingService : IAuthorFolderMatchingService
     {
-        // Automatic match threshold (loosened per staging flow)
-        private const double AUTO_MATCH_THRESHOLD = 0.90;
-        private const double DISPLAY_MATCH_THRESHOLD = 0.90;
-
         private readonly IDiskProvider _diskProvider;
         private readonly Logger _logger;
 
@@ -76,16 +68,14 @@ namespace NzbDrone.Core.Authors
             var folders = _diskProvider.GetDirectories(rootFolderPath).ToList();
             _logger.Debug($"Scanning {folders.Count} folders in {rootFolderPath} for author '{author.Name}'");
 
-            // Generate all possible name variations for the author
-            var nameVariations = GenerateNameVariations(author);
-            _logger.Trace($"Generated {nameVariations.Count} name variations for '{author.Name}': {string.Join(", ", nameVariations)}");
+            var knownNames = ReleaseIdentityEvidence.GetKnownAuthorNames(author).ToList();
 
             // Include the root folder itself as a candidate (closest to root)
             try
             {
                 var rootName = new DirectoryInfo(rootFolderPath).Name;
-                var rootMatch = CalculateBestMatch(rootName, nameVariations, author);
-                if (rootMatch != null && rootMatch.ConfidenceScore >= DISPLAY_MATCH_THRESHOLD)
+                var rootMatch = CalculateBestMatch(rootName, knownNames, author);
+                if (rootMatch != null)
                 {
                     rootMatch.Path = rootFolderPath;
                     rootMatch.FolderName = rootName;
@@ -100,25 +90,13 @@ namespace NzbDrone.Core.Authors
             foreach (var folder in folders)
             {
                 var folderName = new DirectoryInfo(folder).Name;
-                var match = CalculateBestMatch(folderName, nameVariations, author);
+                var match = CalculateBestMatch(folderName, knownNames, author);
 
                 if (match != null)
                 {
-                    if (match.ConfidenceScore >= AUTO_MATCH_THRESHOLD)
-                    {
-                        _logger.Debug($"High confidence match for '{author.Name}': '{folderName}' (score: {match.ConfidenceScore:F3})");
-                    }
-                    else if (match.ConfidenceScore >= DISPLAY_MATCH_THRESHOLD)
-                    {
-                        _logger.Trace($"Potential match for '{author.Name}': '{folderName}' (score: {match.ConfidenceScore:F3})");
-                    }
-
-                    if (match.ConfidenceScore >= DISPLAY_MATCH_THRESHOLD)
-                    {
-                        match.Path = folder;
-                        match.FolderName = folderName;
-                        matches.Add(match);
-                    }
+                    match.Path = folder;
+                    match.FolderName = folderName;
+                    matches.Add(match);
                 }
             }
 
@@ -163,15 +141,15 @@ namespace NzbDrone.Core.Authors
                 }
 
                 // Check each segment from root toward file, return first match
-                var nameVariations = GenerateNameVariations(author);
+                var knownNames = ReleaseIdentityEvidence.GetKnownAuthorNames(author).ToList();
                 var currentPath = rootFolderPath;
 
                 foreach (var segment in segments)
                 {
                     currentPath = Path.Combine(currentPath, segment);
 
-                    var match = CalculateBestMatch(segment, nameVariations, author);
-                    if (match != null && match.ConfidenceScore >= AUTO_MATCH_THRESHOLD)
+                    var match = CalculateBestMatch(segment, knownNames, author);
+                    if (match != null)
                     {
                         _logger.Debug("Found author folder: '{0}' matches '{1}' (score: {2:F3})",
                             segment, author.Name, match.ConfidenceScore);
@@ -187,151 +165,23 @@ namespace NzbDrone.Core.Authors
             return null;
         }
 
-        private List<string> GenerateNameVariations(Author author)
+        private AuthorFolderMatch CalculateBestMatch(string folderName, List<(List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes)> knownNames, Author author)
         {
-            var variations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            // Primary name (e.g., "Stephen King")
-            if (!string.IsNullOrWhiteSpace(author.Name))
+            // Series decoration has an explicit separator; a surname prefix is never identity evidence.
+            var suffix = folderName.IndexOf(" -", StringComparison.Ordinal);
+            var candidate = AuthorNameMatcher.PrepareName(suffix < 0 ? folderName : folderName.Substring(0, suffix));
+            if (!knownNames.Any(name => AuthorNameMatcher.AuthorNamesMatch(name, candidate)))
             {
-                variations.Add(author.Name);
-
-                // Generate "Last, First" from "First Last" (e.g., "Stephen King" -> "King, Stephen")
-                var nameParts = author.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                if (nameParts.Length >= 2)
-                {
-                    var lastName = nameParts[^1]; // Last word
-                    var firstName = string.Join(" ", nameParts[..^1]); // Everything before last word
-                    variations.Add($"{lastName}, {firstName}");
-                }
+                return null;
             }
 
-            // Sort name (LastName, FirstName)
-            if (!string.IsNullOrWhiteSpace(author.SortName))
+            var exact = string.Equals(folderName, author.Name, StringComparison.OrdinalIgnoreCase);
+            return new AuthorFolderMatch
             {
-                variations.Add(author.SortName);
-
-                // Also try reversing "LastName, FirstName" to "FirstName LastName"
-                var sortParts = author.SortName.Split(',');
-                if (sortParts.Length == 2)
-                {
-                    var reversed = $"{sortParts[1].Trim()} {sortParts[0].Trim()}";
-                    variations.Add(reversed);
-                }
-            }
-
-            // Clean name (from database)
-            if (!string.IsNullOrWhiteSpace(author.CleanName))
-            {
-                variations.Add(author.CleanName);
-            }
-
-            // Handle initials with and without periods
-            var additionalVariations = new List<string>();
-            foreach (var name in variations.ToList())
-            {
-                // "J.R.R. Tolkien" -> "JRR Tolkien" (remove ALL periods from initials)
-                var noPeriods = Regex.Replace(name, @"\.", "").Replace("  ", " ").Trim();
-                additionalVariations.Add(noPeriods);
-
-                // "J.R.R. Tolkien" -> "J. R. R. Tolkien" (ensure space after each period)
-                additionalVariations.Add(Regex.Replace(name, @"\.(?=\S)", ". "));
-
-                // "JRR Tolkien" -> "J.R.R. Tolkien" (add periods to consecutive capitals)
-                additionalVariations.Add(AddPeriodsToInitials(name));
-            }
-
-            foreach (var variation in additionalVariations)
-            {
-                variations.Add(variation);
-            }
-
-            return variations.ToList();
-        }
-
-        private string AddPeriodsToInitials(string name)
-        {
-            // Add periods to uppercase letters that look like initials
-            return Regex.Replace(name, @"\b([A-Z])(?=[A-Z]|\s)", "$1.");
-        }
-
-        private AuthorFolderMatch CalculateBestMatch(string folderName, List<string> nameVariations, Author author)
-        {
-            AuthorFolderMatch bestMatch = null;
-
-            foreach (var variation in nameVariations)
-            {
-                // Exact match (case insensitive)
-                if (string.Equals(folderName, variation, StringComparison.OrdinalIgnoreCase))
-                {
-                    return new AuthorFolderMatch
-                    {
-                        ConfidenceScore = 1.0,
-                        MatchReason = "Exact name match",
-                        IsExactMatch = true
-                    };
-                }
-
-                // Exact match with series suffix
-                // "Terry Pratchett - Discworld" matches "Terry Pratchett"
-                if (folderName.StartsWith(variation + " -", StringComparison.OrdinalIgnoreCase))
-                {
-                    return new AuthorFolderMatch
-                    {
-                        ConfidenceScore = 0.99,
-                        MatchReason = "Name match with series suffix",
-                        IsExactMatch = false
-                    };
-                }
-
-                // Supernormalization: remove ALL spaces, punctuation, case
-                var normalizedFolder = Supernormalize(folderName);
-                var normalizedVariation = Supernormalize(variation);
-
-                if (string.IsNullOrEmpty(normalizedFolder) || string.IsNullOrEmpty(normalizedVariation))
-                {
-                    continue;
-                }
-
-                // Check for exact supernormalized match
-                if (string.Equals(normalizedFolder, normalizedVariation, StringComparison.Ordinal))
-                {
-                    var match = new AuthorFolderMatch
-                    {
-                        ConfidenceScore = 0.98,
-                        MatchReason = $"Supernormalized match to '{variation}'",
-                        IsExactMatch = false
-                    };
-
-                    if (match.ConfidenceScore > (bestMatch?.ConfidenceScore ?? 0))
-                    {
-                        bestMatch = match;
-                    }
-                }
-
-                // Check if folder contains the author name (but not vice versa to prevent substring matches)
-                else if (normalizedFolder.StartsWith(normalizedVariation, StringComparison.Ordinal))
-                {
-                    var match = new AuthorFolderMatch
-                    {
-                        ConfidenceScore = 0.95,
-                        MatchReason = $"Folder starts with '{variation}'",
-                        IsExactMatch = false
-                    };
-
-                    if (match.ConfidenceScore > (bestMatch?.ConfidenceScore ?? 0))
-                    {
-                        bestMatch = match;
-                    }
-                }
-            }
-
-            return bestMatch;
-        }
-
-        private string Supernormalize(string text)
-        {
-            return UnicodeComparisonNormalizer.NormalizeKey(text);
+                ConfidenceScore = exact ? 1.0 : suffix >= 0 ? 0.99 : 0.98,
+                MatchReason = exact ? "Exact name match" : suffix >= 0 ? "Name match with series suffix" : "Shared author name match",
+                IsExactMatch = exact
+            };
         }
 
         public string NormalizeAuthorNameForFolder(string authorName)
@@ -361,49 +211,6 @@ namespace NzbDrone.Core.Authors
             return normalized;
         }
 
-        private int LevenshteinDistance(string s1, string s2)
-        {
-            if (string.IsNullOrEmpty(s1))
-            {
-                return s2?.Length ?? 0;
-            }
-
-            if (string.IsNullOrEmpty(s2))
-            {
-                return s1.Length;
-            }
-
-            var bounds = new { Height = s1.Length + 1, Width = s2.Length + 1 };
-
-            var matrix = new int[bounds.Height, bounds.Width];
-
-            for (var height = 0; height < bounds.Height; height++)
-            {
-                matrix[height, 0] = height;
-            }
-
-            for (var width = 0; width < bounds.Width; width++)
-            {
-                matrix[0, width] = width;
-            }
-
-            for (var height = 1; height < bounds.Height; height++)
-            {
-                for (var width = 1; width < bounds.Width; width++)
-                {
-                    var cost = (s1[height - 1] == s2[width - 1]) ? 0 : 1;
-
-                    matrix[height, width] = Math.Min(
-                        Math.Min(
-                            matrix[height - 1, width] + 1,      // deletion
-                            matrix[height, width - 1] + 1),     // insertion
-                        matrix[height - 1, width - 1] + cost);  // substitution
-                }
-            }
-
-            return matrix[bounds.Height - 1, bounds.Width - 1];
-        }
-
         private string NormalizeDirectory(string path)
         {
             if (string.IsNullOrWhiteSpace(path)) return path;
@@ -416,9 +223,8 @@ namespace NzbDrone.Core.Authors
         }
 
         /// <summary>
-        /// Validates that a folder name matches an author name using fuzzy matching.
-        /// Returns true if the folder name is close enough to the author name (>= 0.90 confidence).
-        /// This is a critical smoke test that prevents assigning "Frank Herbert" folder to "Brian Herbert" author.
+        /// Validates a complete author name with the shared ordered name rule.
+        /// A longer surname or conflicting supplied name part must not assign another author's folder.
         /// </summary>
         public bool ValidateFolderMatchesAuthor(string folderPath, string authorName)
         {
@@ -457,47 +263,20 @@ namespace NzbDrone.Core.Authors
 
                 // Create a temporary Author object to use existing matching logic
                 var tempAuthor = new Author { Name = authorName };
-                var nameVariations = GenerateNameVariations(tempAuthor);
+                var knownNames = ReleaseIdentityEvidence.GetKnownAuthorNames(tempAuthor).ToList();
 
                 // Calculate match using existing logic
-                var match = CalculateBestMatch(folderName, nameVariations, tempAuthor);
+                var match = CalculateBestMatch(folderName, knownNames, tempAuthor);
 
                 if (match == null)
                 {
-                    // No match at all - check supernormalized as a sanity check
-                    var normFolder = Supernormalize(folderName);
-                    var normAuthor = Supernormalize(authorName);
-
-                    if (string.IsNullOrEmpty(normFolder) || string.IsNullOrEmpty(normAuthor))
-                    {
-                        return (false, 0.0, $"Folder '{folderName}' does not match author '{authorName}'");
-                    }
-
-                    // Calculate basic similarity for logging
-                    var distance = LevenshteinDistance(normFolder, normAuthor);
-                    var maxLen = Math.Max(normFolder.Length, normAuthor.Length);
-                    var similarity = maxLen > 0 ? 1.0 - ((double)distance / maxLen) : 0.0;
-
-                    _logger.Debug("Folder-author smoke test FAILED: folder='{0}' (normalized='{1}'), author='{2}' (normalized='{3}'), similarity={4:F3}",
-                        folderName, normFolder, authorName, normAuthor, similarity);
-
-                    return (false, similarity, $"Folder '{folderName}' does not match author '{authorName}' (similarity: {similarity:P0})");
+                    _logger.Debug("Folder-author validation FAILED: folder='{0}', author='{1}'", folderName, authorName);
+                    return (false, 0.0, $"Folder '{folderName}' does not match author '{authorName}'");
                 }
 
-                var isValid = match.ConfidenceScore >= AUTO_MATCH_THRESHOLD;
-
-                if (isValid)
-                {
-                    _logger.Debug("Folder-author smoke test PASSED: folder='{0}' matches author='{1}' (score: {2:F3}, reason: {3})",
-                        folderName, authorName, match.ConfidenceScore, match.MatchReason);
-                }
-                else
-                {
-                    _logger.Debug("Folder-author smoke test FAILED: folder='{0}' vs author='{1}' (score: {2:F3} < threshold {3:F3})",
-                        folderName, authorName, match.ConfidenceScore, AUTO_MATCH_THRESHOLD);
-                }
-
-                return (isValid, match.ConfidenceScore, match.MatchReason ?? $"Score: {match.ConfidenceScore:F3}");
+                _logger.Debug("Folder-author validation PASSED: folder='{0}' matches author='{1}' (score: {2:F3}, reason: {3})",
+                    folderName, authorName, match.ConfidenceScore, match.MatchReason);
+                return (true, match.ConfidenceScore, match.MatchReason);
             }
             catch (Exception ex)
             {

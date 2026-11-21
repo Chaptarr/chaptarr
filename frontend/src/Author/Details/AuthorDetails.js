@@ -23,7 +23,9 @@ import InteractiveSearchFilterMenuConnector from 'InteractiveSearch/InteractiveS
 import InteractiveSearchTable from 'InteractiveSearch/InteractiveSearchTable';
 import OrganizePreviewModalConnector from 'Organize/OrganizePreviewModalConnector';
 import RetagPreviewModalConnector from 'Retag/RetagPreviewModalConnector';
+import AddNewAuthorModal from 'Search/Author/AddNewAuthorModal';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
+import { getAuthorSearchBookCount } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import translate from 'Utilities/String/translate';
 import getSelectedIds from 'Utilities/Table/getSelectedIds';
 import selectAll from 'Utilities/Table/selectAll';
@@ -33,7 +35,6 @@ import AuthorDetailsHeaderConnector from './AuthorDetailsHeaderConnector';
 import AuthorDetailsSeasonConnector from './AuthorDetailsSeasonConnector';
 import AuthorDetailsSeriesConnector from './AuthorDetailsSeriesConnector';
 import AuthorDetailsControls from './AuthorDetailsControls';
-import SelectAuthorRootFolderModal from './SelectAuthorRootFolderModal';
 import styles from './AuthorDetails.css';
 
 function getExpandedState(newState) {
@@ -69,8 +70,14 @@ class AuthorDetails extends Component {
       allUnselected: false,
       lastToggled: null,
       selectedState: {},
-      selectedTabIndex: 0
+      selectedTabIndex: new URLSearchParams(props.location?.search).get('tab') === 'search' ? 3 : 0
     };
+  }
+
+  componentDidUpdate(previous) {
+    if (previous.location !== this.props.location && new URLSearchParams(this.props.location?.search).get('tab') === 'search') {
+      this.setState({ selectedTabIndex: 3 });
+    }
   }
 
   //
@@ -153,8 +160,11 @@ class AuthorDetails extends Component {
     this.setState({ isEditAuthorModalOpen: false });
   };
 
-  onSelectRootFolderModalClose = () => {
+  onSelectRootFolderModalClose = (wasAdded) => {
     this.setState({ isSelectRootFolderModalOpen: false });
+    if (wasAdded === true) {
+      this.props.onAuthorAdded();
+    }
   };
 
   onDeleteAuthorPress = () => {
@@ -595,8 +605,10 @@ class AuthorDetails extends Component {
                     />
                   </TabPanel>
 
-                  <TabPanel>
+                  <TabPanel forceRender={true} hidden={selectedTabIndex !== 3}>
                     <InteractiveSearchTable
+                      key={`${id}:${selectedMediaType}`}
+                      searchCount={selectedMediaType ? getAuthorSearchBookCount(this.props, selectedMediaType) : 0}
                       type="author"
                       authorId={id}
                       selectedMediaType={selectedMediaType}
@@ -644,18 +656,23 @@ class AuthorDetails extends Component {
 	            onDeleteAuthorPress={this.onDeleteAuthorPress}
 	          />
 
-	          <SelectAuthorRootFolderModal
-	            isOpen={isSelectRootFolderModalOpen}
-	            authorId={id}
-	            mediaType={selectRootFolderMediaType || selectedMediaType || 'audiobook'}
-	            onModalClose={this.onSelectRootFolderModalClose}
-	          />
+          <AddNewAuthorModal
+            isOpen={isSelectRootFolderModalOpen}
+            authorId={id}
+            foreignAuthorId={this.props.foreignAuthorId}
+            authorName={authorName}
+            images={this.props.images}
+            folder={authorName}
+            initialMediaType={selectRootFolderMediaType || selectedMediaType || 'audiobook'}
+            onModalClose={this.onSelectRootFolderModalClose}
+          />
 
-	          <DeleteAuthorModal
-	            isOpen={isDeleteAuthorModalOpen}
-	            authorId={id}
-	            onModalClose={this.onDeleteAuthorModalClose}
-	          />
+          <DeleteAuthorModal
+            selectedMediaType={selectedMediaType}
+            isOpen={isDeleteAuthorModalOpen}
+            authorId={id}
+            onModalClose={this.onDeleteAuthorModalClose}
+          />
 
           <InteractiveImportModal
             isOpen={isInteractiveImportModalOpen}
@@ -695,7 +712,9 @@ class AuthorDetails extends Component {
 }
 
 AuthorDetails.propTypes = {
+  location: PropTypes.object,
   id: PropTypes.number.isRequired,
+  foreignAuthorId: PropTypes.string.isRequired,
   authorName: PropTypes.string.isRequired,
   ratings: PropTypes.object.isRequired,
   path: PropTypes.string.isRequired,
@@ -732,6 +751,7 @@ AuthorDetails.propTypes = {
   filterValue: PropTypes.string,
   onRefreshPress: PropTypes.func.isRequired,
   onMediaTypeChange: PropTypes.func.isRequired,
+  onAuthorAdded: PropTypes.func.isRequired,
   onSearchPress: PropTypes.func.isRequired,
   isSaving: PropTypes.bool.isRequired,
   saveError: PropTypes.object,

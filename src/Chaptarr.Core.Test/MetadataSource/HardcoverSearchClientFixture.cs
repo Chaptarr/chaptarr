@@ -235,6 +235,22 @@ namespace Chaptarr.Core.Test.MetadataSource
             Assert.That(httpClient.Requests, Has.Count.EqualTo(1));
         }
 
+        [TestCase(HttpStatusCode.OK)]
+        [TestCase(HttpStatusCode.Forbidden)]
+        public void should_surface_structured_errors_without_returning_the_response_body(HttpStatusCode status)
+        {
+            var httpClient = new RecordingHttpClient(request => JsonResponse(request,
+                @"{""errors"":[{""message"":""top_level_search_limit_exceeded"",""extensions"":{""token"":""synthetic-secret""}}],""data"":{""privateField"":""synthetic-body-value""}}",
+                status));
+
+            var ex = Assert.Throws<NzbDroneClientException>(() => CreateClient(httpClient).Search("test author"));
+
+            Assert.That(ex.Message, Does.Contain("top_level_search_limit_exceeded"));
+            Assert.That(ex.Message, Does.Not.Contain("synthetic-secret"));
+            Assert.That(ex.Message, Does.Not.Contain("synthetic-body-value"));
+            Assert.That(httpClient.Requests, Has.Count.EqualTo(1));
+        }
+
         [Test]
         public void should_merge_live_shaped_author_book_and_series_results()
         {

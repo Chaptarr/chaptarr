@@ -5,12 +5,14 @@ import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import * as commandNames from 'Commands/commandNames';
+import ConfirmModal from 'Components/Modal/ConfirmModal';
 import { executeCommand } from 'Store/Actions/commandActions';
 import createAuthorMetadataProfileSelector from 'Store/Selectors/createAuthorMetadataProfileSelector';
 import createAuthorSelector from 'Store/Selectors/createAuthorSelector';
 import createExecutingCommandsSelector from 'Store/Selectors/createExecutingCommandsSelector';
 import { getAuthorMediaTypeMonitoringStatus, isAuthorMonitoredForSelection } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
-import { getAuthorStatisticsForMediaType } from 'Utilities/Author/getAuthorStatisticsForMediaType';
+import { getAuthorSearchBookCount, getAuthorStatisticsForMediaType, shouldConfirmSearch } from 'Utilities/Author/getAuthorStatisticsForMediaType';
+import translate from 'Utilities/String/translate';
 
 function selectShowSearchAction() {
   return createSelector(
@@ -118,6 +120,7 @@ const mapDispatchToProps = {
 };
 
 class AuthorIndexItemConnector extends Component {
+  state = { pendingSearch: null };
 
   //
   // Listeners
@@ -130,10 +133,25 @@ class AuthorIndexItemConnector extends Component {
   };
 
   onSearchPress = () => {
+    const count = getAuthorSearchBookCount(this.props);
+    if (shouldConfirmSearch(count)) {
+      this.setState({ pendingSearch: { authorId: this.props.id, count } });
+      return;
+    }
+
+    this.onSearchConfirmed();
+  };
+
+  onSearchConfirmed = () => {
     this.props.dispatchExecuteCommand({
       name: commandNames.AUTHOR_SEARCH,
       authorId: this.props.id
     });
+    this.onSearchCancelled();
+  };
+
+  onSearchCancelled = () => {
+    this.setState({ pendingSearch: null });
   };
 
   //
@@ -151,12 +169,22 @@ class AuthorIndexItemConnector extends Component {
     }
 
     return (
-      <ItemComponent
-        {...otherProps}
-        id={id}
-        onRefreshAuthorPress={this.onRefreshAuthorPress}
-        onSearchPress={this.onSearchPress}
-      />
+      <>
+        <ItemComponent
+          {...otherProps}
+          id={id}
+          onRefreshAuthorPress={this.onRefreshAuthorPress}
+          onSearchPress={this.onSearchPress}
+        />
+        <ConfirmModal
+          isOpen={this.state.pendingSearch?.authorId === this.props.id}
+          title={translate('SearchMonitored')}
+          message={translate('SearchAuthorBooksConfirm', { count: this.state.pendingSearch?.count ?? 0 })}
+          confirmLabel={translate('Search')}
+          onConfirm={this.onSearchConfirmed}
+          onCancel={this.onSearchCancelled}
+        />
+      </>
     );
   }
 }

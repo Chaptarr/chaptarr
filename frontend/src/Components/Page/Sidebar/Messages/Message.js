@@ -2,6 +2,7 @@ import classNames from 'classnames';
 import PropTypes from 'prop-types';
 import React, { useState } from 'react';
 import Icon from 'Components/Icon';
+import Link from 'Components/Link/Link';
 import { icons } from 'Helpers/Props';
 import ImportProgressMessage from './ImportProgressMessage';
 import styles from './Message.css';
@@ -47,7 +48,6 @@ function getDisplayIconName(name, isWorking, isPaused) {
 
 function Message(props) {
   const {
-    id,
     name,
     message,
     type,
@@ -62,7 +62,7 @@ function Message(props) {
     clickable,
     commandStatus
   } = props;
-  
+
   // Use command status from props to determine if paused
   const isPaused = commandStatus === 'paused';
   const isWorking = commandStatus === 'queued' || commandStatus === 'started';
@@ -84,7 +84,7 @@ function Message(props) {
       />
     );
   }
-  
+
   // Use custom component for scan progress messages (now handles entire import pipeline)
   if (type === 'scanProgress') {
     const handleClick = () => {
@@ -92,13 +92,13 @@ function Message(props) {
         onClick(!isPaused);
       }
     };
-    
+
     // Determine the current stage based on message content
     let stageIcon = getIconName(name);
-    let stageText = message;
+    const stageText = message;
     let pausedText = 'Import paused';
-    let actionText = isPaused ? 'Resume' : 'Pause';
-    
+    const actionText = isPaused ? 'Resume' : 'Pause';
+
     if (message.includes('Scanning folder') || message.includes('library scan')) {
       stageIcon = icons.FOLDER_OPEN;
       pausedText = 'Folder scan paused';
@@ -112,9 +112,9 @@ function Message(props) {
       stageIcon = icons.DOWNLOAD;
       pausedText = 'File import paused';
     }
-    
+
     return (
-      <div 
+      <div
         className={classNames(
           styles.message,
           styles[type],
@@ -154,33 +154,35 @@ function Message(props) {
     );
   }
 
+  const Container = props.link ? Link : 'div';
   return (
-    <div 
+    <Container
+      {...(props.link ? { to: props.link, onPress: clickable ? onClick : undefined } : { onClick: clickable ? onClick : undefined })}
       className={classNames(
         styles.message,
         styles[type],
         clickable && styles.clickable
       )}
-      onClick={clickable ? onClick : undefined}
-      role={clickable ? 'button' : undefined}
+      role={clickable && !props.link ? 'button' : undefined}
       tabIndex={clickable ? 0 : undefined}
     >
-        <div className={styles.iconContainer}>
-          <Icon
-            name={isPaused ? icons.PAUSED : getDisplayIconName(name, isWorking, isPaused)}
-            isSpinning={isWorking && !isPaused}
-            title={name}
-          />
-        </div>
+      <div className={styles.iconContainer}>
+        <Icon
+          name={isPaused ? icons.PAUSED : getDisplayIconName(name, isWorking, isPaused)}
+          isSpinning={isWorking && !isPaused}
+          title={name}
+        />
+      </div>
 
       <div className={styles.text}>
         {message}
       </div>
-    </div>
+    </Container>
   );
 }
 
 Message.propTypes = {
+  link: PropTypes.string,
   id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   name: PropTypes.string.isRequired,
   message: PropTypes.string.isRequired,

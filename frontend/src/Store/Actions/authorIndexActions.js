@@ -441,6 +441,8 @@ export const actionHandlers = handleThunks({
         deleteError: xhr
       }));
     });
+
+    return promise;
   }
 });
 

@@ -48,6 +48,21 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void initial_options_suppress_only_the_format_that_is_being_hydrated(
+            [Values(false, true)] bool initializesAddedSide, [Values(false, true)] bool changesProfile)
+        {
+            var queue = new RecordingCommandQueue();
+            var subject = new AuthorEditedService(queue, LogManager.GetCurrentClassLogger());
+            subject.Handle(new AuthorEditedEvent(
+                new Author { Id = 1, MetadataProfileId = changesProfile ? 2 : 1, AudiobookRootFolderPath = "/library/audio", EbookRootFolderPath = "/library/ebooks",
+                    AddOptions = initializesAddedSide
+                        ? new AddAuthorOptions { EbookMonitor = MonitorTypes.None }
+                        : new AddAuthorOptions { AudiobookMonitor = MonitorTypes.All } },
+                new Author { Id = 1, MetadataProfileId = 1, AudiobookRootFolderPath = "/library/audio" }));
+            Assert.That(queue.PushedCommands, Has.Count.EqualTo(initializesAddedSide && !changesProfile ? 0 : 1));
+        }
+
+        [Test]
         public void should_not_force_refresh_when_author_already_had_both_roots()
         {
             var commandQueue = new RecordingCommandQueue();
@@ -144,6 +159,7 @@ namespace Chaptarr.Core.Test.Books
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();

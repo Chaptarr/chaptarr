@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Disk;
@@ -11,7 +13,7 @@ using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.MediaFiles
 {
-    public class EbookColocateOnAudiobookImportHandler : IHandle<TrackImportedEvent>
+    public class EbookColocateOnAudiobookImportHandler : IHandle<BookImportedEvent>
     {
         private readonly IRootFolderService _rootFolderService;
         private readonly IBookService _bookService;
@@ -38,11 +40,11 @@ namespace NzbDrone.Core.MediaFiles
             _logger = logger;
         }
 
-        public void Handle(TrackImportedEvent message)
+        public void Handle(BookImportedEvent message)
         {
             try
             {
-                var imported = message?.ImportedBook;
+                var imported = message?.ImportedBooks?.FirstOrDefault();
                 if (imported == null)
                 {
                     return;
@@ -59,9 +61,8 @@ namespace NzbDrone.Core.MediaFiles
                     return;
                 }
 
-                var localBook = message.BookInfo;
-                var author = localBook?.Author ?? imported.Author ?? imported.Edition?.Book?.Author;
-                var audiobookBook = localBook?.Book ?? imported.Edition?.Book;
+                var author = message.Author;
+                var audiobookBook = message.Book;
 
                 if (author == null || audiobookBook == null)
                 {
@@ -80,6 +81,7 @@ namespace NzbDrone.Core.MediaFiles
                     return;
                 }
 
+                var timer = Stopwatch.StartNew();
                 // Find ebook siblings for the same work (work-level provider ID intersection).
                 var allBooks = _bookService.GetBooksByAuthorId(audiobookBook.AuthorId);
                 var ebookBooks = allBooks
@@ -92,52 +94,82 @@ namespace NzbDrone.Core.MediaFiles
                     return;
                 }
 
+                var relevantBookIds = allBooks.Where(book => book.MediaType == BookMediaType.Audiobook &&
+                        ebookBooks.Any(ebook => WorkIdMatcher.WorkProviderIdMatches(book, ebook)))
+                    .Select(book => book.Id).Concat(ebookBooks.Select(book => book.Id)).Distinct().ToList();
+                var batchContext = new RenameBatchContext
+                {
+                    AuthorBooks = allBooks,
+                    FilesByBook = _mediaFileService.GetFilesByBooks(relevantBookIds).ToLookup(file => file.Edition.BookId)
+                };
                 var renamedFiles = new List<RenamedBookFile>();
+                var cleanup = new List<(string SourceFolder, string SourceAuthorFolderPath)>();
 
                 foreach (var ebookBook in ebookBooks)
                 {
-                    var ebookFiles = _mediaFileService.GetFilesByBook(ebookBook.Id)
+                    var ebookFiles = batchContext.FilesByBook[ebookBook.Id]
                         .Where(f => f != null && f.CalibreId == 0)
                         .ToList();
 
                     foreach (var ebookFile in ebookFiles)
                     {
-                        if (ebookFile.Path.IsNullOrWhiteSpace() || !_diskProvider.FileExists(ebookFile.Path))
+                        // One failed file must not suppress sidecar handling for completed moves.
+                        try
                         {
-                            continue;
-                        }
-
-                        var previousPath = ebookFile.Path;
-
-                        // Route through the shared planner so ebook naming stays consistent, while the folder is clamped to audiobook locations.
-                        var plan = _bookFileMover.GetOrganizeDestination(ebookFile, author, false);
-                        if (!plan.CanOrganize)
-                        {
-                            _logger.Warn("Skipping ebook colocation for {0}: {1}", previousPath, plan.SkipReason);
-                            continue;
-                        }
-
-                        _bookFileMover.MoveBookFile(ebookFile, author, plan);
-                        _mediaFileService.Update(ebookFile);
-
-                        if (previousPath.PathNotEquals(ebookFile.Path))
-                        {
-                            var renamed = new RenamedBookFile
+                            if (ebookFile.Path.IsNullOrWhiteSpace() || !_diskProvider.FileExists(ebookFile.Path))
                             {
-                                BookFile = ebookFile,
-                                PreviousPath = previousPath
-                            };
+                                continue;
+                            }
 
-                            _logger.Debug("Co-located ebook after audiobook import: {0} -> {1}", previousPath, ebookFile.Path);
-                            _eventAggregator.PublishEvent(new BookFileRenamedEvent(author, ebookFile, previousPath));
-                            renamedFiles.Add(renamed);
+                            var previousPath = ebookFile.Path;
+                            var previousAuthorPath = Extras.ExtraFilePathHelper.GetPreferredBasePath(author, ebookFile);
+
+                            // Route through the shared planner so ebook naming stays consistent, while the folder is clamped to audiobook locations.
+                            var plan = _bookFileMover.GetOrganizeDestination(ebookFile, author, false, batchContext);
+                            if (!plan.CanOrganize)
+                            {
+                                _logger.Warn("Skipping ebook colocation for {0}: {1}", previousPath, plan.SkipReason);
+                                continue;
+                            }
+
+                            // Different roots can yield a naming-only plan; this event must only apply colocation.
+                            if (plan.ReplicaPaths == null)
+                            {
+                                _logger.Debug("Skipping ebook colocation for {0}: colocation does not apply; leaving file unchanged", previousPath);
+                                continue;
+                            }
+
+                            _bookFileMover.MoveBookFile(ebookFile, author, plan, batchContext);
+                            _mediaFileService.Update(ebookFile);
+
+                            if (previousPath.PathNotEquals(ebookFile.Path))
+                            {
+                                var renamed = new RenamedBookFile
+                                {
+                                    BookFile = ebookFile,
+                                    PreviousPath = previousPath,
+                                    PreviousAuthorPath = previousAuthorPath
+                                };
+
+                                _logger.Debug("Co-located ebook after audiobook import: {0} -> {1}", previousPath, ebookFile.Path);
+                                _eventAggregator.PublishEvent(new BookFileRenamedEvent(author, ebookFile, previousPath));
+                                renamedFiles.Add(renamed);
+                                cleanup.Add((Path.GetDirectoryName(previousPath), plan.SourceAuthorFolderPath));
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Warn(ex, "Failed to colocate ebook {0}; continuing with remaining files", ebookFile.Path);
                         }
                     }
                 }
 
+                _logger.Debug("Ebook colocation for book {0}: {1} sibling books, {2} moved files in {3} ms",
+                    audiobookBook.Id, ebookBooks.Count, renamedFiles.Count, timer.ElapsedMilliseconds);
                 if (renamedFiles.Count > 0)
                 {
                     _eventAggregator.PublishEvent(new AuthorRenamedEvent(author, renamedFiles));
+                    Extras.ExtraFilePathHelper.CleanupEmptySourceFolders(_diskProvider, _logger, cleanup);
                 }
             }
             catch (Exception ex)

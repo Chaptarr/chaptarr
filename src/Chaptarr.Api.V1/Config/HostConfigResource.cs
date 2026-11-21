@@ -10,6 +10,7 @@ namespace Chaptarr.Api.V1.Config
     public class HostConfigResource : RestResource
     {
         public string BindAddress { get; set; }
+        public string AllowedHosts { get; set; }
         public int Port { get; set; }
         public int SslPort { get; set; }
         public bool EnableSsl { get; set; }
@@ -45,6 +46,7 @@ namespace Chaptarr.Api.V1.Config
         public string BackupFolder { get; set; }
         public int BackupInterval { get; set; }
         public int BackupRetention { get; set; }
+        public bool BackupIncludeLogsAndCache { get; set; }
         public bool TrustCgnatIpAddresses { get; set; }
         public string OidcAuthority { get; set; }
         public string OidcClientId { get; set; }
@@ -64,12 +66,14 @@ namespace Chaptarr.Api.V1.Config
             return new HostConfigResource
             {
                 BindAddress = model.BindAddress,
+                AllowedHosts = model.AllowedHosts,
                 Port = model.Port,
                 SslPort = model.SslPort,
                 EnableSsl = model.EnableSsl,
                 LaunchBrowser = model.LaunchBrowser,
                 AuthenticationMethod = model.AuthenticationMethod,
                 AuthenticationRequired = model.AuthenticationRequired,
+                TrustCgnatIpAddresses = model.TrustCgnatIpAddresses,
 
                 //Username
                 //Password
@@ -97,6 +101,7 @@ namespace Chaptarr.Api.V1.Config
                 BackupFolder = configService.BackupFolder,
                 BackupInterval = configService.BackupInterval,
                 BackupRetention = configService.BackupRetention,
+                BackupIncludeLogsAndCache = configService.BackupIncludeLogsAndCache,
                 ApplicationUrl = configService.ApplicationUrl,
                 OidcAuthority = model.OidcAuthority,
                 OidcClientId = model.OidcClientId,

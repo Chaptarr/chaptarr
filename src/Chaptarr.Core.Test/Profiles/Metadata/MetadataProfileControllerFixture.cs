@@ -27,8 +27,14 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public void Delete(int id) { }
             public List<MetadataProfile> All() => _profiles;
             public MetadataProfile Get(int id) => _profiles.First(p => p.Id == id);
-            public bool Exists(int id) => _profiles.Any(p => p.Id == id);
+            public bool Exists(int id, MetadataProfileType? profileType = null) => _profiles.Any(p => p.Id == id);
             public List<Book> FilterBooks(Author input, int profileId) => input.Books;
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>
+                FilterBooks(input, profileId, requestedNarrationIds, null);
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds) =>
+                FilterBooks(input, profileId);
         }
 
         [Test]

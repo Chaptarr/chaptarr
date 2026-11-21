@@ -72,7 +72,7 @@ namespace NzbDrone.Core.Qualities
             return !Equals(left, right);
         }
 
-        public static Quality Unknown => new Quality(0, "Unknown Text");
+        public static Quality Unknown => new Quality(0, "Unknown");
         public static Quality PDF => new Quality(1, "PDF");
         public static Quality MOBI => new Quality(2, "MOBI");
         public static Quality EPUB => new Quality(3, "EPUB");

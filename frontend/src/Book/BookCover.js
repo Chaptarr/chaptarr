@@ -10,13 +10,14 @@ function BookCover(props) {
       {...props}
       coverType="cover"
       placeholder={coverPlaceholder}
-      usePlaceholderOnError={true}
+      showPlaceholderWhileLoading={true}
     />
   );
 }
 
 BookCover.propTypes = {
-  size: PropTypes.number.isRequired
+  size: PropTypes.number.isRequired,
+  allowTemporaryUrl: PropTypes.bool
 };
 
 BookCover.defaultProps = {

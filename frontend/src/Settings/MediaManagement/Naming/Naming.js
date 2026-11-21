@@ -12,7 +12,6 @@ import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import { inputTypes, kinds, sizes } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import NamingModal from './NamingModal';
-import NamingVisualBuilder from './NamingVisualBuilder/NamingVisualBuilder';
 import styles from './Naming.css';
 
 class Naming extends Component {
@@ -25,8 +24,7 @@ class Naming extends Component {
 
     this.state = {
       isNamingModalOpen: false,
-      namingModalOptions: null,
-      isVisualBuilderOpen: false
+      namingModalOptions: null
     };
   }
 
@@ -63,27 +61,6 @@ class Naming extends Component {
     this.setState({ isNamingModalOpen: false });
   };
 
-  onVisualBuilderOpenClick = () => {
-    this.setState({ isVisualBuilderOpen: true });
-  };
-
-  onVisualBuilderClose = () => {
-    this.setState({ isVisualBuilderOpen: false });
-  };
-
-  onVisualBuilderSave = (pattern) => {
-    const { onInputChange, selectedMediaType } = this.props;
-    const standardBookFormatName = selectedMediaType === 'ebook' ? 'ebookStandardBookFormat' : 'standardBookFormat';
-
-    // Update the actual form value
-    onInputChange({
-      name: standardBookFormatName,
-      value: pattern
-    });
-    // Close the modal
-    this.setState({ isVisualBuilderOpen: false });
-  };
-
   //
   // Render
 
@@ -106,8 +83,7 @@ class Naming extends Component {
 
     const {
       isNamingModalOpen,
-      namingModalOptions,
-      isVisualBuilderOpen
+      namingModalOptions
     } = this.state;
 
     const isEbook = selectedMediaType === 'ebook';
@@ -242,9 +218,7 @@ class Naming extends Component {
                   type={inputTypes.TEXT}
                   name={standardBookFormatName}
                   buttons={[
-                    // Visual builder temporarily disabled - the existing token system is robust
-                    // <FormInputButton onPress={this.onVisualBuilderOpenClick}>🎨</FormInputButton>,
-                    <FormInputButton onPress={this.onStandardNamingModalOpenClick}>?</FormInputButton>
+                    <FormInputButton key="tokens" onPress={this.onStandardNamingModalOpenClick}>?</FormInputButton>
                   ]}
                   onChange={onInputChange}
                   {...standardBookFormatSetting}
@@ -306,15 +280,6 @@ class Naming extends Component {
                   />
               }
 
-              {
-                hasSettings && renameBooks &&
-                  <NamingVisualBuilder
-                    isOpen={isVisualBuilderOpen}
-                    initialPattern={standardBookFormatSetting.value}
-                    onSave={this.onVisualBuilderSave}
-                    onCancel={this.onVisualBuilderClose}
-                  />
-              }
             </Form>
         }
       </FieldSet>

@@ -5,12 +5,13 @@ using System.Text.Json.Serialization;
 using Equ;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MetadataSource;
 
 namespace NzbDrone.Core.Books
 {
-    public class Edition : Entity<Edition>
+    public class Edition : ProviderIdentityEntity<Edition>
     {
         public Edition()
         {
@@ -53,6 +54,7 @@ namespace NzbDrone.Core.Books
         public long? GoodreadsEditionId { get; set; }
         public string HardcoverEditionId { get; set; }
         public string OpenLibraryEditionId { get; set; }
+
 
         // Format identification
         public int? ReadingFormatId { get; set; } // 1=physical, 2=audio, 3=ebook
@@ -101,9 +103,61 @@ namespace NzbDrone.Core.Books
         [MemberwiseEqualityIgnore]
         public List<BookFile> BookFiles { get; set; }
 
+        [MemberwiseEqualityIgnore]
+        [JsonIgnore]
+        public string SearchSubtitle { get; set; }
+
+        [MemberwiseEqualityIgnore]
+        [JsonIgnore]
+        public string SearchNarrator { get; set; }
+
+        [MemberwiseEqualityIgnore]
+        [JsonIgnore]
+        public string SearchNarratorNames { get; set; }
+
+        [MemberwiseEqualityIgnore]
+        [JsonIgnore]
+        public string SearchPublisher { get; set; }
+
+        protected override string IdentityScope => "edition";
+        protected override IEnumerable<string> GetIdentityIds() => BookEditionIdentity.GetEditionProviderIds(this).Select(BookEditionIdentity.NormalizeRequestedEditionProviderId);
+
+        public override IEnumerable<string> PrepareForPersistence(IReadOnlyCollection<string> fields)
+        {
+            foreach (var field in base.PrepareForPersistence(fields)) yield return field;
+            if (fields == null || fields.Contains(nameof(Subtitle)) || fields.Contains(nameof(SearchSubtitle)))
+            {
+                SearchSubtitle = StringSuperNormalizer.NormalizeForFts(Subtitle);
+                yield return nameof(SearchSubtitle);
+            }
+            if (fields == null || fields.Contains(nameof(Narrator)) || fields.Contains(nameof(SearchNarrator)))
+            {
+                SearchNarrator = StringSuperNormalizer.NormalizeForFts(Narrator);
+                yield return nameof(SearchNarrator);
+            }
+            if (fields == null || fields.Contains(nameof(NarratorNames)) || fields.Contains(nameof(SearchNarratorNames)))
+            {
+                SearchNarratorNames = StringSuperNormalizer.NormalizeNarratorsForFts(NarratorNames);
+                yield return nameof(SearchNarratorNames);
+            }
+            if (fields == null || fields.Contains(nameof(Publisher)) || fields.Contains(nameof(SearchPublisher)))
+            {
+                SearchPublisher = StringSuperNormalizer.NormalizeForFts(Publisher);
+                yield return nameof(SearchPublisher);
+            }
+        }
+
         public override string ToString()
         {
             return string.Format("[{0}][{1}]", ForeignEditionId, Title.NullSafe());
+        }
+
+        public void UseImagesFrom(Edition other)
+        {
+            var incoming = other.Images?.Where(image => image?.Url.IsValidHttpUrl() == true).ToList();
+            Images = incoming?.Count > 0
+                ? incoming
+                : Images?.Where(image => image?.Url.IsValidHttpUrl() == true).ToList() ?? new List<MediaCover.MediaCover>();
         }
 
 		        public override void UseMetadataFrom(Edition other)
@@ -138,6 +192,7 @@ namespace NzbDrone.Core.Books
 		            }
 
 		            // Provider IDs
+		            RemoteProviderIds = RefreshEntityCopy.CloneProviderIds(other.RemoteProviderIds);
 		            GoodreadsEditionId = other.GoodreadsEditionId;
 			            HardcoverEditionId = CleanProviderIdForCopy(other.HardcoverEditionId, HardcoverEditionId);
 			            OpenLibraryEditionId = CleanProviderIdForCopy(other.OpenLibraryEditionId, OpenLibraryEditionId);
@@ -161,16 +216,7 @@ namespace NzbDrone.Core.Books
 			                }).ToList()
 			                : Chapters ?? new List<EditionChapter>();
 
-			            // Only keep safe absolute HTTP(S) image URLs (prevents poisoned/invalid values from persisting in the DB).
-		            var otherImages = other.Images?
-		                .Where(i => i?.Url.IsValidHttpUrl() == true)
-		                .ToList();
-
-		            var currentImages = Images?
-		                .Where(i => i?.Url.IsValidHttpUrl() == true)
-		                .ToList();
-
-		            Images = otherImages?.Any() == true ? otherImages : currentImages ?? new List<MediaCover.MediaCover>();
+                UseImagesFrom(other);
 			            Links = other.Links?.Any() == true ? other.Links : Links;
 			            Ratings = other.Ratings;
 			            ReviewCount = other.ReviewCount ?? ReviewCount;

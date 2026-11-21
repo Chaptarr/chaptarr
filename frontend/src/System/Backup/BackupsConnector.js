@@ -4,7 +4,7 @@ import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import * as commandNames from 'Commands/commandNames';
 import { executeCommand } from 'Store/Actions/commandActions';
-import { deleteBackup, fetchBackups } from 'Store/Actions/systemActions';
+import { cancelRestore, deleteBackup, dismissFailedRestores, fetchBackups, fetchBackupStatus } from 'Store/Actions/systemActions';
 import createCommandExecutingSelector from 'Store/Selectors/createCommandExecutingSelector';
 import Backups from './Backups';
 
@@ -12,7 +12,8 @@ function createMapStateToProps() {
   return createSelector(
     (state) => state.system.backups,
     createCommandExecutingSelector(commandNames.BACKUP),
-    (backups, backupExecuting) => {
+    (state) => state.system.backupStatus,
+    (backups, backupExecuting, backupStatus) => {
       const {
         isFetching,
         isPopulated,
@@ -25,7 +26,10 @@ function createMapStateToProps() {
         isPopulated,
         error,
         items,
-        backupExecuting
+        backupExecuting,
+        backupStatus: backupStatus.item,
+        backupStatusError: backupStatus.error,
+        restoreError: backups.restoreError
       };
     }
   );
@@ -35,10 +39,19 @@ function createMapDispatchToProps(dispatch, props) {
   return {
     dispatchFetchBackups() {
       dispatch(fetchBackups());
+      dispatch(fetchBackupStatus());
     },
 
     onDeleteBackupPress(id) {
       dispatch(deleteBackup({ id }));
+    },
+
+    onDismissFailedRestoresPress() {
+      dispatch(dismissFailedRestores());
+    },
+
+    onCancelRestorePress() {
+      dispatch(cancelRestore());
     },
 
     onBackupPress() {

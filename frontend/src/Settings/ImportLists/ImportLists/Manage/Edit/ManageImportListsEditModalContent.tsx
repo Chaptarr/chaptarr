@@ -73,12 +73,12 @@ function ManageImportListsEditModalContent(
 
     if (qualityProfileId !== NO_CHANGE) {
       hasChanges = true;
-      payload.qualityProfileId = qualityProfileId as number;
+      payload.qualityProfileId = Number(qualityProfileId);
     }
 
     if (metadataProfileId !== NO_CHANGE) {
       hasChanges = true;
-      payload.metadataProfileId = metadataProfileId as number;
+      payload.metadataProfileId = Number(metadataProfileId);
     }
 
     if (rootFolderPath !== NO_CHANGE) {
@@ -130,7 +130,7 @@ function ManageImportListsEditModalContent(
 
       <ModalBody>
         <FormGroup>
-          <FormLabel>{translate('AutomaticAdd')}</FormLabel>
+          <FormLabel>{translate('ImportListEnabled')}</FormLabel>
 
           <FormInputGroup
             type={inputTypes.SELECT}

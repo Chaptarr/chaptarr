@@ -1,18 +1,20 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Books.Extensions;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
 {
     public sealed class BookImportIdentitySubgroup
     {
         public string IdentityKey { get; set; }
+        internal FileMatch SeedMatch { get; set; }
         public List<DiscoveredFileWithMetadata> Files { get; set; }
     }
 
@@ -30,24 +32,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
     /// </summary>
     public static class BookImportUnitGroupingService
     {
-        internal static readonly IReadOnlySet<string> HardNoiseTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            // English stopwords (minimal)
-            "a", "an", "and", "or", "the", "of", "in", "on", "at", "by", "for", "with", "to", "from", "as",
-
-            // Common audiobook/ebook/file noise
-            "audiobook", "audio", "ebook", "e-book", "unabridged", "abridged",
-            "narrated", "narrator", "narration", "read", "performed",
-            "disc", "cd", "track", "trk",
-
-            // Common edition descriptors
-            "complete", "special", "deluxe", "expanded", "illustrated", "anniversary",
-            "collector", "collectors", "collection",
-
-            // Common subtitle boilerplate
-            "novel"
-        };
-
         internal static readonly IReadOnlySet<string> StructuralTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "part", "pt",
@@ -327,52 +311,20 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
         // Align leftover-token validation with containment smoke-test behavior: containment
         // splits hyphenated/dotted words while FTS tokenization preserves "-." for querying.
-        internal static List<string> TokenizeForLeftoverGate(string text)
+        internal static List<string> TokenizeForLeftoverGate(string text) => TokenizeText(text, preserveFtsConnectors: false);
+
+        internal static List<string> TokenizeText(string text, bool preserveFtsConnectors = true)
         {
-            if (string.IsNullOrWhiteSpace(text))
+            text = StringSuperNormalizer.NormalizeForFts(text);
+            if (!preserveFtsConnectors)
             {
-                return new List<string>();
+                text = Regex.Replace(text, @"[–—-]", " ").Replace('.', ' ');
             }
 
-            text = Regex.Replace(text, @"[–—-]", " ");
-            text = text.Replace('.', ' ');
-            return TokenizeText(text);
-        }
-
-        internal static List<string> TokenizeText(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return new List<string>();
-            }
-
-            text = Regex.Replace(text, "['\\u2018\\u2019]s\\b", "s");
-            text = text.Normalize(NormalizationForm.FormD);
-            var builder = new StringBuilder();
-            foreach (var character in text)
-            {
-                if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
-                {
-                    builder.Append(character);
-                }
-            }
-
-            // CRITICAL: FTS tokenchars is '-.' so hyphens and periods stay inside tokens
-            // (the FTS index holds "high-opp" as one token; splitting here would break querying).
-            var matches = Regex.Matches(
-                builder.ToString().ToLowerInvariant(),
-                @"[\p{L}\p{Nd}]+(?:[-\.][\p{L}\p{Nd}]+)*");
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            var tokens = new List<string>();
-            foreach (Match match in matches)
-            {
-                if (seen.Add(match.Value))
-                {
-                    tokens.Add(match.Value);
-                }
-            }
-
-            return tokens;
+            return UnicodeComparisonNormalizer.WordSpans(text, preserveFtsConnectors)
+                .Select(word => word.Value)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
         }
 
         private static IEnumerable<string> BuildIdentityPairs(
@@ -423,7 +375,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 StructuralTokens.Contains(token));
             var hasNumber = tokens.Any(token =>
                 token.All(char.IsDigit) ||
-                TryParseRomanNumeral(token, out _));
+                UnicodeComparisonNormalizer.TryParseRomanNumeral(token, out _));
 
             if (hasPackagingMarker && hasNumber)
             {
@@ -432,8 +384,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
             return tokens.All(token =>
                 token.All(char.IsDigit) ||
-                TryParseRomanNumeral(token, out _) ||
-                HardNoiseTokens.Contains(token) ||
+                UnicodeComparisonNormalizer.TryParseRomanNumeral(token, out _) ||
                 StructuralTokens.Contains(token));
         }
 
@@ -574,51 +525,5 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             return (BookCoalescingHelper.NormalizeDirectory(path) ?? path ?? string.Empty).ToLowerInvariant();
         }
 
-        private static bool TryParseRomanNumeral(string raw, out int value)
-        {
-            value = 0;
-            if (string.IsNullOrWhiteSpace(raw))
-            {
-                return false;
-            }
-
-            var map = new Dictionary<char, int>
-            {
-                ['I'] = 1,
-                ['V'] = 5,
-                ['X'] = 10,
-                ['L'] = 50,
-                ['C'] = 100,
-                ['D'] = 500,
-                ['M'] = 1000
-            };
-            var total = 0;
-            var previous = 0;
-            foreach (var character in raw.Trim().ToUpperInvariant().Reverse())
-            {
-                if (!map.TryGetValue(character, out var current))
-                {
-                    return false;
-                }
-
-                if (current < previous)
-                {
-                    total -= current;
-                }
-                else
-                {
-                    total += current;
-                    previous = current;
-                }
-            }
-
-            if (total <= 0)
-            {
-                return false;
-            }
-
-            value = total;
-            return true;
-        }
     }
 }

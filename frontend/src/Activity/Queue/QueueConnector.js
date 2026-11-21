@@ -6,7 +6,7 @@ import * as commandNames from 'Commands/commandNames';
 import withCurrentPage from 'Components/withCurrentPage';
 import { executeCommand } from 'Store/Actions/commandActions';
 import * as queueActions from 'Store/Actions/queueActions';
-import { fetchMediaManagementSettings, saveMediaManagementSettings, setMediaManagementSettingsValue } from 'Store/Actions/settingsActions';
+import { fetchMediaManagementSettings, saveMediaManagementSettingsFields } from 'Store/Actions/settingsActions';
 import createCommandExecutingSelector from 'Store/Selectors/createCommandExecutingSelector';
 import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
 import { registerPagePopulator, unregisterPagePopulator } from 'Utilities/pagePopulator';
@@ -44,11 +44,11 @@ const mapDispatchToProps = {
   ...queueActions,
   executeCommand,
   fetchMediaManagementSettings,
-  setMediaManagementSettingsValue,
-  saveMediaManagementSettings
+  saveMediaManagementSettings: saveMediaManagementSettingsFields
 };
 
 class QueueConnector extends Component {
+  state = { autoAddAuthorsSaveError: null };
 
   //
   // Lifecycle
@@ -155,14 +155,10 @@ class QueueConnector extends Component {
       value :
       !this.props.autoAddMissingAuthorsFromCompletedDownloads;
 
-    this.props.setMediaManagementSettingsValue({
-      name: 'autoAddMissingAuthorsFromCompletedDownloads',
-      value: nextValue
-    });
-
     this.props.saveMediaManagementSettings({
       autoAddMissingAuthorsFromCompletedDownloads: nextValue
-    });
+    }).done(() => this.setState({ autoAddAuthorsSaveError: null }))
+      .fail((autoAddAuthorsSaveError) => this.setState({ autoAddAuthorsSaveError }));
   };
 
   //
@@ -184,6 +180,7 @@ class QueueConnector extends Component {
         onRemoveSelectedPress={this.onRemoveSelectedPress}
         onAutoAddAuthorsPress={this.onAutoAddAuthorsPress}
         {...this.props}
+        autoAddAuthorsSaveError={this.state.autoAddAuthorsSaveError}
       />
     );
   }
@@ -205,7 +202,6 @@ QueueConnector.propTypes = {
   setQueueTableOption: PropTypes.func.isRequired,
   clearQueue: PropTypes.func.isRequired,
   fetchMediaManagementSettings: PropTypes.func.isRequired,
-  setMediaManagementSettingsValue: PropTypes.func.isRequired,
   saveMediaManagementSettings: PropTypes.func.isRequired,
   grabQueueItems: PropTypes.func.isRequired,
   removeQueueItems: PropTypes.func.isRequired,

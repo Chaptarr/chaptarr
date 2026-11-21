@@ -416,6 +416,7 @@ class AuthorIndexRow extends Component {
         />
 
         <DeleteAuthorModal
+          selectedMediaType={this.props.selectedMediaType}
           isOpen={isDeleteAuthorModalOpen}
           authorId={id}
           onModalClose={this.onDeleteAuthorModalClose}
@@ -426,6 +427,7 @@ class AuthorIndexRow extends Component {
 }
 
 AuthorIndexRow.propTypes = {
+  selectedMediaType: PropTypes.string,
   id: PropTypes.number.isRequired,
   monitored: PropTypes.bool.isRequired,
   status: PropTypes.string.isRequired,

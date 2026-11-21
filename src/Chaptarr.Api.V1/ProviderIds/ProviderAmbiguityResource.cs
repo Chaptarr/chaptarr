@@ -96,9 +96,9 @@ namespace Chaptarr.Api.V1.ProviderIds
                 return null;
             }
 
-            foreach (var (provider, id) in GetBookProviderLookups(book))
+            foreach (var (provider, id, scope) in GetBookProviderLookups(book))
             {
-                var ambiguity = GetBookAmbiguity(bookService, provider, id, book.MediaType, field, logger, operation);
+                var ambiguity = GetBookAmbiguity(bookService, provider, id, book.MediaType, field, logger, operation, scope);
                 if (ambiguity != null)
                 {
                     return ambiguity;
@@ -127,9 +127,10 @@ namespace Chaptarr.Api.V1.ProviderIds
             BookMediaType mediaType,
             string field,
             Logger logger,
-            string operation = null)
+            string operation = null,
+            string scope = "work")
         {
-            var matches = FindBookProviderMatches(bookService, provider, providerId, mediaType);
+            var matches = FindBookProviderMatches(bookService, provider, providerId, mediaType, scope);
             if (matches.Count <= 1)
             {
                 return null;
@@ -205,7 +206,7 @@ namespace Chaptarr.Api.V1.ProviderIds
             return matches.Values.OrderBy(a => a.Id).ToList();
         }
 
-        public static List<Book> FindBookProviderMatches(IBookService bookService, string provider, string providerId, BookMediaType mediaType)
+        public static List<Book> FindBookProviderMatches(IBookService bookService, string provider, string providerId, BookMediaType mediaType, string scope = "work")
         {
             var normalizedProviderId = NormalizeProviderId(provider, providerId);
             if (string.IsNullOrWhiteSpace(normalizedProviderId))
@@ -213,37 +214,54 @@ namespace Chaptarr.Api.V1.ProviderIds
                 return new List<Book>();
             }
 
-            return (bookService?.FindAllByProviderId(provider?.Trim().ToLowerInvariant(), ProviderIdHelper.StripPrefix(normalizedProviderId), mediaType) ?? new List<Book>())
-                .Where(x => x != null)
+            provider = provider?.Trim().ToLowerInvariant();
+            List<Book> matches;
+            if (scope == "edition")
+            {
+                var key = (Scope: scope, Provider: provider, Id: normalizedProviderId);
+                var ids = bookService?.FindBookIdsByProviderIds(new[] { key },
+                    onIncomplete: _ => throw new InvalidOperationException("Unable to verify local edition provider identity"))[key] ?? new List<int>();
+                matches = bookService?.GetExistingBooks(ids) ?? new List<Book>();
+            }
+            else
+            {
+                // Provider work and edition namespaces can overlap; a work request must not use edition evidence.
+                matches = provider is "hc" or "gr" or "ol"
+                    ? bookService?.FindAllByWorkProviderId(provider, normalizedProviderId, mediaType)
+                    : bookService?.FindAllByProviderId(provider, ProviderIdHelper.StripPrefix(normalizedProviderId), mediaType);
+            }
+
+            return (matches ?? new List<Book>())
+                .Where(x => x != null && x.MediaType == mediaType)
                 .GroupBy(x => x.Id)
                 .Select(g => g.First())
                 .OrderBy(x => x.Id)
                 .ToList();
         }
 
-        public static List<(string Provider, string Id)> GetBookProviderLookups(Book book)
+        public static List<(string Provider, string Id, string Scope)> GetBookProviderLookups(Book book)
         {
-            var lookups = new List<(string Provider, string Id)>();
+            var lookups = new List<(string Provider, string Id, string Scope)>();
 
-            void Add(string provider, string id)
+            void Add(string provider, string id, string scope)
             {
                 if (!string.IsNullOrWhiteSpace(provider) && !string.IsNullOrWhiteSpace(id))
                 {
-                    lookups.Add((provider, id));
+                    lookups.Add((provider, id, scope));
                 }
             }
 
-            Add("hc", book?.HardcoverBookId);
-            Add("gr", book?.GoodreadsWorkId);
-            Add("gr", BookEditionIdentity.GetGoodreadsEditionProviderId(book));
-            Add("ol", book?.OpenLibraryWorkId);
-            Add("gb", BookEditionIdentity.GetGoogleBooksEditionId(book));
-            Add("az", BookEditionIdentity.GetAsin(book));
-            Add("az", BookEditionIdentity.GetAudibleAsin(book));
+            Add("hc", book?.HardcoverBookId, "work");
+            Add("gr", book?.GoodreadsWorkId, "work");
+            Add("gr", BookEditionIdentity.GetGoodreadsEditionProviderId(book), "edition");
+            Add("ol", book?.OpenLibraryWorkId, "work");
+            Add("gb", BookEditionIdentity.GetGoogleBooksEditionId(book), "edition");
+            Add("az", BookEditionIdentity.GetAsin(book), "edition");
+            Add("az", BookEditionIdentity.GetAudibleAsin(book), "edition");
 
             return lookups
                 .Where(x => !string.IsNullOrWhiteSpace(x.Id))
-                .GroupBy(x => $"{x.Provider}:{x.Id}", StringComparer.OrdinalIgnoreCase)
+                .GroupBy(x => $"{x.Scope}:{x.Provider}:{x.Id}", StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.First())
                 .ToList();
         }
@@ -274,7 +292,7 @@ namespace Chaptarr.Api.V1.ProviderIds
 
             try
             {
-                return ProviderIdHelper.WithPrefix(provider.Trim().ToLowerInvariant(), providerId.Trim());
+                return ProviderIdHelper.Canonicalize(providerId.Trim(), provider.Trim().ToLowerInvariant());
             }
             catch (InvalidOperationException)
             {

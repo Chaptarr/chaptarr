@@ -52,7 +52,7 @@ namespace Chaptarr.Http.Authentication
             }
 
             if (_configFileProvider.PlexAuthUserId.IsNullOrWhiteSpace() &&
-                !TrustedNetworkPolicy.IsLocalOrTrusted(HttpContext, _configFileProvider))
+                !TrustedNetworkPolicy.MaySkipLocalLogin(HttpContext, _configFileProvider))
             {
                 return StatusCode(StatusCodes.Status403Forbidden, new { message = InitialBindingRequiresTrustedNetwork });
             }
@@ -114,7 +114,7 @@ namespace Chaptarr.Http.Authentication
             }
 
             if (_configFileProvider.PlexAuthUserId.IsNullOrWhiteSpace() &&
-                !TrustedNetworkPolicy.IsLocalOrTrusted(HttpContext, _configFileProvider))
+                !TrustedNetworkPolicy.MaySkipLocalLogin(HttpContext, _configFileProvider))
             {
                 return StatusCode(StatusCodes.Status403Forbidden, new { message = InitialBindingRequiresTrustedNetwork });
             }
@@ -245,10 +245,9 @@ namespace Chaptarr.Http.Authentication
 
         private string BuildCallbackUrl(string state)
         {
-            var urlBase = _configFileProvider.UrlBase ?? string.Empty;
-            var callbackPath = $"{urlBase}/auth/plex/callback";
+            var baseUrl = $"{Request.Scheme}://{Request.Host}{_configFileProvider.UrlBase}";
 
-            return $"{Request.Scheme}://{Request.Host}{callbackPath}?state={Uri.EscapeDataString(state)}";
+            return $"{baseUrl}/auth/plex/callback?state={Uri.EscapeDataString(state)}";
         }
 
         private string GetStateCookieName()

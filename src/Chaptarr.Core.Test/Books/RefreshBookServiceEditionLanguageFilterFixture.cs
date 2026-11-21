@@ -27,24 +27,27 @@ namespace Chaptarr.Core.Test.Books
                 return _authors.TryGetValue(authorId, out var author) ? author : null;
             }
 
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
+
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
             public Author FindByName(string title) => throw new NotImplementedException();
-            public Author FindByNameInexact(string title) => throw new NotImplementedException();
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
+            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
-            public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
+            public List<KeyValuePair<int, string>> AllAuthorPaths() => throw new NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new NotImplementedException();
-            public void RemoveAddOptions(Author author) => throw new NotImplementedException();
+            public void SetAddOptions(Author author) => throw new NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
             public long GetAuthorSizeForMediaType(int authorId, string mediaType) => throw new NotImplementedException();
             public void UpdateLastSelectedMediaType(int authorId, string mediaType) => throw new NotImplementedException();
@@ -55,9 +58,20 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Update(BookFile bookFile) => throw new NotImplementedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -94,13 +108,13 @@ namespace Chaptarr.Core.Test.Books
                     editionSelector: new EditionSelector(logger),
                     editionMetadataProfileFilter: new NzbDrone.Core.Books.Services.EditionMetadataProfileFilter(new TestTermMatcherService()),
                     mediaCoverService: null,
-                    logger: logger)
+                    logger: logger, mainDatabase: null)
             {
             }
 
             public List<Edition> SelectRemoteEditions(Book local, Book remote)
             {
-                return GetRemoteChildren(local, remote);
+                return GetRemoteChildren(local, remote, CreateContext());
             }
         }
 
@@ -247,5 +261,41 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(selected.Select(e => e.ForeignEditionId).ToList(),
                 Is.EqualTo(new List<string> { "ebook-good" }));
         }
+        [TestCase(BookMediaType.Audiobook, true)]
+        [TestCase(BookMediaType.Audiobook, false)]
+        [TestCase(BookMediaType.Ebook, true)]
+        [TestCase(BookMediaType.Ebook, false)]
+        public void manual_work_refresh_should_retain_an_ordinary_representative_without_pinning_it(BookMediaType mediaType, bool savedMarker)
+        {
+            var profile = new MetadataProfile { AllowedLanguages = "eng" };
+            var author = new Author { Id = 42, AudiobookMetadataProfile = profile, EbookMetadataProfile = profile };
+            var local = new Book { Id = 1, AuthorId = 42, MediaType = mediaType, AnyEditionOk = true, Editions = new List<Edition>() };
+            var remote = new Book
+            {
+                MediaType = mediaType, AnyEditionOk = true,
+                Editions = new List<Edition>
+                {
+                    new() { ForeignEditionId = "best-representative", Language = "fra", ReadingFormatId = mediaType == BookMediaType.Audiobook ? 2 : 3, Ratings = new Ratings { Votes = 50 } },
+                    new() { ForeignEditionId = "other-edition", Language = "fra", ReadingFormatId = mediaType == BookMediaType.Audiobook ? 2 : 3, Ratings = new Ratings { Votes = 1 } }
+                }
+            };
+            (savedMarker ? local : remote).AddOptions.AddType = BookAddType.Manual;
+            var service = new TestableRefreshBookService(new StubAuthorService(author), new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+            var retained = service.SelectRemoteEditions(local, remote);
+            Assert.Multiple(() =>
+            {
+                Assert.That(retained.Select(edition => edition.ForeignEditionId), Is.EqualTo(new[] { "best-representative" }));
+                Assert.That(local.AnyEditionOk, Is.True);
+                Assert.That(retained.All(edition => !edition.ManualAdd), Is.True);
+            });
+            remote.Editions.Add(new Edition
+            {
+                ForeignEditionId = "eligible-edition", Language = "eng", ReadingFormatId = mediaType == BookMediaType.Audiobook ? 2 : 3,
+                Ratings = new Ratings { Votes = 1 }
+            });
+            retained = service.SelectRemoteEditions(local, remote);
+            Assert.That(retained.Select(edition => edition.ForeignEditionId), Is.EqualTo(new[] { "eligible-edition" }));
+        }
+
     }
 }

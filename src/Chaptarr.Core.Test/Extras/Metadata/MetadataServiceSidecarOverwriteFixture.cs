@@ -26,6 +26,30 @@ namespace Chaptarr.Core.Test.Extras.Metadata
     public class MetadataServiceSidecarOverwriteFixture
     {
         [Test]
+        public void retained_edited_sidecar_in_old_folder_should_not_block_new_folder_metadata()
+        {
+            var disk = new TestDisk();
+            disk.TextFiles["/library/A Author/A Book/metadata.json"] = "edited elsewhere";
+            var consumer = new TestMetadataConsumer
+            {
+                Metadata = new MetadataFileResult("New Book/metadata.json", "new", overwriteExisting: true)
+            };
+            var bookFile = BuildBookFile();
+            bookFile.Path = "/library/A Author/New Book/book.m4b";
+            var retained = new MetadataFile { Id = 52, AuthorId = 10, BookId = 20, BookFileId = null,
+                Consumer = consumer.GetType().Name, Type = MetadataType.BookMetadata,
+                RelativePath = "A Book/metadata.json", Hash = null };
+
+            var result = InvokeProcessBookMetadata(CreateSubject(disk), consumer, BuildAuthor(), bookFile, new List<MetadataFile> { retained });
+
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.BookFileId, Is.EqualTo(bookFile.Id));
+            Assert.That(disk.TextFiles["/library/A Author/New Book/metadata.json"], Is.EqualTo("new"));
+            Assert.That(disk.TextFiles["/library/A Author/A Book/metadata.json"], Is.EqualTo("edited elsewhere"));
+            Assert.That(disk.DeletedMetadataIds, Is.Empty);
+        }
+
+        [Test]
         public void should_not_overwrite_existing_untracked_book_metadata()
         {
             var disk = new TestDisk();

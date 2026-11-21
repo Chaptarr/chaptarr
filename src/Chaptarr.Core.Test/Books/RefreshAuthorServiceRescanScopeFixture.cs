@@ -1,3 +1,4 @@
+using Chaptarr.Core.Test.Common;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -225,7 +226,7 @@ namespace Chaptarr.Core.Test.Books
 
             var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
 
-            return new RefreshAuthorService(
+            return new RefreshAuthorService(MetadataHealthGateStub.Ready(),
                 authorInfo: null,
                 authorService: authorService,
                 bookService: null,
@@ -236,7 +237,7 @@ namespace Chaptarr.Core.Test.Books
                 eventAggregator: eventAggregator,
                 commandQueueManager: commandQueue,
                 mediaFileService: mediaFileService,
-                historyService: null,
+                historyRepository: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoHistoryRepositoryCalls(),
                 rootFolderService: rootFolderService,
                 checkIfAuthorShouldBeRefreshed: null,
                 monitorNewBookService: null,
@@ -245,7 +246,7 @@ namespace Chaptarr.Core.Test.Books
                 syncMetadataService: null,
                 syncQueueService: null,
                 rootFolderSettingsResolver: null,
-                logger: LogManager.GetLogger(nameof(RefreshAuthorServiceRescanScopeFixture)));
+                logger: LogManager.GetLogger(nameof(RefreshAuthorServiceRescanScopeFixture)), bookRepository: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoBookRepositoryCalls(), authorRepository: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoPendingAuthorSetup());
         }
 
         public class AuthorServiceProxy : DispatchProxy
@@ -257,7 +258,7 @@ namespace Chaptarr.Core.Test.Books
                 return targetMethod?.Name switch
                 {
                     nameof(IAuthorService.GetAuthor) => Authors.Single(author => author.Id == (int)args[0]),
-                    nameof(IAuthorService.GetAuthors) => Authors
+                    nameof(IAuthorService.GetAuthors) or nameof(IAuthorService.GetExistingAuthors) => Authors
                         .Where(author => ((IEnumerable<int>)args[0]).Contains(author.Id))
                         .ToList(),
                     nameof(IAuthorService.GetAllAuthors) => Authors,
@@ -363,6 +364,7 @@ namespace Chaptarr.Core.Test.Books
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();

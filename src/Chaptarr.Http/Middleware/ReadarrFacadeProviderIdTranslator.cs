@@ -35,25 +35,39 @@ namespace Chaptarr.Http.Middleware
 
         public static bool IsBareWorkTerm(string term)
         {
+            return IsBareNumericTerm(term, "work");
+        }
+
+        private static bool IsBareNumericTerm(string term, string kind)
+        {
             if (string.IsNullOrWhiteSpace(term) ||
-                !term.Trim().StartsWith("work:", StringComparison.OrdinalIgnoreCase))
+                !term.Trim().StartsWith(kind + ":", StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
 
-            var id = term.Trim().Substring("work:".Length).Trim();
+            var id = term.Trim().Substring(kind.Length + 1).Trim();
             return id.Length > 0 && id.All(char.IsDigit);
         }
 
-        public static string NormalizeWorkTerm(string term, ReadarrFacadeContext facadeContext)
+        public static string NormalizeLookupTerm(string term, ReadarrFacadeContext facadeContext)
         {
-            if (!IsBareWorkTerm(term) || facadeContext == null)
+            if (facadeContext == null)
             {
                 return term;
             }
 
-            var id = term.Trim().Substring("work:".Length).Trim();
-            return facadeContext.IsGoodreads ? "gr:" + id : "hc:" + id;
+            var provider = facadeContext.IsGoodreads ? "gr" : "hc";
+            foreach (var kind in new[] { "work", "edition" })
+            {
+                if (IsBareNumericTerm(term, kind))
+                {
+                    var id = term.Trim().Substring(kind.Length + 1).Trim();
+                    return provider + (kind == "edition" ? "-ed:" : ":") + id;
+                }
+            }
+
+            return term;
         }
 
         public static string ProviderPrefixRequiredMessage(string field)

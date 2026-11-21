@@ -22,7 +22,6 @@ namespace NzbDrone.Core.HealthCheck.Checks
         private readonly IIndexerHttpClientFactory _indexerHttpClientFactory;
 
         private readonly IHttpRequestBuilderFactory _cloudRequestBuilder;
-        private readonly IHttpRequestBuilderFactory _gitHubRequestBuilder;
 
         public ProxyCheck(IChaptarrCloudRequestBuilder cloudRequestBuilder,
                           IConfigService configService,
@@ -38,7 +37,6 @@ namespace NzbDrone.Core.HealthCheck.Checks
             _logger = logger;
 
             _cloudRequestBuilder = cloudRequestBuilder.Services;
-            _gitHubRequestBuilder = cloudRequestBuilder.GitHubApi;
         }
 
         public override HealthCheck Check()
@@ -61,14 +59,9 @@ namespace NzbDrone.Core.HealthCheck.Checks
                     return new HealthCheck(GetType(), HealthCheckResult.Error, ex.Message, "#proxy-failed-configuration");
                 }
 
-                // Use GitHub API for proxy check if GitHub updates are enabled
-                var request = _configService.UseGitHubUpdates
-                    ? _gitHubRequestBuilder.Create()
-                                          .Resource("rate_limit")
-                                          .Build()
-                    : _cloudRequestBuilder.Create()
-                                          .Resource("/ping")
-                                          .Build();
+                var request = _cloudRequestBuilder.Create()
+                                                  .Resource("/ping")
+                                                  .Build();
 
                 try
                 {

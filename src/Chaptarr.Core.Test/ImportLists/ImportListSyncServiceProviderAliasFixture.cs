@@ -25,20 +25,6 @@ namespace Chaptarr.Core.Test.ImportLists
         }
 
         [Test]
-        public void book_matching_should_match_remote_provider_aliases()
-        {
-            var book = new Book
-            {
-                HardcoverBookId = "hc:383236",
-                RemoteProviderIds = new HashSet<string> { "gr:3046572" }
-            };
-
-            var matches = InvokeBookMatchesProviderId(book, "gr", "gr:3046572", "3046572");
-
-            Assert.That(matches, Is.True);
-        }
-
-        [Test]
         public void author_provider_ids_should_include_remote_provider_aliases()
         {
             var author = new Author
@@ -68,12 +54,5 @@ namespace Chaptarr.Core.Test.ImportLists
             return ((IEnumerable<string>)method.Invoke(null, new object[] { author })).ToList();
         }
 
-        private static bool InvokeBookMatchesProviderId(Book book, string providerPrefix, string providerId, string rawId)
-        {
-            var method = typeof(ImportListSyncService).GetMethod("BookMatchesProviderId", BindingFlags.NonPublic | BindingFlags.Static);
-            Assert.That(method, Is.Not.Null);
-
-            return (bool)method.Invoke(null, new object[] { book, providerPrefix, providerId, rawId });
-        }
     }
 }

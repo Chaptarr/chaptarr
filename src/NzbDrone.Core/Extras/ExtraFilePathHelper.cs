@@ -2,14 +2,101 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using NLog;
+using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.MediaFiles;
 
 namespace NzbDrone.Core.Extras
 {
     public static class ExtraFilePathHelper
     {
+        public static string ResolveOwnedSidecarPath(Author author, ExtraFile extra,
+            IEnumerable<BookFile> files, IDiskProvider diskProvider)
+        {
+            if (extra.RelativePath.IsNullOrWhiteSpace() || Path.IsPathRooted(extra.RelativePath))
+            {
+                return null;
+            }
+
+            var fileFolders = files.Where(file => file != null && file.Path.IsNotNullOrWhiteSpace() &&
+                    (!extra.BookFileId.HasValue || extra.BookFileId == file.Id) &&
+                    (!extra.BookId.HasValue || extra.BookId == file.Edition?.BookId))
+                .Select(file => Path.GetDirectoryName(file.Path)).ToList();
+            var candidates = GetAuthorBasePaths(author)
+                .Select(basePath => Path.GetFullPath(Path.Combine(basePath, extra.RelativePath)))
+                .Where(path => fileFolders.Any(folder => folder.PathEquals(Path.GetDirectoryName(path))))
+                .Distinct(NzbDrone.Common.PathEqualityComparer.Instance)
+                .Where(diskProvider.FileExistsCanonical).ToList();
+            return candidates.Count == 1 ? candidates[0] : null;
+        }
+
+        public static void CleanupEmptySourceFolders(IDiskProvider diskProvider, Logger logger,
+            IEnumerable<(string SourceFolder, string SourceAuthorFolderPath)> candidates)
+        {
+            foreach (var candidate in candidates)
+            {
+                var folder = candidate.SourceFolder;
+                var boundary = candidate.SourceAuthorFolderPath;
+                if (folder.IsNullOrWhiteSpace() || boundary.IsNullOrWhiteSpace())
+                {
+                    continue;
+                }
+
+                try
+                {
+                    folder = Path.GetFullPath(folder);
+                    boundary = Path.GetFullPath(boundary);
+                    while (folder.PathEquals(boundary) || boundary.IsParentPath(folder))
+                    {
+                        if (diskProvider.FolderExists(folder))
+                        {
+                            if (diskProvider.GetFileAttributes(folder).HasFlag(FileAttributes.ReparsePoint))
+                            {
+                                break;
+                            }
+
+                            diskProvider.RemoveEmptySubfolders(folder);
+                            if (diskProvider.GetFiles(folder, true).Any())
+                            {
+                                break;
+                            }
+
+                            // The final operation must refuse concurrent arrivals; an earlier
+                            // empty check never authorizes recursively deleting the contents.
+                            try
+                            {
+                                diskProvider.DeleteFolder(folder, recursive: false);
+                                logger.Debug("Removed empty source folder: {0}", folder);
+                            }
+                            catch (IOException)
+                            {
+                                // Remaining files, sidecars or concurrent writes keep the folder.
+                                logger.Debug("Keeping source folder because it is no longer empty or could not be removed: {0}", folder);
+                            }
+                        }
+
+                        if (folder.PathEquals(boundary))
+                        {
+                            break;
+                        }
+
+                        folder = Path.GetDirectoryName(folder);
+                        if (folder.IsNullOrWhiteSpace())
+                        {
+                            break;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.Warn(ex, "Unable to clean empty source folders for {0}", candidate.SourceFolder);
+                }
+            }
+        }
+
         public static List<string> GetAuthorBasePaths(Author author)
         {
             var paths = new List<string>();

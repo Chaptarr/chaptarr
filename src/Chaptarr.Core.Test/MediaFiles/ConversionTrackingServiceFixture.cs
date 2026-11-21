@@ -1,4 +1,6 @@
+using System;
 using System.Threading;
+using System.Threading.Tasks;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
@@ -101,6 +103,78 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(status.Progress, Is.Null);
             Assert.That(status.CanCancel, Is.False);
             Assert.That(subject.Cancel("download-cancel"), Is.False);
+        }
+
+        [Test]
+        public void unregister_should_wait_for_inflight_cancel_before_owner_disposes_source()
+        {
+            var subject = new ConversionTrackingService(new NoOpEventAggregator());
+            var downloadId = Guid.NewGuid().ToString("N");
+            using var cancellation = new CancellationTokenSource();
+            using var cancelEntered = new ManualResetEventSlim();
+            using var releaseCancel = new ManualResetEventSlim();
+            using var removalFinished = new ManualResetEventSlim();
+            using var registration = cancellation.Token.Register(() =>
+            {
+                cancelEntered.Set();
+                if (!releaseCancel.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Cancellation was not released.");
+            });
+            subject.Start(downloadId, 12, "M4B");
+            subject.RegisterCancellation(downloadId, cancellation);
+            var cancel = Task.Run(() => subject.Cancel(downloadId));
+            Exception removalError = null;
+            var removal = new Thread(() =>
+            {
+                try
+                {
+                    subject.UnregisterCancellation(downloadId, cancellation);
+                    cancellation.Dispose();
+                }
+                catch (Exception ex) { removalError = ex; }
+                finally { removalFinished.Set(); }
+            }) { IsBackground = true };
+            var removalStarted = false;
+            try
+            {
+                Assert.That(cancelEntered.Wait(TimeSpan.FromSeconds(5)), Is.True);
+                removal.Start();
+                removalStarted = true;
+                Assert.That(SpinWait.SpinUntil(() => removalFinished.IsSet ||
+                    (removal.ThreadState & ThreadState.WaitSleepJoin) != 0, TimeSpan.FromSeconds(5)), Is.True);
+                Assert.That(removalFinished.IsSet, Is.False, "Owner disposal must wait for the accepted cancellation call.");
+            }
+            finally
+            {
+                releaseCancel.Set();
+                Assert.That(cancel.Wait(TimeSpan.FromSeconds(5)), Is.True);
+                if (removalStarted) Assert.That(removal.Join(TimeSpan.FromSeconds(5)), Is.True);
+                subject.Complete(downloadId);
+            }
+            Assert.That(cancel.Result, Is.True);
+            Assert.That(removalError, Is.Null);
+            Assert.That(subject.Cancel(downloadId), Is.False);
+        }
+
+        [Test]
+        public void older_owner_unregister_should_preserve_replacement_attempt_cancellation()
+        {
+            var subject = new ConversionTrackingService(new NoOpEventAggregator());
+            var downloadId = Guid.NewGuid().ToString("N");
+            using var previous = new CancellationTokenSource();
+            using var replacement = new CancellationTokenSource();
+            var previousToken = previous.Token;
+            subject.Start(downloadId, 12, "M4B");
+            subject.RegisterCancellation(downloadId, previous);
+            subject.Start(downloadId, 12, "M4B", "Retrying conversion");
+            subject.RegisterCancellation(downloadId, replacement);
+            subject.UnregisterCancellation(downloadId, previous);
+            previous.Dispose();
+            Assert.That(subject.Get(downloadId).CanCancel, Is.True);
+            Assert.That(subject.Cancel(downloadId), Is.True);
+            Assert.That(replacement.IsCancellationRequested, Is.True);
+            Assert.That(previousToken.IsCancellationRequested, Is.False);
+            subject.UnregisterCancellation(downloadId, replacement);
+            subject.Complete(downloadId);
         }
     }
 }

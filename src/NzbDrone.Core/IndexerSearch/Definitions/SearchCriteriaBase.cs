@@ -1,8 +1,8 @@
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using NzbDrone.Common.EnsureThat;
-using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.IndexerSearch.Definitions
 {
@@ -18,6 +18,7 @@ namespace NzbDrone.Core.IndexerSearch.Definitions
         public Author Author { get; set; }
         public List<Book> Books { get; set; }
         public List<Book> AuthorCatalog { get; set; }
+        public IndexerSearchStatistics IndexerStatistics { get; } = new();
 
         public string AuthorQuery => GetQueryTitle(Author.Name);
 
@@ -40,7 +41,7 @@ namespace NzbDrone.Core.IndexerSearch.Definitions
 
             //remove any repeating +s
             cleanTitle = Regex.Replace(cleanTitle, @"\+{2,}", "+");
-            cleanTitle = cleanTitle.RemoveAccent();
+            cleanTitle = UnicodeComparisonNormalizer.NormalizeText(cleanTitle, preserveCase: true);
             cleanTitle = cleanTitle.Trim('+', ' ');
 
             return cleanTitle.Length == 0 ? title : cleanTitle;

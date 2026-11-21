@@ -21,7 +21,9 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Books.Calibre;
+using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Exceptions;
@@ -319,11 +321,10 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                 if (httpResponse.HasHttpError)
                 {
-                    _logger.Error("V5 author API error for author {0} (page {1}): Status {2}, Content: {3}",
+                    _logger.Error("V5 author API error for author {0} (page {1}): Status {2}",
                         authorId,
                         page,
-                        httpResponse.StatusCode,
-                        httpResponse.Content?.Substring(0, Math.Min(500, httpResponse.Content?.Length ?? 0)));
+                        httpResponse.StatusCode);
                     var typedTerminal = ParseTypedAuthorTerminal(httpResponse, authorId);
                     if (typedTerminal != null)
                     {
@@ -443,11 +444,10 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                 if (httpResponse.HasHttpError)
                 {
-                    _logger.Error("V5 author API error for author {0} (page {1}): Status {2}, Content: {3}",
+                    _logger.Error("V5 author API error for author {0} (page {1}): Status {2}",
                         authorId,
                         page,
-                        httpResponse.StatusCode,
-                        httpResponse.Content?.Substring(0, Math.Min(500, httpResponse.Content?.Length ?? 0)));
+                        httpResponse.StatusCode);
                     var typedTerminal = ParseTypedAuthorTerminal(httpResponse, authorId);
                     if (typedTerminal != null)
                     {
@@ -536,6 +536,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             _logger.Debug("RefreshAuthorInfo called for author {0}, ETag: {1}, ForceRefresh: {2}, ExpectedPublishedETag: {3}, BypassETag: {4}",
                 authorId, etag ?? "none", forceRefresh, expectedPublishedETag ?? "none", bypassEtag);
 
+            HttpStatusCode? responseStatus = null;
             try
             {
                 var metadataServerUrl = _configService.MetadataServerUrl;
@@ -571,6 +572,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 var httpRequest = httpRequestBuilder.Build();
                 var httpResponse = ExecuteV5Request(httpRequest, _httpClient.Get, $"author refresh {authorId}");
 
+                responseStatus = httpResponse.StatusCode;
                 _logger.Debug("Refresh API response status: {0}", httpResponse.StatusCode);
 
                 // Handle 304 Not Modified - no changes since last ETag
@@ -591,7 +593,11 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     {
                         _logger.Warn("Author {0} refresh declared {1}; preserving the existing local snapshot. {2}",
                             authorId, typedTerminal.Code, typedTerminal.Message);
-                        return RefreshResult.NoChanges(etag);
+                        var refused = RefreshResult.NoChanges(etag);
+                        refused.Terminal = typedTerminal;
+                        refused.Message = typedTerminal.Message;
+                        refused.HttpStatus = httpResponse.StatusCode;
+                        return refused;
                     }
 
                     if (httpResponse.StatusCode == HttpStatusCode.NotFound)
@@ -616,8 +622,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 if (httpResponse.HasHttpError)
                 {
                     var errorMsg = $"Refresh API error for author {authorId}: {httpResponse.StatusCode}";
-                    _logger.Error(errorMsg + ", Content: {0}", 
-                        httpResponse.Content?.Substring(0, Math.Min(500, httpResponse.Content?.Length ?? 0)));
+                    _logger.Error(errorMsg);
                     return RefreshResult.Error(errorMsg, httpResponse.StatusCode);
                 }
 
@@ -627,7 +632,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 if (v5Response?.Author == null)
                 {
                     _logger.Error("Refresh API returned empty author data for {0}", authorId);
-                    return RefreshResult.Error("Empty author data received");
+                    return RefreshResult.Error("Empty author data received", responseStatus);
                 }
 
                 // Extract new ETag from response headers
@@ -643,7 +648,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             catch (Exception ex)
             {
                 _logger.Error(ex, "Error refreshing author info for {0}", authorId);
-                return RefreshResult.Error($"Refresh failed: {ex.Message}");
+                return RefreshResult.Error($"Refresh failed: {ex.Message}", (ex as HttpException)?.Response?.StatusCode ?? responseStatus);
             }
         }
 
@@ -883,22 +888,6 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     AddRemoteProviderId(id);
                 }
 
-                if (authorData.ProviderIdsAll != null)
-                {
-                    foreach (var kvp in authorData.ProviderIdsAll)
-                    {
-                        if (kvp.Value == null)
-                        {
-                            continue;
-                        }
-
-                        foreach (var id in kvp.Value)
-                        {
-                            AddRemoteProviderId(id);
-                        }
-                    }
-                }
-
                 if (remoteProviderIds?.Count > 0)
                 {
                     author.RemoteProviderIds = remoteProviderIds;
@@ -1101,7 +1090,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     return ProviderIdHelper.Normalize(providerId, prefix);
                 }
 
-                var bookByMediaAndProviderId = new Dictionary<BookMediaType, Dictionary<string, Book>>();
+                var bookByMediaAndProviderId = new Dictionary<BookMediaType, Dictionary<string, List<Book>>>();
                 foreach (var book in author.Books)
                 {
                     if (book == null)
@@ -1111,7 +1100,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                     if (!bookByMediaAndProviderId.TryGetValue(book.MediaType, out var map))
                     {
-                        map = new Dictionary<string, Book>(StringComparer.OrdinalIgnoreCase);
+                        map = new Dictionary<string, List<Book>>(StringComparer.OrdinalIgnoreCase);
                         bookByMediaAndProviderId[book.MediaType] = map;
                     }
 
@@ -1123,10 +1112,13 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                             return;
                         }
 
-                        if (!map.ContainsKey(normalized))
+                        if (!map.TryGetValue(normalized, out var books))
                         {
-                            map[normalized] = book;
+                            books = new List<Book>();
+                            map[normalized] = books;
                         }
+
+                        books.Add(book);
                     }
 
                     AddKey(book.HardcoverBookId);
@@ -1154,32 +1146,64 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                             continue;
                         }
 
-                        if (!map.TryGetValue(normalizedBookId, out var matchingBook))
+                        if (!map.TryGetValue(normalizedBookId, out var matchingBooks))
                         {
                             _logger.Trace("[SERIES-LINKS] No local {0} book match for series '{1}' member '{2}' ({3})",
                                 series.MediaType, series.Title, seriesBook?.Title, normalizedBookId);
                             continue;
                         }
 
-                        matchingBook.SeriesLinks ??= new List<SeriesBookLink>();
-
-                        if (matchingBook.SeriesLinks.Any(l => l?.Series?.IsLoaded == true && ReferenceEquals(l.Series.Value, series)))
+                        foreach (var matchingBook in matchingBooks)
                         {
-                            continue;
+                            matchingBook.SeriesLinks ??= new List<SeriesBookLink>();
+
+                            if (matchingBook.SeriesLinks.Any(l => l?.Series?.IsLoaded == true && ReferenceEquals(l.Series.Value, series)))
+                            {
+                                continue;
+                            }
+
+                            matchingBook.SeriesLinks.Add(new SeriesBookLink
+                            {
+                                Series = new LazyLoaded<Series>(series),
+                                Position = seriesBook.Position,
+                                SeriesPosition = int.TryParse(seriesBook.Position, out var pos) ? pos : 0,
+                                IsPrimary = seriesBook.IsPrimary
+                            });
                         }
-
-                        matchingBook.SeriesLinks.Add(new SeriesBookLink
-                        {
-                            Series = new LazyLoaded<Series>(series),
-                            Position = seriesBook.Position,
-                            SeriesPosition = int.TryParse(seriesBook.Position, out var pos) ? pos : 0,
-                            IsPrimary = seriesBook.IsPrimary ?? true
-                        });
                     }
                 }
             }
 
             author.Series = allSeries;
+            var missingPrimary = 0;
+            var unmatchedPrimary = 0;
+            var withoutMembership = 0;
+            var withMembership = 0;
+            foreach (var book in author.Books)
+            {
+                var links = BookSeries.GetLinks(book).ToList();
+                if (links.Count == 0)
+                {
+                    withoutMembership++;
+                    continue;
+                }
+
+                withMembership++;
+                if (!book.SeriesId.HasValue)
+                {
+                    missingPrimary++;
+                }
+                else if (BookSeries.GetHeaderLink(book, links) == null)
+                {
+                    unmatchedPrimary++;
+                }
+            }
+
+            if (unmatchedPrimary > 0)
+                _logger.Warn("[SERIES-V5] Author {0}: {1} book instances have a header series ID without a matching same-media Goodreads membership; retaining the existing series selection",
+                    author.Name, unmatchedPrimary);
+            _logger.Debug("[SERIES-V5] Author {0}: {1} book instances with Goodreads memberships, {2} without primary series ID, {3} with an unmatched primary ID, {4} without a Goodreads membership; no text-only memberships created",
+                author.Name, withMembership, missingPrimary, unmatchedPrimary, withoutMembership);
             _logger.Trace("[SERIES-TOTAL] Created {0} total series instances ({1} audiobook, {2} ebook) from V5 API data",
                 allSeries.Count,
                 allSeries.Count(s => s.MediaType == BookMediaType.Audiobook),
@@ -1411,20 +1435,14 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             AddProviderId(ids, book?.Asin, "az");
             AddProviderId(ids, book?.AudibleAsin, "az");
 
-            if (book?.LegacyProviderIds != null)
+            foreach (var providerId in EnumerateV5ProviderIds(book?.LegacyProviderIds?.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value)))
             {
-                foreach (var providerId in book.LegacyProviderIds.Values)
-                {
-                    AddProviderId(ids, providerId, null);
-                }
+                AddProviderId(ids, providerId, null);
             }
 
-            if (book?.ProviderIds != null)
+            foreach (var providerId in EnumerateProviderAliases(book?.ProviderIds))
             {
-                foreach (var providerId in book.ProviderIds.SelectMany(kvp => kvp.Value ?? new List<string>()))
-                {
-                    AddProviderId(ids, providerId, null);
-                }
+                AddProviderId(ids, providerId, null);
             }
 
             return ids;
@@ -1494,31 +1512,8 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 remoteProviderIds.Add(id.Trim());
             }
 
-            void AddRemoteWorkProviderId(string id, string providerKey = null)
+            void AddRemoteWorkProviderId(string normalized)
             {
-                if (string.IsNullOrWhiteSpace(id))
-                {
-                    return;
-                }
-
-                string normalized = null;
-                try
-                {
-                    var trimmed = id.Trim();
-                    if (trimmed.Contains(":"))
-                    {
-                        normalized = ProviderIdHelper.Normalize(trimmed, defaultPrefix: null);
-                    }
-                    else if (TryGetStableWorkPrefix(providerKey, out var expectedPrefix))
-                    {
-                        normalized = ProviderIdHelper.Canonicalize(trimmed, expectedPrefix);
-                    }
-                }
-                catch
-                {
-                    normalized = null;
-                }
-
                 if (string.IsNullOrWhiteSpace(normalized))
                 {
                     return;
@@ -1543,23 +1538,14 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 AddRemoteProviderId(normalized);
             }
 
-            if (v5Book.LegacyProviderIds != null)
+            foreach (var id in EnumerateV5ProviderIds(v5Book.LegacyProviderIds?.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value)))
             {
-                foreach (var kvp in v5Book.LegacyProviderIds)
-                {
-                    AddRemoteWorkProviderId(kvp.Value, kvp.Key);
-                }
+                AddRemoteWorkProviderId(id);
             }
 
-            if (v5Book.ProviderIds != null)
+            foreach (var id in EnumerateProviderAliases(v5Book.ProviderIds))
             {
-                foreach (var kvp in v5Book.ProviderIds)
-                {
-                    foreach (var id in kvp.Value ?? new List<string>())
-                    {
-                        AddRemoteWorkProviderId(id, kvp.Key);
-                    }
-                }
+                AddRemoteWorkProviderId(id);
             }
 
             var inferredAsinFromId = v5Book.Id?.StartsWith("az:", StringComparison.OrdinalIgnoreCase) == true
@@ -1610,7 +1596,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 Title = v5Book.Title,
                 Subtitle = v5Book.Subtitle,
                 // CleanTitle is used for matching and must use the same normalization as Parser/BookRepository lookups.
-                CleanTitle = (v5Book.Title ?? string.Empty).CleanBookTitle().CleanAuthorName(),
+                CleanTitle = StringSuperNormalizer.ComputeBookComparisonKey(v5Book.Title),
                 TitleSlug = v5Book.Slug, // CRITICAL: Fixes undefined URLs
                 Overview = v5Book.Description, // CRITICAL: Adds book descriptions
                 ForeignEditionId = v5Book.Id, // Use V5 book ID as foreign edition ID
@@ -1705,7 +1691,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             {
                 book.SeriesName = v5Book.SeriesName;
                 book.SeriesPosition = v5Book.SeriesPosition;
-                book.SeriesId = v5Book.SeriesId.HasValue ? (int?)v5Book.SeriesId.Value : null;
+                book.SeriesId = checked((int?)v5Book.SeriesId);
             }
 
             // Create editions. Keep the full remote candidate set here; metadata-profile
@@ -1730,9 +1716,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             // Prefer matching the instance media type (audiobook/ebook) to avoid mixing physical dates into audiobook instances.
             if (!book.ReleaseDate.HasValue)
             {
-                var targetReadingFormatId = mediaType == BookMediaType.Audiobook ? 2 :
-                                            mediaType == BookMediaType.Ebook ? 3 :
-                                            (int?)null;
+                var targetReadingFormatId = EditionReadingFormat.NativeFor(mediaType);
 
                 var editionCandidates = v5Book.Editions ?? new List<V5.V5Edition>();
                 if (targetReadingFormatId.HasValue)
@@ -1756,7 +1740,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     _logger.Trace("[BOOK-DATE] Inferred ReleaseDate for '{0}' as {1:yyyy-MM-dd} from editions (mediaType={2})",
                         book.Title, book.ReleaseDate.Value, mediaType?.ToString() ?? "null");
                 }
-                else if (v5Book.PublicationYear.HasValue)
+                else if (v5Book.PublicationYear is >= 1 and <= 9999)
                 {
                     book.ReleaseDate = new DateTime(v5Book.PublicationYear.Value, 1, 1);
                 }
@@ -1863,6 +1847,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 // New provider IDs
                 AudibleASIN = v5Edition.Asin, // Same as ASIN for audiobooks
                 GoogleBooksEditionId = v5Edition.GoogleBooksEditionId,
+                RemoteProviderIds = V5Resource.ProviderIdMapCoercion.ToAliasSet(v5Edition.ProviderIds),
                 GoodreadsEditionId = long.TryParse(v5Edition.GoodreadsEditionId, out var grId) ? grId : (long?)null,
                 HardcoverEditionId = ResolveHardcoverEditionId(v5Edition),
                 OpenLibraryEditionId = v5Edition.OpenLibraryEditionId,
@@ -2145,34 +2130,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
         public Tuple<string, Book, List<Author>> GetBookInfo(string foreignBookId, BookMediaType mediaType = BookMediaType.Audiobook, string authorHintProviderId = null)
         {
-            var normalizedForeignBookId = NormalizeGoodreadsProviderId(foreignBookId);
-
-            try
-            {
-                _logger.Debug("Getting book info for foreignBookId: {0}", normalizedForeignBookId);
-
-                return PollBook(normalizedForeignBookId, mediaType, authorHintProviderId);
-            }
-            catch (WebException e)
-            {
-                _logger.Warn(e, "Request failure getting book info for {0}", normalizedForeignBookId);
-                throw new BookNotFoundException(normalizedForeignBookId);
-            }
-            catch (HttpException e)
-            {
-                _logger.Warn(e, "Request failure getting book info for {0}", normalizedForeignBookId);
-                throw new BookNotFoundException(normalizedForeignBookId);
-            }
-            catch (BadRequestException e)
-            {
-                _logger.Debug(e, "Bad request getting book info for {0}", normalizedForeignBookId);
-                throw new BookNotFoundException(normalizedForeignBookId);
-            }
-            catch (BookInfoException e)
-            {
-                _logger.Warn(e, "Unexpected error getting book info for {0}", normalizedForeignBookId);
-                throw new BookNotFoundException(normalizedForeignBookId);
-            }
+            return GetWorkInfo(foreignBookId, mediaType, authorHintProviderId);
         }
 
         public Tuple<string, Book, List<Author>> GetWorkInfo(string foreignWorkId, BookMediaType mediaType = BookMediaType.Audiobook, string authorHintProviderId = null)
@@ -2184,67 +2142,49 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 _logger.Debug("Getting work info for foreignWorkId: {0}", normalizedForeignWorkId);
                 return PollBook(normalizedForeignWorkId, mediaType, authorHintProviderId);
             }
-            catch (WebException e)
+            catch (Exception ex) when (ex is WebException || ex is HttpException || ex is HttpRequestException)
             {
-                _logger.Warn(e, "Request failure getting work info for {0}", normalizedForeignWorkId);
-                throw new BookNotFoundException(normalizedForeignWorkId);
-            }
-            catch (HttpException e)
-            {
-                _logger.Warn(e, "Request failure getting work info for {0}", normalizedForeignWorkId);
-                throw new BookNotFoundException(normalizedForeignWorkId);
-            }
-            catch (BadRequestException e)
-            {
-                _logger.Debug(e, "Bad request getting work info for {0}", normalizedForeignWorkId);
-                throw new BookNotFoundException(normalizedForeignWorkId);
-            }
-            catch (BookInfoException e)
-            {
-                _logger.Warn(e, "Unexpected error getting work info for {0}", normalizedForeignWorkId);
-                throw new BookNotFoundException(normalizedForeignWorkId);
+                _logger.Warn(ex, "Request failure getting work info for {0}", normalizedForeignWorkId);
+                throw new BookInfoException("Failed to get work info for {0}", ex, normalizedForeignWorkId);
             }
         }
 
         public Tuple<string, Book, List<Author>> GetEditionInfo(string foreignEditionId, BookMediaType mediaType = BookMediaType.Audiobook)
         {
-            var normalizedForeignEditionId = NormalizeGoodreadsProviderId(foreignEditionId);
+            var normalizedForeignEditionId = NormalizeEditionProviderId(foreignEditionId);
 
             try
             {
                 _logger.Debug("Getting edition info for foreignEditionId: {0}", normalizedForeignEditionId);
                 return PollEditionBook(normalizedForeignEditionId, mediaType);
             }
-            catch (WebException e)
+            catch (Exception ex) when (ex is WebException || ex is HttpException || ex is HttpRequestException)
             {
-                _logger.Warn(e, "Request failure getting edition info for {0}", normalizedForeignEditionId);
-                throw new BookNotFoundException(normalizedForeignEditionId);
+                _logger.Warn(ex, "Request failure getting edition info for {0}", normalizedForeignEditionId);
+                throw new BookInfoException("Failed to get edition info for {0}", ex, normalizedForeignEditionId);
             }
-            catch (HttpException e)
-            {
-                _logger.Warn(e, "Request failure getting edition info for {0}", normalizedForeignEditionId);
-                throw new BookNotFoundException(normalizedForeignEditionId);
-            }
-            catch (BadRequestException e)
-            {
-                _logger.Debug(e, "Bad request getting edition info for {0}", normalizedForeignEditionId);
-                throw new BookNotFoundException(normalizedForeignEditionId);
-            }
-            catch (BookInfoException e)
-            {
-                _logger.Warn(e, "Unexpected error getting edition info for {0}", normalizedForeignEditionId);
-                throw new BookNotFoundException(normalizedForeignEditionId);
-            }
+        }
+
+        private static string NormalizeEditionProviderId(string foreignEditionId)
+        {
+            return NormalizeGoodreadsProviderId(BookEditionIdentity.NormalizeEditionLookupId(foreignEditionId));
         }
 
         private static string NormalizeGoodreadsProviderId(string foreignBookId)
         {
             if (foreignBookId.IsNullOrWhiteSpace())
             {
-                return foreignBookId;
+                throw new InvalidProviderIdException(foreignBookId, "A provider identifier is required for metadata lookup.");
             }
 
-            return ProviderIdHelper.Normalize(foreignBookId.Trim(), defaultPrefix: null);
+            try
+            {
+                return ProviderIdHelper.Normalize(foreignBookId.Trim(), defaultPrefix: null);
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidProviderIdException(foreignBookId, ex.Message);
+            }
         }
 
         public List<object> SearchForNewEntity(string title)
@@ -2434,51 +2374,33 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 .ToList();
         }
 
-            public List<Book> SearchForNewBook(string title, string author, bool getAllEditions = true)
+        public List<Book> SearchForNewBook(string title, string author, bool getAllEditions = true, BookMediaType? mediaType = null)
+        {
+            var term = title.Trim();
+            var q = term.ToLowerInvariant();
+            if (author != null)
             {
-                var q = title.ToLower().Trim();
-                if (author != null)
+                q += " " + author;
+            }
+
+            try
+            {
+                if (BookEditionIdentity.IsExplicitEditionProviderId(term))
                 {
-                    q += " " + author;
+                    var editionId = NormalizeEditionProviderId(term);
+                    return SearchByV5EditionId(editionId, getAllEditions, mediaType);
                 }
 
-                try
+                var split = term.Split(':');
+                var prefix = split[0].ToLowerInvariant();
+                if (split.Length == 2 && ProviderIdHelper.IsCanonicalPrefix(prefix))
                 {
-                    // Canonical provider-prefixed lookup (hc:/gr:/ol:/gb:/az:) should route to the V5 work endpoint,
-                    // not to Goodreads text search.
-                    var trimmed = title?.Trim();
-                    if (!trimmed.IsNullOrWhiteSpace())
-                    {
-                        var firstColon = trimmed.IndexOf(':');
-                        if (firstColon > 0 &&
-                            firstColon < trimmed.Length - 1 &&
-                            trimmed.IndexOf(':', firstColon + 1) == -1)
-                        {
-                            var canonicalPrefix = trimmed.Substring(0, firstColon).Trim().ToLowerInvariant();
-                            if (ProviderIdHelper.IsCanonicalPrefix(canonicalPrefix))
-                            {
-                                try
-                                {
-                                    var normalized = ProviderIdHelper.Normalize(trimmed, defaultPrefix: null);
-                                    return SearchByV5WorkId(normalized);
-                                }
-                                catch (BookNotFoundException)
-                                {
-                                    return new List<Book>();
-                                }
-                            }
-                        }
-                    }
-
-                    var lowerTitle = title.ToLowerInvariant();
-
-                    var split = lowerTitle.Split(':');
-                    var prefix = split[0];
+                    return SearchByV5WorkId(ProviderIdHelper.Normalize(term, defaultPrefix: null));
+                }
 
                 if (split.Length == 2 && new[] { "author", "work", "edition", "isbn", "asin" }.Contains(prefix))
                 {
                     var slug = split[1].Trim();
-
                     if (slug.IsNullOrWhiteSpace() || slug.Any(char.IsWhiteSpace))
                     {
                         return new List<Book>();
@@ -2486,33 +2408,30 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                     if (prefix == "author" || prefix == "work" || prefix == "edition")
                     {
-                        var isValid = int.TryParse(slug, out var searchId);
-                        if (!isValid)
+                        if (!int.TryParse(slug, out var searchId))
                         {
                             return new List<Book>();
                         }
 
+                        var providerId = ProviderIdHelper.WithPrefix("gr", searchId.ToString());
                         if (prefix == "author")
                         {
                             return SearchByGoodreadsAuthorId(searchId);
                         }
 
-                        if (prefix == "work")
-                        {
-                            return SearchByGoodreadsWorkId(searchId);
-                        }
-
-                        if (prefix == "edition")
-                        {
-                            return SearchByGoodreadsBookId(searchId, getAllEditions);
-                        }
+                        return prefix == "work"
+                            ? SearchByV5WorkId(providerId)
+                            : SearchByV5EditionId(providerId, getAllEditions, mediaType);
                     }
 
-                    // to handle isbn / asin
                     q = slug;
                 }
 
-                return Search(q, getAllEditions);
+                return Search(q, mediaType);
+            }
+            catch (BookNotFoundException)
+            {
+                return new List<Book>();
             }
             catch (HttpException ex)
             {
@@ -2528,28 +2447,22 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
         public List<Book> SearchByIsbn(string isbn)
         {
-            return Search(isbn, true);
+            return Search(isbn);
         }
 
         private List<Book> SearchByV5WorkId(string foreignWorkId)
         {
             var lookup = PollV5WorkLookup(foreignWorkId);
 
-            if (lookup.RedirectAuthor != null)
-            {
-                var author = lookup.RedirectAuthor;
-                return author?.Books?.Where(b => GetBookKey(b) == foreignWorkId).ToList() ?? new List<Book>();
-            }
-
-            return MapV5WorkResponseToBookInstances(lookup.WorkResponse, foreignWorkId);
+            return MapV5WorkResponseToBookInstances(lookup, foreignWorkId);
         }
 
         public List<Book> SearchByAsin(string asin)
         {
-            return Search(asin, true);
+            return Search(asin);
         }
 
-        private List<Book> Search(string query, bool getAllEditions)
+        private List<Book> Search(string query, BookMediaType? mediaType = null)
         {
             List<SearchJsonResource> result;
             try
@@ -2564,14 +2477,12 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
             var books = new List<Book>();
 
-            // IMPORTANT: According to the comprehensive flow MD file, we should NOT fetch full book data during search
-            // The search should return basic Book objects created from autocomplete data
-            // Full author data (with ALL books) is only fetched in Step 3 when discovering a new author
+            // Search previews do not require a full author catalog download.
             _logger.Debug("Creating Book objects from {0} search results without fetching additional data", result.Count);
 
             foreach (var searchResult in result)
             {
-                var book = CreateBookFromSearchResult(searchResult);
+                var book = CreateBookFromSearchResult(searchResult, mediaType);
                 if (book != null)
                 {
                     books.Add(book);
@@ -2616,166 +2527,46 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             }
         }
 
-            public List<Book> SearchByGoodreadsWorkId(int id)
-            {
-                try
-                {
-                    var tuple = GetBookInfo(ProviderIdHelper.WithPrefix("gr", id.ToString()));
-                    // Create dictionary with V5 ID as key for backward compatibility
-                    var authorDict = new Dictionary<string, Author>();
-                    foreach (var author in tuple.Item3)
-                    {
-                        // Add entries for all possible ID formats
-                    if (!string.IsNullOrEmpty(author.HardcoverAuthorId))
-                    {
-                        authorDict[ProviderIdHelper.Normalize(author.HardcoverAuthorId, "hc")] = author;
-                    }
-                    if (!string.IsNullOrEmpty(author.GoodreadsAuthorId))
-                    {
-                        authorDict[ProviderIdHelper.Normalize(author.GoodreadsAuthorId, "gr")] = author;
-                    }
-                    // Also add the raw V5 ID if available (for backward compatibility)
-                    var v5Id = tuple.Item1; // The author ID from the tuple
-                    if (!authorDict.ContainsKey(v5Id))
-                    {
-                        authorDict[v5Id] = author;
-                    }
-                }
-                AddDbIds(tuple.Item1, tuple.Item2, authorDict);
-                return new List<Book> { tuple.Item2 };
-            }
-            catch (BookNotFoundException)
-            {
-                return new List<Book>();
-            }
-            catch (BookInfoException e)
-            {
-                _logger.Warn(e, "Error searching by work id");
-                return new List<Book>();
-            }
-        }
-
-        public List<Book> SearchByGoodreadsBookId(int id, bool getAllEditions)
+        private List<Book> SearchByV5EditionId(string editionId, bool getAllEditions, BookMediaType? mediaType)
         {
             try
             {
-                var book = GetEditionInfo(id, getAllEditions);
+                var lookup = PollV5BookLookup(editionId);
+                var books = MapV5WorkResponseToBookInstances(lookup, editionId);
+                var matches = books.Where(book => book.MediaType == (mediaType ?? BookMediaType.Audiobook) &&
+                    book.Editions?.Any(edition => BookEditionIdentity.EditionMatchesProviderId(edition, editionId)) == true);
 
-                return new List<Book> { book };
+                if (getAllEditions)
+                {
+                    return matches.ToList();
+                }
+
+                // Keep the full lookup result separate from a single-edition selection.
+                return matches.Select(book =>
+                {
+                    var trimmed = RefreshEntityCopy.CloneBook(book, includeEditions: false);
+                    trimmed.Author = book.Author;
+                    trimmed.Editions = book.Editions
+                        .Where(edition => BookEditionIdentity.EditionMatchesProviderId(edition, editionId))
+                        .Select(RefreshEntityCopy.CloneEdition).ToList();
+                    foreach (var edition in trimmed.Editions)
+                    {
+                        edition.Monitored = true;
+                        edition.Book = trimmed;
+                    }
+
+                    return trimmed;
+                }).ToList();
             }
             catch (AuthorTerminalException)
             {
                 throw;
             }
-
-            catch (AuthorNotFoundException)
+            catch (BookInfoException ex)
             {
+                _logger.Warn(ex, "Error searching by edition id");
                 return new List<Book>();
             }
-            catch (BookNotFoundException)
-            {
-                return new List<Book>();
-            }
-            catch (EditionNotFoundException)
-            {
-                return new List<Book>();
-            }
-            catch (BookInfoException e)
-            {
-                _logger.Warn(e, "Error searching by book id");
-                return new List<Book>();
-            }
-        }
-
-        private Book GetEditionInfo(int id, bool getAllEditions)
-        {
-            HttpRequest httpRequest;
-            HttpResponse httpResponse;
-
-            while (true)
-            {
-                httpRequest = _requestBuilder.GetRequestBuilder().Create()
-                    .SetSegment("route", $"book/{id}")
-                    .Build();
-
-                httpRequest.SuppressHttpError = true;
-
-                // we expect a redirect
-                httpResponse = ExecuteV5Request(httpRequest, _httpClient.Get, $"book redirect {id}");
-
-                if (httpResponse.StatusCode == HttpStatusCode.TooManyRequests)
-                {
-                    WaitUntilRetry(httpResponse);
-                }
-                else
-                {
-                    break;
-                }
-            }
-
-            if (httpResponse.StatusCode == HttpStatusCode.NotFound)
-            {
-                throw new EditionNotFoundException(id.ToString());
-            }
-
-            if (!httpResponse.HasHttpRedirect)
-            {
-                throw new BookInfoException($"Unexpected response from {httpRequest.Url}");
-            }
-
-            var location = httpResponse.Headers.GetSingleValue("Location");
-            var split = location.Split('/').Reverse().ToList();
-            var newId = split[0];
-            var type = split[1];
-
-            var requestedEditionId = EnsureCanonicalProviderId(id.ToString(), "gr");
-            Book book;
-            List<Author> authors;
-
-            if (type == "author")
-            {
-                var author = PollAuthor(newId);
-
-                book = author.Books.Where(b => b.Editions.Any(e => BookEditionIdentity.EditionMatchesProviderId(e, requestedEditionId))).FirstOrDefault();
-                authors = new List<Author> { author };
-            }
-            else if (type == "work")
-            {
-                var tuple = PollBook(newId, BookMediaType.Audiobook);
-
-                book = tuple.Item2;
-                authors = tuple.Item3;
-            }
-            else
-            {
-                throw new NotImplementedException($"Unexpected response from {httpResponse.Request.Url}");
-            }
-
-            if (book == null || book.Editions.All(e => !BookEditionIdentity.EditionMatchesProviderId(e, requestedEditionId)))
-            {
-                throw new EditionNotFoundException(id.ToString());
-            }
-
-            if (!getAllEditions)
-            {
-                var trimmed = new Book();
-                trimmed.UseMetadataFrom(book);
-                trimmed.SeriesLinks = book.SeriesLinks;
-                var edition = book.Editions.SingleOrDefault(e => BookEditionIdentity.EditionMatchesProviderId(e, requestedEditionId));
-                if (edition != null)
-                {
-                    edition.Monitored = true;
-                }
-
-                trimmed.Editions = new List<Edition> { edition };
-                book = trimmed;
-            }
-
-            var authorDict = authors.ToDictionary(x => GetAuthorMetadataKey(x));
-            var authorKey = GetAuthorMetadataKey(book.Author);
-            AddDbIds(authorKey, book, authorDict);
-
-            return book;
         }
 
         private List<Book> MapSearchResult(List<int> ids)
@@ -3079,13 +2870,47 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             return result;
         }
 
-        private sealed class V5WorkLookupResult
+        private static Exception ParseTypedLookupTerminal(HttpResponse response, string providerId, string route)
         {
-            public V5Resource.V5WorkResponse WorkResponse { get; init; }
-            public Author RedirectAuthor { get; init; }
+            if ((response.StatusCode != HttpStatusCode.BadRequest && response.StatusCode != HttpStatusCode.Conflict) ||
+                !string.Equals(response.Headers?.ContentType?.Split(';')[0].Trim(), "application/json", StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(response.Content))
+            {
+                return null;
+            }
+
+            JObject terminal;
+            try
+            {
+                terminal = JObject.Parse(response.Content);
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+
+            if (terminal["code"]?.Type != JTokenType.String || terminal["providerId"]?.Type != JTokenType.String ||
+                !string.Equals((string)terminal["providerId"], providerId, StringComparison.Ordinal) ||
+                terminal["retryable"]?.Type != JTokenType.Boolean || (bool)terminal["retryable"])
+            {
+                return null;
+            }
+
+            var code = (string)terminal["code"];
+            var invalidId = response.StatusCode == HttpStatusCode.BadRequest && code == "invalid_provider_id";
+            var refusedWork = response.StatusCode == HttpStatusCode.Conflict && route == "work" && code == "work_rescue_terminal";
+            if (!invalidId && !refusedWork)
+            {
+                return null;
+            }
+
+            var message = terminal["message"]?.Type == JTokenType.String ? ((string)terminal["message"]).Trim() : code;
+            // Declared diagnostics are bounded before callers persist them as queue failure reasons.
+            message = (string.IsNullOrWhiteSpace(message) ? code : message).Truncate(512);
+            return invalidId ? new InvalidProviderIdException(providerId, message) : new WorkRescueTerminalException(providerId, message);
         }
 
-        private V5WorkLookupResult PollV5Lookup(string foreignBookId, string route, string authorHintProviderId = null)
+        private V5Resource.V5WorkResponse PollV5Lookup(string foreignBookId, string route, string authorHintProviderId = null)
         {
             var normalizedAuthorHint = string.Equals(route, "work", StringComparison.OrdinalIgnoreCase)
                 ? AuthorIdentity.NormalizeWorkLookupAuthorHint(foreignBookId, authorHintProviderId)
@@ -3106,16 +2931,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 httpRequest.SuppressHttpError = true;
                 httpRequest.RequestTimeout = TimeSpan.FromSeconds(30);
 
-                HttpResponse httpResponse = null;
-                try
-                {
-                    // this may redirect to an author
-                    httpResponse = ExecuteV5Request(httpRequest, _httpClient.Get, $"{route} lookup {foreignBookId}");
-                }
-                catch (Exception ex) when (ex is WebException || ex is HttpException)
-                {
-                    throw;
-                }
+                var httpResponse = ExecuteV5Request(httpRequest, _httpClient.Get, $"{route} lookup {foreignBookId}");
 
                 if (httpResponse.StatusCode == HttpStatusCode.TooManyRequests)
                 {
@@ -3130,52 +2946,26 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                 if (httpResponse.StatusCode == HttpStatusCode.Accepted)
                 {
-                    // Work not ready (typically because the upstream metadata server queued the author/work for import).
-                    // Treat as "not found" so callers can retry later without surfacing an exception.
-                    throw new BookNotFoundException(foreignBookId);
+                    throw new BookInfoException("Metadata for {0} is not ready", foreignBookId);
                 }
 
-                if (httpResponse.StatusCode == HttpStatusCode.Conflict &&
-                    string.Equals(route, "work", StringComparison.OrdinalIgnoreCase))
+                var terminal = ParseTypedLookupTerminal(httpResponse, foreignBookId, route);
+                if (terminal != null)
                 {
-                    var declaredReason = httpResponse.Content?.Trim();
-                    if (string.IsNullOrWhiteSpace(declaredReason))
-                    {
-                        declaredReason = $"Work rescue for {foreignBookId} reached a terminal state.";
-                    }
-
-                    throw new WorkRescueTerminalException(foreignBookId, declaredReason);
+                    throw terminal;
                 }
 
                 if (httpResponse.HasHttpRedirect)
                 {
-                    var location = httpResponse.Headers.GetSingleValue("Location");
-                    var split = location.Split('/').Reverse().ToList();
-                    var newId = split[0];
-                    var type = split[1];
-
-                    if (type == "author")
-                    {
-                        var author = PollAuthor(newId);
-                        return new V5WorkLookupResult { RedirectAuthor = author };
-                    }
-                    else
-                    {
-                        throw new NotImplementedException($"Unexpected response from {httpResponse.Request.Url}");
-                    }
+                    throw new BookInfoException("Unexpected redirect fetching {0} lookup data for {1} (HTTP {2})",
+                        new HttpException(httpRequest, httpResponse), route, foreignBookId, (int)httpResponse.StatusCode);
                 }
 
-                    if (httpResponse.HasHttpError)
-                    {
-                        if (httpResponse.StatusCode == HttpStatusCode.BadRequest)
-                        {
-                            throw new BadRequestException(foreignBookId);
-                        }
-                        else
-                        {
-                            throw new BookInfoException("Unexpected response fetching book data");
-                        }
-                    }
+                if (httpResponse.HasHttpError)
+                {
+                    throw new BookInfoException("Unexpected response fetching {0} lookup data for {1} (HTTP {2})",
+                        new HttpException(httpRequest, httpResponse), route, foreignBookId, (int)httpResponse.StatusCode);
+                }
 
                 // Parse V5 response format only
                 V5Resource.V5WorkResponse v5Response;
@@ -3202,7 +2992,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 if (hasWork && editionsCount > 0 && authorsCount > 0)
                 {
                     _logger.Debug("Successfully parsed V5 work response for {0}", foreignBookId);
-                    return new V5WorkLookupResult { WorkResponse = v5Response };
+                    return v5Response;
                 }
 
                 throw new BookInfoException(
@@ -3221,12 +3011,12 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             throw new BookInfoException($"Failed to get book data for {foreignBookId} after 3 attempts");
         }
 
-        private V5WorkLookupResult PollV5WorkLookup(string foreignBookId, string authorHintProviderId = null)
+        private V5Resource.V5WorkResponse PollV5WorkLookup(string foreignBookId, string authorHintProviderId = null)
         {
             return PollV5Lookup(foreignBookId, "work", authorHintProviderId);
         }
 
-        private V5WorkLookupResult PollV5BookLookup(string foreignBookId)
+        private V5Resource.V5WorkResponse PollV5BookLookup(string foreignBookId)
         {
             return PollV5Lookup(foreignBookId, "book");
         }
@@ -3234,47 +3024,13 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
         private Tuple<string, Book, List<Author>> PollBook(string foreignBookId, BookMediaType mediaType, string authorHintProviderId = null)
         {
             var lookup = PollV5WorkLookup(foreignBookId, authorHintProviderId);
-            return MapLookupToBookTuple(lookup, foreignBookId, mediaType);
+            return MapV5WorkResponse(lookup, foreignBookId, mediaType);
         }
 
         private Tuple<string, Book, List<Author>> PollEditionBook(string foreignBookId, BookMediaType mediaType)
         {
             var lookup = PollV5BookLookup(foreignBookId);
-            return MapLookupToBookTuple(lookup, foreignBookId, mediaType);
-        }
-
-        private Tuple<string, Book, List<Author>> MapLookupToBookTuple(V5WorkLookupResult lookup, string foreignBookId, BookMediaType mediaType)
-        {
-            if (lookup.RedirectAuthor != null)
-            {
-                var author = lookup.RedirectAuthor;
-
-                // Find the book by matching provider ID
-                var (searchProvider, searchId) = ParseProviderId(foreignBookId);
-                var matches = new List<Book>();
-
-                foreach (var searchBook in author.Books)
-                {
-                    var bookKey = GetBookKey(searchBook);
-                    if (bookKey == foreignBookId ||
-                        (searchProvider != null && bookKey == $"{searchProvider}:{searchId}"))
-                    {
-                        matches.Add(searchBook);
-                    }
-                }
-
-                var authorBook = matches.FirstOrDefault(b => b.MediaType == mediaType) ?? matches.FirstOrDefault();
-                if (authorBook == null)
-                {
-                    throw new BookNotFoundException(foreignBookId);
-                }
-
-                var authorMetadata = new List<Author> { author };
-                var authorKey = GetAuthorMetadataKey(author);
-                return Tuple.Create(authorKey, authorBook, authorMetadata);
-            }
-
-            return MapV5WorkResponse(lookup.WorkResponse, foreignBookId, mediaType);
+            return MapV5WorkResponse(lookup, foreignBookId, mediaType);
         }
 
         private void WaitUntilRetry(HttpResponse response)
@@ -3382,26 +3138,6 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 }
             }
 
-            // Check specifically for "Zealot's Eleventh Crusade" or similar
-            var zealotVariations = new[] { "zealot", "eleventh", "crusade", "11th" };
-            var potentialMatches = resource.Works?.Where(w =>
-                w.Title != null &&
-                zealotVariations.Any(v => w.Title.ToLowerInvariant().Contains(v)))
-                .ToList();
-
-            if (potentialMatches?.Any() == true)
-            {
-                logger.Debug("Found potential matches for 'Zealot's Eleventh Crusade':");
-                foreach (var match in potentialMatches)
-                {
-                    logger.Debug("  - Work ID: {0}, Title: '{1}'", match.ForeignId, match.Title);
-                }
-            }
-            else
-            {
-                logger.Debug("NO matches found for 'Zealot's Eleventh Crusade' variations in Goodreads response");
-            }
-
             logger.Debug("=== END GOODREADS RESPONSE ===");
 
             var worksStopwatch = Stopwatch.StartNew();
@@ -3433,36 +3169,6 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
             logger.Debug("Filtering complete: {0} included, {1} excluded", filteredWorks.Count, excludedWorks.Count);
             logger.Debug("=== END AUTHOR BOOK FILTERING DEBUG ===");
-
-            // Apply quality filtering for authors with suspiciously large catalogs
-            if (filteredWorks.Count > 300)
-            {
-                logger.Info("Author {0} has {1} works - applying automatic quality filtering", resource.Name, filteredWorks.Count);
-
-                var beforeCount = filteredWorks.Count;
-
-                filteredWorks = filteredWorks.Where(work =>
-                {
-                    // Must have a release date
-                    if (!work.ReleaseDate.HasValue)
-                    {
-                        logger.Debug("  AUTO-EXCLUDING work '{0}' - No release date", work.Title ?? "[NO TITLE]");
-                        return false;
-                    }
-
-                    // Must have at least one edition with an ISBN
-                    var hasIsbn = work.Books?.Any(b => !string.IsNullOrWhiteSpace(b.Isbn13)) ?? false;
-                    if (!hasIsbn)
-                    {
-                        logger.Debug("  AUTO-EXCLUDING work '{0}' - No ISBN in any edition", work.Title ?? "[NO TITLE]");
-                        return false;
-                    }
-
-                    return true;
-                }).ToList();
-
-                logger.Info("Automatic quality filtering removed {0} works, {1} remain", beforeCount - filteredWorks.Count, filteredWorks.Count);
-            }
 
             var books = filteredWorks
                 .Select(work => MapBook(work, _logger))
@@ -3583,7 +3289,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             {
                 Title = cleanTitle,  // Use cleaned title
                 TitleSlug = resource.ForeignId.ToString(),
-                CleanTitle = Parser.Parser.CleanAuthorName(cleanTitle),
+                CleanTitle = StringSuperNormalizer.ComputeBookComparisonKey(cleanTitle),
                 ReleaseDate = resource.ReleaseDate,
                 Genres = resource.Genres,
                 RelatedBooks = resource.RelatedWorks
@@ -3610,7 +3316,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                         // Clean series information from edition title too
                         var editionTitle = Regex.Replace(mostPopular.Title, @"\s*\([^)]+[,\s]+#\d+\)$", "").Trim();
                         book.Title = editionTitle;
-                        book.CleanTitle = Parser.Parser.CleanAuthorName(editionTitle);
+                        book.CleanTitle = StringSuperNormalizer.ComputeBookComparisonKey(editionTitle);
                     }
                 }
             }
@@ -3728,7 +3434,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             return false;
         }
 
-        private Book CreateBookFromSearchResult(SearchJsonResource searchResult)
+        private Book CreateBookFromSearchResult(SearchJsonResource searchResult, BookMediaType? mediaType = null)
         {
             if (searchResult == null || searchResult.Author == null)
             {
@@ -3749,10 +3455,11 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
             var book = new Book
             {
+                MediaType = mediaType ?? BookMediaType.Audiobook,
                 GoodreadsWorkId = EnsureCanonicalProviderId(searchResult.WorkId.ToString(), "gr"),
                 Title = searchResult.Title,
                 TitleSlug = searchResult.WorkId.ToString(),
-                CleanTitle = Parser.Parser.CleanAuthorName(searchResult.Title),
+                CleanTitle = StringSuperNormalizer.ComputeBookComparisonKey(searchResult.Title),
                 ReleaseDate = null, // Will be populated when actually adding to DB
                 AudiobookMonitored = false,
                 EbookMonitored = false,
@@ -4538,7 +4245,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 Subtitle = b?.Subtitle,
                 Overview = b?.Description ?? string.Empty,
                 TitleSlug = $"hc:{b?.Id}", // stable unique slug
-                CleanTitle = Parser.Parser.CleanAuthorName(b?.Title ?? string.Empty),
+                CleanTitle = StringSuperNormalizer.ComputeBookComparisonKey(b?.Title),
                 AudiobookMonitored = false,
                 EbookMonitored = false,
                 AnyEditionOk = true,
@@ -4766,7 +4473,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             var book = new Book
             {
                 Title = resource.FullTitle,
-                CleanTitle = Parser.Parser.CleanAuthorName(resource.Title ?? string.Empty),
+                CleanTitle = StringSuperNormalizer.ComputeBookComparisonKey(resource.FullTitle),
                 ReleaseDate = resource.ReleaseDate,
                 Overview = resource.Summary ?? resource.Description,
                 MediaType = BookMediaType.Audiobook, // CRITICAL: Audible catalog only returns audiobooks
@@ -4910,11 +4617,10 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     .ToList();
             }
 
-            // Apply GraphicAudio normalization
-            if (resource.IsGraphicAudio)
-            {
-                edition.NarratorNames = new List<string> { "GraphicAudio" };
-            }
+            // Preserve provider credits. Cast size and performance style never establish a publisher.
+            edition.IsGraphicAudio = resource.IsGraphicAudio;
+            edition.AudioProductionType = resource.IsGraphicAudio ? "GraphicAudio"
+                : AudioProductionDetector.GetProductionType(edition.NarratorNames.Concat(new[] { resource.Title, resource.Subtitle }));
 
             book.Editions.Add(edition);
             EditionPinPolicy.MarkSelectionAsAutomatic(book, book.Editions);
@@ -5437,14 +5143,14 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             {
                 edition.RatingCount = edition.LegacyRatingsCount.Value;
             }
-            if (edition.ReadingFormatId == 0)
+            if (edition.ReadingFormatId == EditionReadingFormat.Unknown)
             {
                 edition.ReadingFormatId = edition.Format?.Trim().ToLowerInvariant() switch
                 {
-                    "audiobook" => 2,
-                    "ebook" => 3,
-                    "physical" => 1,
-                    _ => 0
+                    "audiobook" => EditionReadingFormat.Audiobook,
+                    "ebook" => EditionReadingFormat.Ebook,
+                    "physical" => EditionReadingFormat.Print,
+                    _ => EditionReadingFormat.Unknown
                 };
             }
 
@@ -5469,7 +5175,6 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             }
 
             edition.HardcoverEditionId ??= rawHcEditionId;
-            edition.GoodreadsEditionId ??= ProviderIdHelper.StripPrefix(grEditionId);
             edition.Asin ??= ProviderIdHelper.StripPrefix(azEditionId);
             edition.OpenLibraryEditionId ??= ProviderIdHelper.StripPrefix(olEditionId);
             edition.GoogleBooksEditionId ??= ProviderIdHelper.StripPrefix(gbEditionId);
@@ -5516,29 +5221,8 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 .ToList();
         }
 
-        private static IEnumerable<string> EnumerateProviderAliases(Dictionary<string, List<string>> providerIds)
-        {
-            if (providerIds == null)
-            {
-                yield break;
-            }
-
-            foreach (var values in providerIds.Values)
-            {
-                if (values == null)
-                {
-                    continue;
-                }
-
-                foreach (var value in values)
-                {
-                    if (!string.IsNullOrWhiteSpace(value))
-                    {
-                        yield return value.Trim();
-                    }
-                }
-            }
-        }
+        private static IEnumerable<string> EnumerateProviderAliases(Dictionary<string, List<string>> providerIds) =>
+            V5Resource.ProviderIdMapCoercion.ToAliasSet(providerIds) ?? Enumerable.Empty<string>();
 
         private static bool TryGetProviderAlias(Dictionary<string, List<string>> providerIds, out string value, params string[] keys)
         {
@@ -5598,21 +5282,8 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             return false;
         }
 
-        private static IEnumerable<string> EnumerateV5ProviderIds(Dictionary<string, object> providerIds)
-        {
-            if (providerIds == null)
-            {
-                yield break;
-            }
-
-            foreach (var raw in providerIds.Values)
-            {
-                foreach (var value in EnumerateProviderValues(raw))
-                {
-                    yield return value;
-                }
-            }
-        }
+        private static IEnumerable<string> EnumerateV5ProviderIds(Dictionary<string, object> providerIds) =>
+            EnumerateProviderAliases(V5Resource.ProviderIdMapCoercion.ToListMap(null, providerIds));
 
         private static IEnumerable<string> EnumerateProviderValues(object raw)
         {

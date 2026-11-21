@@ -58,6 +58,8 @@ namespace Chaptarr.Core.Test.Download
                 // active behind this gate while the serialized sweep advances to the native M4B.
             }
 
+            public bool CanRemoveDownload(TrackedDownload trackedDownload, DownloadCleanupContext cleanup = null) => throw new NotImplementedException();
+
             public bool VerifyImport(TrackedDownload trackedDownload, List<NzbDrone.Core.MediaFiles.BookImport.ImportResult> importResults)
             {
                 return true;
@@ -74,9 +76,6 @@ namespace Chaptarr.Core.Test.Download
             {
             }
 
-            public void MarkAsFailed(TrackedDownload trackedDownload, string reason, bool skipRedownload = false)
-            {
-            }
 
             public void Check(TrackedDownload trackedDownload)
             {

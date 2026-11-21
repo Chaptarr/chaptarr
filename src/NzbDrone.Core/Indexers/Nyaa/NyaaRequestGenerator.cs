@@ -22,11 +22,6 @@ namespace NzbDrone.Core.Indexers.Nyaa
             throw new System.NotImplementedException();
         }
 
-        public virtual IndexerPageableRequestChain GetSearchRequests(AuthorSearchCriteria searchCriteria)
-        {
-            throw new System.NotImplementedException();
-        }
-
         private IEnumerable<IndexerRequest> GetPagedRequests(string term)
         {
             var baseUrl = $"{Settings.BaseUrl.TrimEnd('/')}/?page=rss{Settings.AdditionalParameters}";

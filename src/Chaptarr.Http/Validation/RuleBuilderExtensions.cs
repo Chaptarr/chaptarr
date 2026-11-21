@@ -26,9 +26,5 @@ namespace Chaptarr.Http.Validation
             return ruleBuilder.NotEmpty();
         }
 
-        public static IRuleBuilderOptions<T, int> IsValidRssSyncInterval<T>(this IRuleBuilder<T, int> ruleBuilder)
-        {
-            return ruleBuilder.SetValidator(new RssSyncIntervalValidator());
-        }
     }
 }

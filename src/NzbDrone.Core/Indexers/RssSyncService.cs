@@ -40,15 +40,15 @@ namespace NzbDrone.Core.Indexers
             _logger = logger;
         }
 
-        private async Task<ProcessedDecisions> Sync()
+        internal async Task<ProcessedDecisions> Sync()
         {
             _logger.ProgressInfo("Starting RSS Sync");
 
             var rssReleases = await _rssFetcherAndParser.Fetch();
-            var pendingReleases = _pendingReleaseService.GetPending();
+            var pendingReleases = _pendingReleaseService.GetPending(out var oldestPublishDates);
 
             var reports = rssReleases.Concat(pendingReleases).ToList();
-            var decisions = _downloadDecisionMaker.GetRssDecision(reports);
+            var decisions = _downloadDecisionMaker.GetRssDecision(reports, false, oldestPublishDates);
             var processed = await _processDownloadDecisions.ProcessDecisions(decisions);
 
             var message = string.Format("RSS Sync Completed. Reports found: {0}, Reports grabbed: {1}", reports.Count, processed.Grabbed.Count);

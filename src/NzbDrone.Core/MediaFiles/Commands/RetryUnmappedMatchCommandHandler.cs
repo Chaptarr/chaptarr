@@ -675,7 +675,9 @@ namespace NzbDrone.Core.MediaFiles.Commands
                 throw new InvalidOperationException($"Matched book not found: {canonicalEdition.BookId}");
             }
 
-            var unitKey = _unitDestination.BuildRootUnitKeyWithExtension(match.File.Path, canonicalEdition.Title, canonicalBook.MediaType);
+            var unitKey = match.IsStandaloneRecording
+                ? BookCoalescingHelper.BuildPerFileUnitKey(match.File.Path, canonicalEdition.Title, canonicalBook.MediaType)
+                : _unitDestination.BuildRootUnitKeyWithExtension(match.File.Path, canonicalEdition.Title, canonicalBook.MediaType);
             return _unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, unitKey);
         }
 

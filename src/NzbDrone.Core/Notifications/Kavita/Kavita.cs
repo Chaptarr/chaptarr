@@ -1,9 +1,9 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net.Sockets;
 using FluentValidation.Results;
-using NLog;
+using NzbDrone.Common;
+using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 
 namespace NzbDrone.Core.Notifications.Kavita;
@@ -11,41 +11,56 @@ namespace NzbDrone.Core.Notifications.Kavita;
 public class Kavita : NotificationBase<KavitaSettings>
 {
     private readonly IKavitaService _kavitaService;
-    private readonly Logger _logger;
+    private readonly ICached<object> _queueLocks;
+    private readonly IPendingNotificationRepository _pending;
 
-    public Kavita(IKavitaService kavitaService, Logger logger)
+    public Kavita(IKavitaService kavitaService, ICacheManager cacheManager, IPendingNotificationRepository pending)
     {
         _kavitaService = kavitaService;
-        _logger = logger;
+        _queueLocks = cacheManager.GetCache<object>(GetType(), "queueLocks");
+        _pending = pending;
     }
 
     public override string Link => "https://www.kavitareader.com/";
 
     public override void OnReleaseImport(BookDownloadMessage message)
     {
-        var allPaths = message.BookFiles.Select(v => v.Path).Distinct();
-        var path = Directory.GetParent(allPaths.First())?.FullName;
-        Notify(Settings, BOOK_DOWNLOADED_TITLE_BRANDED, path);
+        Notify(message.BookFiles?.FirstOrDefault(file => file?.Path.IsNotNullOrWhiteSpace() == true)?.Path);
     }
 
     public override void OnBookDelete(BookDeleteMessage deleteMessage)
     {
-        var allPaths = deleteMessage.Book.BookFiles.Select(v => v.Path).Distinct();
-        var path = Directory.GetParent(allPaths.First())?.FullName;
-        Notify(Settings, BOOK_FILE_DELETED_TITLE_BRANDED, path);
+        if (deleteMessage.DeletedFiles)
+        {
+            Notify(deleteMessage.Book.BookFiles?.FirstOrDefault(file => file?.Path.IsNotNullOrWhiteSpace() == true)?.Path);
+        }
     }
 
     public override void OnBookFileDelete(BookFileDeleteMessage message)
     {
-        Notify(Settings, BOOK_FILE_DELETED_TITLE_BRANDED, Directory.GetParent(message.BookFile.Path)?.FullName);
+        Notify(message.BookFile?.Path);
     }
 
     public override void OnBookRetag(BookRetagMessage message)
     {
-        Notify(Settings, BOOK_RETAGGED_TITLE_BRANDED, Directory.GetParent(message.BookFile.Path)?.FullName);
+        Notify(message.BookFile?.Path);
     }
 
     public override string Name => "Kavita";
+
+    public override bool HasPendingQueue => _pending.HasPending(Definition.Id);
+
+    public override void ProcessQueue()
+    {
+        lock (_queueLocks.Get(Definition.Id.ToString(), () => new object()))
+        {
+            foreach (var item in _pending.GetPending(Definition.Id))
+            {
+                if (Settings.Notify) _kavitaService.Notify(Settings, item.Path);
+                _pending.Complete(new[] { item });
+            }
+        }
+    }
 
     public override ValidationResult Test()
     {
@@ -56,19 +71,18 @@ public class Kavita : NotificationBase<KavitaSettings>
         return new ValidationResult(failures);
     }
 
-    private void Notify(KavitaSettings settings, string header, string message)
+    private void Notify(string filePath)
     {
-        try
+        if (Settings.Notify && filePath.IsNotNullOrWhiteSpace())
         {
-            if (Settings.Notify)
+            var folder = Directory.GetParent(filePath)?.FullName;
+            if (folder.IsNotNullOrWhiteSpace())
             {
-                _kavitaService.Notify(Settings, $"{header} - {message}");
+                lock (_queueLocks.Get(Definition.Id.ToString(), () => new object()))
+                {
+                    _pending.Enqueue(Definition.Id, folder, true);
+                }
             }
-        }
-        catch (SocketException ex)
-        {
-            var logMessage = $"Unable to connect to Subsonic Host: {Settings.Host}:{Settings.Port}";
-            _logger.Debug(ex, logMessage);
         }
     }
 }

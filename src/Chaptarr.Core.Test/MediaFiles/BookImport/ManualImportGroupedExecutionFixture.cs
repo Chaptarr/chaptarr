@@ -138,6 +138,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         private class BookServiceProxy : DispatchProxy
         {
             public Book Book { get; set; }
+            public int Updates { get; private set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -148,6 +149,13 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
                 if (targetMethod?.Name == nameof(IBookService.GetBook))
                 {
+                    return Book;
+                }
+
+                if (targetMethod?.Name == nameof(IBookService.UpdateBook))
+                {
+                    Updates++;
+                    Book = (Book)args[0];
                     return Book;
                 }
 
@@ -265,7 +273,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 CancellationToken cancellationToken = default)
             {
                 Decisions = decisions;
-                return new List<ImportResult>();
+                return decisions.Select(decision => new ImportResult(decision,
+                    decision.Rejections.Select(rejection => rejection.Reason).ToArray())).ToList();
             }
         }
 
@@ -308,6 +317,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Author = author,
                 Title = "The Black Echo",
                 HardcoverBookId = "hc:223021",
+                AnyEditionOk = true,
                 MediaType = BookMediaType.Audiobook,
                 Editions = new List<Edition> { edition }
             };
@@ -351,7 +361,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 null,
                 null,
                 null,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(NLog.LogManager.GetCurrentClassLogger()));
 
             var files = Enumerable.Range(1, 437)
                 .Select(number => new ManualImportFile
@@ -416,6 +426,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Author = author,
                 Title = "The Black Echo",
                 HardcoverBookId = "hc:223021",
+                AnyEditionOk = true,
                 MediaType = BookMediaType.Audiobook,
                 Editions = new List<Edition> { edition }
             };
@@ -465,7 +476,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 null,
                 null,
                 null,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(NLog.LogManager.GetCurrentClassLogger()));
 
             var files = Enumerable.Range(1, 16)
                 .Select(number => new ManualImportFile
@@ -491,6 +502,11 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.Multiple(() =>
             {
                 Assert.That(((AuthorLibraryServiceProxy)(object)authorLibrary).MaterializeCalls, Is.EqualTo(1));
+                Assert.That(((BookServiceProxy)(object)books).Updates, Is.Zero,
+                    "Preview/materialization must defer selection writes to the transactional importer");
+                Assert.That(book.AnyEditionOk, Is.True);
+                Assert.That(book.IsMonitored(), Is.False);
+                Assert.That(book.AddOptions.AddType, Is.EqualTo(BookAddType.Automatic));
                 Assert.That(matcher.GroupedCalls, Is.Zero);
                 Assert.That(matcher.HolyGrailCalls, Is.Zero);
                 Assert.That(importer.Decisions, Has.Count.EqualTo(16));

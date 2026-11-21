@@ -40,12 +40,12 @@ namespace NzbDrone.Core.MetadataSource.BookInfo.V5
 	        public Dictionary<string, object> LegacyProviderIds { get; set; } = new Dictionary<string, object>();
 
 	        [JsonProperty("providerIdsAll")]
-	        public Dictionary<string, List<string>> ProviderIdsAllCamel { get; set; } = new Dictionary<string, List<string>>();
+	        public Dictionary<string, List<string>> ProviderIdsAllCamel { get; set; }
 
 	        // Complete provider ID lists (canonical, provider-prefixed) used for robust identity matching.
 	        // This is emitted by the metadata server as `provider_ids_all`.
 	        [JsonProperty("provider_ids_all")]
-	        public Dictionary<string, List<string>> ProviderIdsAllSnake { get; set; } = new Dictionary<string, List<string>>();
+	        public Dictionary<string, List<string>> ProviderIdsAllSnake { get; set; }
 
 	        [JsonIgnore]
 	        public Dictionary<string, List<string>> ProviderIds => V5ProviderIdMaps.ToListMap(ProviderIdsAllCamel, ProviderIdsAllSnake, LegacyProviderIds);
@@ -123,12 +123,12 @@ namespace NzbDrone.Core.MetadataSource.BookInfo.V5
         public Dictionary<string, object> LegacyProviderIdsCamel { get; set; } = new Dictionary<string, object>();
 
         [JsonProperty("providerIdsAll")]
-        public Dictionary<string, List<string>> ProviderIdsAllCamel { get; set; } = new Dictionary<string, List<string>>();
+        public Dictionary<string, List<string>> ProviderIdsAllCamel { get; set; }
 
         // Complete provider ID lists (canonical, provider-prefixed) used for robust identity matching.
         // This is emitted by the metadata server as `provider_ids_all`.
         [JsonProperty("provider_ids_all")]
-        public Dictionary<string, List<string>> ProviderIdsAllSnake { get; set; } = new Dictionary<string, List<string>>();
+        public Dictionary<string, List<string>> ProviderIdsAllSnake { get; set; }
 
         [JsonIgnore]
         public Dictionary<string, List<string>> ProviderIds => V5ProviderIdMaps.ToListMap(ProviderIdsAllCamel, ProviderIdsAllSnake, LegacyProviderIdsCamel, LegacyProviderIds);
@@ -237,10 +237,10 @@ namespace NzbDrone.Core.MetadataSource.BookInfo.V5
         public Dictionary<string, object> LegacyProviderIds { get; set; } = new Dictionary<string, object>();
 
         [JsonProperty("providerIdsAll")]
-        public Dictionary<string, List<string>> ProviderIdsAllCamel { get; set; } = new Dictionary<string, List<string>>();
+        public Dictionary<string, List<string>> ProviderIdsAllCamel { get; set; }
 
         [JsonProperty("provider_ids_all")]
-        public Dictionary<string, List<string>> ProviderIdsAllSnake { get; set; } = new Dictionary<string, List<string>>();
+        public Dictionary<string, List<string>> ProviderIdsAllSnake { get; set; }
 
         [JsonIgnore]
         public Dictionary<string, List<string>> ProviderIds => V5ProviderIdMaps.ToListMap(ProviderIdsAllCamel, ProviderIdsAllSnake, LegacyProviderIds);
@@ -327,9 +327,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo.V5
         public ProviderUrlMap ProviderUrls { get; set; } = new ProviderUrlMap();
 
         // Helper to determine format type
-        public bool IsAudiobook => ReadingFormatId == 2;
-        public bool IsEbook => ReadingFormatId == 3;
-        public bool IsPhysical => ReadingFormatId == 1;
+        public bool IsEbook => ReadingFormatId == EditionReadingFormat.Ebook;
     }
 
     public class V5EditionChapter
@@ -418,9 +416,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo.V5
         public string CoverUrl { get; set; }
 
         // Authoritative primary-slot flag from Goodreads' getWorksForSeries endpoint.
-        // Nullable: null when the V5 API didn't include the field for this book (e.g. pre-2026-06-02
-        // stale rows or non-Goodreads-sourced series). Consumers should default null to true to
-        // preserve current behavior for not-yet-refreshed data.
+        // Null or omitted means unknown; preserve it independently of membership.
         [JsonProperty("isPrimary")]
         public bool? IsPrimary { get; set; }
     }
@@ -455,7 +451,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo.V5
             Dictionary<string, object> legacyProviderIds,
             Dictionary<string, string> legacyStringProviderIds = null)
         {
-            var providerIdsAll = HasAnyValue(camelProviderIdsAll) ? camelProviderIdsAll : snakeProviderIdsAll;
+            var providerIdsAll = camelProviderIdsAll ?? snakeProviderIdsAll;
             var legacy = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 
             if (legacyStringProviderIds != null)
@@ -477,9 +473,5 @@ namespace NzbDrone.Core.MetadataSource.BookInfo.V5
             return ProviderIdMapCoercion.ToListMap(providerIdsAll, legacy);
         }
 
-        private static bool HasAnyValue(Dictionary<string, List<string>> providerIds)
-        {
-            return providerIds?.Values.Any(values => values?.Any(value => !string.IsNullOrWhiteSpace(value)) == true) == true;
-        }
     }
 }

@@ -97,7 +97,7 @@ namespace Chaptarr.Core.Test.Download
                     diskProvider: null,
                     remotePathMappingService: remotePathMappingService,
                     blocklistService: null,
-                    logger: logger)
+                    logger: logger, rootFolders: DownloadClientTestRoots.Empty)
             {
             }
         }

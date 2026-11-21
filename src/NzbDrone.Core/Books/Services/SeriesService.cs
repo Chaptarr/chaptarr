@@ -16,6 +16,7 @@ namespace NzbDrone.Core.Books
         List<Series> GetAllSeries();
         Series AddSeries(Series series);
         void Delete(int seriesId);
+        bool DeleteIfUnlinked(int seriesId);
         void InsertMany(IList<Series> series);
         void InsertMany(IList<Series> series, IDbConnection connection, IDbTransaction transaction);
         void UpdateMany(IList<Series> series);
@@ -79,6 +80,8 @@ namespace NzbDrone.Core.Books
         {
             _seriesRepository.Delete(seriesId);
         }
+
+        public bool DeleteIfUnlinked(int seriesId) => _seriesRepository.DeleteIfUnlinked(seriesId);
 
         public void InsertMany(IList<Series> series)
         {

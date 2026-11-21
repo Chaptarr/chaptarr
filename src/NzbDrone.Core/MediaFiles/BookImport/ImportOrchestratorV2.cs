@@ -28,7 +28,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 {
     /// <summary>
     /// Thin coordinator for the import process - delegates to specialized services
-    /// Following the architecture from /claudehelper/bibles/import_files_9-7-2025.md
     /// </summary>
     public class ImportOrchestratorV2 : IImportOrchestrator
     {
@@ -113,7 +112,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             RootFolder rootFolder = null, 
             int? commandId = null, 
             IReadOnlyCollection<string> forceStagePaths = null,
-            FilterFilesType filter = FilterFilesType.Known)
+            FilterFilesType filter = FilterFilesType.Known,
+            Action<List<string>, bool> onFilesEnumerated = null)
         {
             var stopwatch = Stopwatch.StartNew();
             var commandStartedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -126,24 +126,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             _booksMatched = 0;
             _filesImported = 0;
             var result = new OrchestratorImportResult();
-            var manualRootScan = commandId.HasValue &&
-                                 IsManualCommand(commandId.Value);
             var scanScope = new IngestQueueScanScope(path, forceStagePaths);
 
             try
             {
-                if (commandId.HasValue)
-                {
-                    // Ensure per-command result reporting doesn't reuse stale import_results rows.
-                    _ingestQueue.BeginSession(commandId.Value);
-
-                    // Manual rescans should retry items previously marked as unmapped/failed.
-                    if (manualRootScan && !scanScope.IsExact)
-                    {
-                        _ingestQueue.RequeueFailedOrUnmappedUnderPath(path);
-                    }
-                }
-
                 _logger.Debug("Starting thin root-folder import orchestration for path: {0}", path);
                 LogMemorySnapshot("[ORCHESTRATOR] start path='{0}'", path);
 
@@ -154,11 +140,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     ImportSessionProgressTracker.BeginStagingPass(commandId.Value);
                 }
 
-                // Stage 1 + 2 (overlapped): stream staging while discovery/import runs.
-                // This reduces time-to-first-author by not waiting for the full file list to be built.
-                //
-                // Streaming mode: stage files and discover authors concurrently.
-                var stageTask = StageFilesAsync(path, rootFolder, commandId, forceStagePaths, filter);
+                // Enumerate and clean stale inventory before publishing new paths. Then staging
+                // batches overlap discovery/import; the first import sees the current inventory.
+                var stageTask = StageFilesAsync(path, rootFolder, commandId, forceStagePaths, filter, onFilesEnumerated);
                 var discoveryTask = _discoveryWorker.DiscoverAndImportAuthorsStreamingAsync(rootFolder, scanScope, commandId);
                 LogMemorySnapshot("[ORCHESTRATOR] after starting stage+discovery path='{0}'", path);
 
@@ -171,17 +155,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     stageResult.StagedCount,
                     stageResult.SeenFilePaths.Count,
                     stageResult.SkippedKnownUnchangedCount);
-
-                // Scheduled scans retry only previously-Failed files that were actually observed on disk now.
-                // Unmapped rows remain manual-retry-only, and missing Failed paths are not resurrected.
-                var requeuedFailed = RequeueObservedFailuresForScheduledRootScan(
-                    manualRootScan,
-                    rootFolder,
-                    stageResult.SeenFilePaths);
-                if (requeuedFailed > 0)
-                {
-                    _logger.Debug("[ORCHESTRATOR] Re-queued {0} previously-Failed files observed during scheduled scan", requeuedFailed);
-                }
 
                     await discoveryTask;
                     LogMemorySnapshot("[ORCHESTRATOR] after discovery path='{0}'", path);
@@ -196,90 +169,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         LogMemorySnapshot("[ORCHESTRATOR] after author-ready ingest wait path='{0}'", path);
                     }
 
-                    // Stage 4: Collect results from database. A specific-file scan invokes the
-                    // orchestrator once per folder while reusing the same command id, so the raw
-                    // command-scoped result set is cumulative. Keep true root scans command-wide,
-                    // but scope forced-path retries to the exact files processed by this call.
-                    var importResults = _ingestQueue.GetImportResults(commandId);
-                    var rawImportResultCount = importResults.Count;
-                    var resultScopePaths = BuildResultScopePathSet(forceStagePaths);
-                    if (resultScopePaths != null)
-                    {
-                        importResults = importResults
-                            .Where(r => !string.IsNullOrWhiteSpace(r?.Path) && resultScopePaths.Contains(r.Path))
-                            .ToList();
-                    }
+                    // Summaries belong to observed paths, not retained command history.
+                    var importResults = _ingestQueue.GetImportResults(result.ScannedFilePaths);
 
-                    LogMemorySnapshot("[ORCHESTRATOR] after loading import results path='{0}' results={1} rawResults={2} scoped={3}",
-                        path,
-                        importResults.Count,
-                        rawImportResultCount,
-                        resultScopePaths != null);
-                
-                // Convert to OrchestratorImportResult format
-                foreach (var importResult in importResults)
-                {
-                    switch (importResult.Outcome)
-                    {
-                        case ImportOutcome.Imported:
-                            if (importResult.BookId.HasValue)
-                            {
-                                // Get book details for imported file
-                                var book = _bookService.GetBook(importResult.BookId.Value);
-                                if (book != null)
-                                {
-                                    result.ImportedFiles.Add(new ImportedFile
-                                    {
-                                        FilePath = importResult.Path,
-                                        BookId = book.Id,
-                                        BookTitle = book.Title,
-                                        AuthorName = book.Author?.Name ?? "Unknown"
-                                    });
-                                }
-                            }
-                            break;
-                            
-                        case ImportOutcome.Unmapped:
-                            result.UnmappedFiles.Add(new UnmappedFile
-                            {
-                                FilePath = importResult.Path,
-                                Reason = importResult.ErrorMessage ?? "No matching book found"
-                            });
-                            break;
-                            
-                        case ImportOutcome.Failed:
-                        {
-                            var failureReason = importResult.ErrorMessage ?? "IMPORT_APPLY_FAILED";
-                            result.Errors.Add($"{importResult.Path}: {failureReason}");
-                            result.FailedFiles.Add(new FailedFile
-                            {
-                                FilePath = importResult.Path,
-                                Reason = failureReason
-                            });
-                            break;
-                        }
+                // Outcomes and cleanup receipts must not depend on optional display metadata.
+                result.StagingResults = importResults;
+                result.UnmappedFiles = importResults.Where(item => item.Outcome == ImportOutcome.Unmapped)
+                    .Select(item => new UnmappedFile { FilePath = item.Path, Reason = item.ErrorMessage ?? "No matching book found" }).ToList();
+                result.FailedFiles = importResults.Where(item => item.Outcome == ImportOutcome.Failed)
+                    .Select(item => new FailedFile { FilePath = item.Path, Reason = item.ErrorMessage ?? "IMPORT_APPLY_FAILED" }).ToList();
+                result.Errors.AddRange(result.FailedFiles.Select(item => $"{item.FilePath}: {item.Reason}"));
 
-                        case ImportOutcome.AlreadyLinked:
-                            // Identity was already satisfied; do not count it as a new import.
-                            break;
+                PopulateImportSummary(result);
 
-                        case ImportOutcome.Ignored:
-                            // Intentionally ignored items (e.g., out-of-scope for current root folder type)
-                            // do not appear as imported/unmapped/errors.
-                            break;
-                    }
-                    
-                    // Track newly added authors
-                    if (importResult.AuthorId.HasValue && importResult.Outcome == ImportOutcome.Imported)
-                    {
-                        var author = _authorService.GetAuthor(importResult.AuthorId.Value);
-                        if (author != null && !result.AddedAuthors.Contains(author.Name))
-                        {
-                            result.AddedAuthors.Add(author.Name);
-                        }
-                    }
-                }
-                
                 _logger.Debug("Import orchestration completed in {0}ms - Imported: {1}, Unmapped: {2}, Errors: {3}",
                     stopwatch.ElapsedMilliseconds, 
                     result.ImportedFiles.Count, 
@@ -296,7 +198,51 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
         }
 
-            private async Task DrainRemainingAsync(IngestQueueScanScope scanScope, RootFolder rootFolder)
+        internal void PopulateImportSummary(OrchestratorImportResult result)
+        {
+            try
+            {
+                var imported = result.StagingResults.Where(item => item.Outcome == ImportOutcome.Imported).ToList();
+                if (imported.Count == 0) return;
+                // Staging lives in a separate database. Resolve committed ownership from the
+                // file path on every receipt read, so a crash between stores cannot strand it.
+                var currentFiles = _mediaFileRepository.GetFileWithPath(imported.Select(item => item.Path).ToList());
+                var currentEditions = _editionService.GetEditions(currentFiles.Select(file => file.EditionId).Where(id => id > 0).Distinct().ToList())
+                    .ToDictionary(edition => edition.Id);
+                var currentBooksByPath = currentFiles.Where(file => currentEditions.ContainsKey(file.EditionId))
+                    .ToDictionary(file => file.Path, file => currentEditions[file.EditionId].BookId, PathEqualityComparer.Instance);
+                foreach (var item in imported)
+                    if (currentBooksByPath.TryGetValue(item.Path, out var bookId)) item.BookId = bookId;
+                var importedBooks = _bookService.GetExistingBooks(imported.Where(item => item.BookId.HasValue)
+                    .Select(item => item.BookId.Value)).ToDictionary(book => book.Id);
+                var importedAuthors = _authorService.GetExistingAuthors(imported.Where(item => item.AuthorId.HasValue)
+                    .Select(item => item.AuthorId.Value).Concat(importedBooks.Values.Select(book => book.AuthorId)).Distinct())
+                    .ToDictionary(author => author.Id);
+                foreach (var item in imported)
+                {
+                    if (item.BookId.HasValue && importedBooks.TryGetValue(item.BookId.Value, out var book))
+                    {
+                        item.AuthorId = book.AuthorId;
+                        result.ImportedFiles.Add(new ImportedFile
+                        {
+                            FilePath = item.Path,
+                            BookId = book.Id,
+                            BookTitle = book.Title,
+                            AuthorName = importedAuthors.TryGetValue(book.AuthorId, out var author) ? author.Name : "Unknown"
+                        });
+                    }
+                }
+
+                result.AddedAuthors = importedBooks.Values.Where(book => importedAuthors.ContainsKey(book.AuthorId))
+                    .Select(book => importedAuthors[book.AuthorId].Name).Distinct().ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Import outcomes preserved, but book/author names could not be loaded for the scan summary");
+            }
+        }
+
+        private async Task DrainRemainingAsync(IngestQueueScanScope scanScope, RootFolder rootFolder)
             {
                 var scannedPath = scanScope?.PathPrefix;
                 if (string.IsNullOrWhiteSpace(scannedPath))
@@ -431,202 +377,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                 try
                 {
-                string GetUnitKey(string filePath)
-                {
-                    try
-                    {
-                        var dir = NormalizeDirectory(Path.GetDirectoryName(filePath) ?? string.Empty);
-                        var ext = (Path.GetExtension(filePath) ?? string.Empty).ToLowerInvariant();
-                        if (string.IsNullOrWhiteSpace(dir)) return null;
-                        return (dir + "|" + ext).ToLowerInvariant();
-                    }
-                    catch
-                    {
-                        return null;
-                    }
-                }
-
-                // Read tags once per (folder+extension) unit and apply to all files in that unit.
-                // For files directly under a top-level folder (likely an author folder), read per-file tags
-                // to avoid cross-book contamination when multiple books live in the same folder.
-                var directChildFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                try
-                {
-                    foreach (var item in claimed)
-                    {
-                        var dir = NormalizeDirectory(Path.GetDirectoryName(item.Path) ?? string.Empty);
-                        if (string.IsNullOrWhiteSpace(dir)) continue;
-                        var parent = NormalizeDirectory(Path.GetDirectoryName(dir) ?? string.Empty);
-                        if (!string.IsNullOrWhiteSpace(parent) &&
-                            string.Equals(parent, normalizedScanned, StringComparison.OrdinalIgnoreCase))
-                        {
-                            directChildFolders.Add(dir);
-                        }
-                    }
-                }
-                catch
-                {
-                    // best-effort only
-                }
-
-                var unitTagsByKey = new Dictionary<string, Dictionary<string, List<string>>>(StringComparer.OrdinalIgnoreCase);
-                var extractionFailedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                try
-                {
-                    var unitGroups = claimed.GroupBy(i => GetUnitKey(i.Path) ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                                             .Where(g => !string.IsNullOrWhiteSpace(g.Key));
-
-                    foreach (var g in unitGroups)
-                    {
-                        var any = g.FirstOrDefault();
-                        if (any == null) continue;
-
-                        var dir = NormalizeDirectory(Path.GetDirectoryName(any.Path) ?? string.Empty);
-                        if (!string.IsNullOrWhiteSpace(dir) && directChildFolders.Contains(dir))
-                        {
-                            continue;
-                        }
-
-                        var ext = (Path.GetExtension(any.Path) ?? string.Empty).ToLowerInvariant();
-                        var fileCount = g.Count();
-
-                        var shouldReadPerFile =
-                            fileCount <= 5 ||
-                            MediaFileExtensions.IsSingleFileBookContainer(ext);
-
-                        if (shouldReadPerFile)
-                        {
-                            foreach (var item in g)
-                            {
-                                if (item == null || string.IsNullOrWhiteSpace(item.Path)) continue;
-
-                                var (tags, durationSeconds, extractionFailed) = TryReadTagsFromDisk(item.Path);
-                                if (extractionFailed)
-                                {
-                                    extractionFailedPaths.Add(item.Path);
-                                    continue;
-                                }
-
-                                if (tags != null && tags.Count > 0)
-                                {
-                                    unitTagsByKey[item.Path] = tags;
-                                }
-                                if (MediaDuration.HasDuration(durationSeconds) && !item.DurationSeconds.HasValue)
-                                {
-                                    item.DurationSeconds = durationSeconds;
-                                }
-                            }
-
-                            continue;
-                        }
-
-                        var unitTagCandidates = new List<Dictionary<string, List<string>>>(fileCount);
-                        foreach (var item in g)
-                        {
-                            if (item == null || string.IsNullOrWhiteSpace(item.Path))
-                            {
-                                continue;
-                            }
-
-                            var stagedTags = SafeDeserializeTags(item.TagsJson);
-                            if (stagedTags != null && stagedTags.Count > 0)
-                            {
-                                unitTagCandidates.Add(stagedTags);
-                                continue;
-                            }
-
-                            var (diskTags, diskDurationSeconds, extractionFailed) = TryReadTagsFromDisk(item.Path);
-                            if (extractionFailed)
-                            {
-                                extractionFailedPaths.Add(item.Path);
-                                continue;
-                            }
-
-                            if (diskTags != null && diskTags.Count > 0)
-                            {
-                                unitTagCandidates.Add(diskTags);
-                            }
-
-                            if (MediaDuration.HasDuration(diskDurationSeconds) && !item.DurationSeconds.HasValue)
-                            {
-                                item.DurationSeconds = diskDurationSeconds;
-                            }
-                        }
-
-                        var consensusTags = UnitTagConsensusBuilder.BuildConsensus(unitTagCandidates, fileCount);
-                        if (consensusTags.Count > 0)
-                        {
-                            unitTagsByKey[g.Key] = consensusTags;
-                        }
-                    }
-                }
-                catch
-                {
-                    // best-effort only
-                }
-
+                    var extractionFailedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     var discoveredFiles = new List<DiscoveredFileWithMetadata>(claimed.Count);
                     var discoveredByPath = new Dictionary<string, DiscoveredFileWithMetadata>(StringComparer.OrdinalIgnoreCase);
                     var byPath = new Dictionary<string, IngestQueueItem>(StringComparer.OrdinalIgnoreCase);
                     foreach (var item in claimed)
                     {
-                        var tags = SafeDeserializeTags(item.TagsJson);
-                        int? durationSecondsOverride = null;
-                        var extractionFailed = extractionFailedPaths.Contains(item.Path);
-
-                    // Prefer disk tags (either per-file for risky folders, or per-unit otherwise).
-                    try
-                    {
-                        if (!extractionFailed)
-                        {
-                            var dir = NormalizeDirectory(Path.GetDirectoryName(item.Path) ?? string.Empty);
-                            if (!string.IsNullOrWhiteSpace(dir) && directChildFolders.Contains(dir))
-                            {
-                                var (perFile, perFileDurationSeconds, perFileExtractionFailed) = TryReadTagsFromDisk(item.Path);
-                                extractionFailed = perFileExtractionFailed;
-                                if (perFile != null && perFile.Count > 0)
-                                {
-                                    tags = perFile;
-                                    durationSecondsOverride = perFileDurationSeconds;
-                                }
-                            }
-                            else if (tags == null || tags.Count == 0)
-                            {
-                                if (!string.IsNullOrWhiteSpace(item.Path) &&
-                                    unitTagsByKey.TryGetValue(item.Path, out var perFileTags) &&
-                                    perFileTags != null &&
-                                    perFileTags.Count > 0)
-                                {
-                                    tags = perFileTags;
-                                }
-                                else
-                                {
-                                    var unitKey = GetUnitKey(item.Path) ?? string.Empty;
-                                    if (!string.IsNullOrWhiteSpace(unitKey) &&
-                                        unitTagsByKey.TryGetValue(unitKey, out var unitTags) &&
-                                        unitTags != null &&
-                                        unitTags.Count > 0)
-                                    {
-                                        tags = unitTags;
-                                    }
-                                    else
-                                    {
-                                        var (diskTags, diskDurationSeconds, diskExtractionFailed) = TryReadTagsFromDisk(item.Path);
-                                        extractionFailed = diskExtractionFailed;
-                                        if (diskTags != null && diskTags.Count > 0)
-                                        {
-                                            tags = diskTags;
-                                            durationSecondsOverride = diskDurationSeconds;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    catch
-                    {
-                        // best-effort only
-                    }
+                        var (tags, durationSecondsOverride, extractionFailed) =
+                            IngestFileMetadataReader.Read(item, _metadataTagService, _diskProvider);
 
                         var effectiveTags = tags ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
                         var durationSeconds = durationSecondsOverride ?? item.DurationSeconds;
@@ -653,8 +411,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         discoveredFiles.Add(discovered);
                     }
 
-                _logger.Debug("[DRAIN] Built {0} files for matching ({1} unit tagsets from disk, {2} direct-child folders read per-file)",
-                    discoveredFiles.Count, unitTagsByKey.Count, directChildFolders.Count);
+                    _logger.Debug("[DRAIN] Built {0} files for matching from their own metadata ({1} extraction failures)",
+                        discoveredFiles.Count, extractionFailedPaths.Count);
 
                     void QueueUnmappedBookFilePath(string filePath, DiscoveredFileWithMetadata meta)
                     {
@@ -757,7 +515,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                 throw new InvalidOperationException($"Matched book not found: {canonicalEdition.BookId}");
                             }
 
-                            var destKey = _unitDestination.BuildRootUnitKeyWithExtension(m.File.Path, canonicalEdition.Title, canonicalBook.MediaType);
+                            var destKey = m.IsStandaloneRecording
+                                ? BookCoalescingHelper.BuildPerFileUnitKey(m.File.Path, canonicalEdition.Title, canonicalBook.MediaType)
+                                : _unitDestination.BuildRootUnitKeyWithExtension(m.File.Path, canonicalEdition.Title, canonicalBook.MediaType);
                             var dest = _unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, destKey);
                             destBookId = dest.BookId;
                             destEditionId = dest.EditionId;
@@ -1058,66 +818,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
         }
 
-        private (Dictionary<string, List<string>> Tags, int? DurationSeconds, bool ExtractionFailed) TryReadTagsFromDisk(string filePath)
-        {
-            try
-            {
-                if (_metadataTagService == null || string.IsNullOrWhiteSpace(filePath))
-                {
-                    return (null, null, false);
-                }
-
-                var fi = _diskProvider.GetFileInfo(filePath);
-                if (fi == null || !fi.Exists)
-                {
-                    return (null, null, false);
-                }
-
-                var (raw, durationSeconds) = _metadataTagService.ReadAllTagsAndDuration(fi);
-                if (raw == null || raw.Count == 0)
-                {
-                    return (null, durationSeconds, false);
-                }
-
-                var tags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-                foreach (var kv in raw)
-                {
-                    if (string.IsNullOrWhiteSpace(kv.Key))
-                    {
-                        continue;
-                    }
-
-                    tags[kv.Key] = kv.Value ?? new List<string>();
-                }
-
-                return (tags, durationSeconds, false);
-            }
-            catch (TagExtractionException)
-            {
-                return (null, null, true);
-            }
-            catch
-            {
-                return (null, null, false);
-            }
-        }
-
-        private static HashSet<string> BuildResultScopePathSet(IReadOnlyCollection<string> forceStagePaths)
-        {
-            if (forceStagePaths == null || forceStagePaths.Count == 0)
-            {
-                return null;
-            }
-
-            var paths = forceStagePaths
-                .Where(p => !string.IsNullOrWhiteSpace(p))
-                .ToList();
-
-            return paths.Count == 0
-                ? null
-                : new HashSet<string>(paths, PathEqualityComparer.Instance);
-        }
-
         private void LogMemorySnapshot(string message, params object[] args)
         {
             if (!_logger.IsDebugEnabled)
@@ -1154,33 +854,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
         }
 
-        private int RequeueObservedFailuresForScheduledRootScan(
-            bool manualRootScan,
-            RootFolder rootFolder,
-            IEnumerable<string> observedPaths)
-        {
-            if (manualRootScan)
-            {
-                return 0;
-            }
-
-            var observedEligiblePaths = (observedPaths ?? Enumerable.Empty<string>())
-                .Where(filePath => !string.IsNullOrWhiteSpace(filePath))
-                .Where(filePath => rootFolder == null ||
-                                   rootFolder.FolderType == FolderType.Mixed ||
-                                   IsFileValidForRootFolderType(filePath, rootFolder))
-                .Distinct(PathEqualityComparer.Instance)
-                .ToList();
-
-            return _ingestQueue.RequeueFailedPaths(observedEligiblePaths);
-        }
-
         private async Task<StageFilesResult> StageFilesAsync(
             string path,
             RootFolder rootFolder,
             int? commandId,
             IReadOnlyCollection<string> forceStagePaths = null,
-            FilterFilesType filter = FilterFilesType.Known)
+            FilterFilesType filter = FilterFilesType.Known,
+            Action<List<string>, bool> onFilesEnumerated = null)
         {
             var stopwatch = Stopwatch.StartNew();
             var result = new StageFilesResult();
@@ -1251,18 +931,21 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             LogMemorySnapshot("[STAGE] before known file stat load path='{0}'", path);
             var knownFilesByPath = LoadKnownFilesByPath(path);
             LogMemorySnapshot("[STAGE] after known file stat load path='{0}' known={1}", path, knownFilesByPath.Count);
+            var manualScan = commandId.HasValue && IsManualCommand(commandId.Value);
             var forceStagePathSet = forceStagePaths == null || forceStagePaths.Count == 0
                 ? new HashSet<string>(PathEqualityComparer.Instance)
                 : new HashSet<string>(forceStagePaths.Where(p => !string.IsNullOrWhiteSpace(p)), PathEqualityComparer.Instance);
             var observedForceStagePathSet = new HashSet<string>(PathEqualityComparer.Instance);
 
-            // Stream file enumeration so discovery/import can begin before the full list is built.
-            // Keep inserts batched for DB efficiency.
+            // Enumerate and clean missing rows before publishing new work. Discovery still overlaps
+            // the batched staging below, but cannot import a new path against a stale file row.
             const int initialBatchSize = 250;
             const int steadyBatchSize = 1250;
             var batchSize = initialBatchSize;
 
             var stagedCount = 0;
+            var manualUnmappedRetries = 0;
+            var scheduledApplyRetries = 0;
             var stagingItems = new List<IngestQueueItem>(batchSize);
             var batchUnitKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var batchAuthorFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1286,7 +969,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             bool IsBookFile(string filePath)
             {
                 var ext = Path.GetExtension(filePath)?.ToLowerInvariant();
-                return MediaFileExtensions.AudioExtensions.Contains(ext) || MediaFileExtensions.TextExtensions.Contains(ext);
+                return !DiskScanService.IsExcludedFile(filePath) &&
+                    (MediaFileExtensions.AudioExtensions.Contains(ext) || MediaFileExtensions.TextExtensions.Contains(ext));
             }
 
                 void FlushBatch()
@@ -1342,7 +1026,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             try
             {
+                var enumerationTimer = Stopwatch.StartNew();
                 var enumerationHadErrors = false;
+                var files = new List<System.IO.Abstractions.IFileInfo>();
                 foreach (var filePath in EnumerateFilesSkippingExcludedFolders(path, ex =>
                          {
                              enumerationHadErrors = true;
@@ -1388,7 +1074,17 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     }
 
                     result.SeenFilePaths.Add(fi.FullName);
+                    files.Add(fi);
+                }
 
+                result.CleanupSafe = !enumerationHadErrors;
+                _logger.Debug("[STAGE] Enumerated '{0}': {1} media files, cleanupSafe={2}, elapsedMs={3}; no new paths published yet",
+                    path, files.Count, result.CleanupSafe, enumerationTimer.ElapsedMilliseconds);
+                onFilesEnumerated?.Invoke(result.SeenFilePaths, result.CleanupSafe);
+
+                foreach (var fi in files)
+                {
+                    CheckForPauseAndWait(commandId, ImportStage.ScanningFolders);
                     knownFilesByPath.TryGetValue(fi.FullName, out var knownFile);
                     var forceStage = forceStagePathSet.Contains(fi.FullName);
                     if (forceStage)
@@ -1405,6 +1101,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         continue;
                     }
 
+                    // Retry intent comes from durable library state, never from scratch history.
+                    var retryUnmapped = knownFile?.EditionId == 0 &&
+                        (manualScan || knownFile.MatchDetails?.StartsWith("APPLY_FAILED:", StringComparison.Ordinal) == true);
+                    if (retryUnmapped)
+                    {
+                        if (manualScan) { manualUnmappedRetries++; }
+                        else { scheduledApplyRetries++; }
+                    }
+
+                    forceStage |= retryUnmapped;
                     if (!ShouldStageFile(fi, knownFile, forceStage, filter))
                     {
                         result.SkippedKnownUnchangedCount++;
@@ -1453,8 +1159,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         string.Join(", ", missingForcedPaths));
                 }
 
-                _logger.Debug("[STAGE] Staged {0} files to ingest queue (streaming) in {1}ms; saw {2} files, skipped {3} known unchanged (totals so far: authors={4}, units={5})",
-                    stagedCount, stopwatch.ElapsedMilliseconds, result.SeenFilePaths.Count, result.SkippedKnownUnchangedCount, _authorFoldersTotal, _bookFoldersTotal);
+                _logger.Info("[STAGE] Staged {0} files in {1}ms; saw {2}, skipped {3} unchanged; manual unmatched retries: {4}, scheduled apply-failure retries: {5}",
+                    stagedCount, stopwatch.ElapsedMilliseconds, result.SeenFilePaths.Count, result.SkippedKnownUnchangedCount, manualUnmappedRetries, scheduledApplyRetries);
 
                 result.CleanupSafe = !enumerationHadErrors;
                 return result;
@@ -2047,9 +1753,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
     public interface IBookImportService
     {
-        Task ImportFileAsync(string path, int bookId, string quality);
-        Task ImportFileAsync(string path, int bookId, string quality, Dictionary<string, List<string>> tags);
-        Task ImportFileAsync(string path, int bookId, int? editionId, string quality, Dictionary<string, List<string>> tags);
         // Import a file that already resides in the library (from root-folder scanning)
         Task<BookImportFileResult> ImportExistingFileAsync(string path, int bookId, int? editionId, string quality, Dictionary<string, List<string>> tags);
         Task<BookImportFileResult> ImportExistingFileAsync(string path, int bookId, int? editionId, string quality, Dictionary<string, List<string>> tags, int? durationSeconds);

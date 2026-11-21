@@ -1,0 +1,62 @@
+<Project>
+  <!-- The package's own SixLabors_ValidateLicense task verifies assembly scope and
+       signature. This adds an actionable renewal warning before that validation. -->
+  <UsingTask TaskName="CheckSixLaborsExpiry" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <LicenseFile ParameterType="System.String" />
+      <LicenseKey ParameterType="System.String" />
+      <CheckTimeUtc ParameterType="System.String" />
+      <FailOnRenewal ParameterType="System.Boolean" />
+      <IsDebugBuild ParameterType="System.Boolean" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.Globalization" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Text.RegularExpressions" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var source = string.IsNullOrWhiteSpace(LicenseKey) ? LicenseFile : "SixLaborsLicenseKey";
+        string content;
+        try
+        {
+          content = string.IsNullOrWhiteSpace(LicenseKey) ? File.ReadAllText(LicenseFile) : LicenseKey;
+        }
+        catch (Exception ex)
+        {
+          Log.LogWarning("Cannot inspect expiry in {0}: {1}. The vendor validator will check the licence.", source, ex.Message);
+          return true;
+        }
+        var value = Regex.Match(content, @"(?:^|;)\s*ExpiryDateUtc=([^;]+)").Groups[1].Value;
+        DateTimeOffset expires;
+        DateTimeOffset now;
+        if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out expires))
+        {
+          Log.LogWarning("Cannot read ExpiryDateUtc in {0}. The vendor validator will check the licence.", source);
+        }
+        else if (!string.IsNullOrEmpty(CheckTimeUtc) && !DateTimeOffset.TryParse(CheckTimeUtc, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out now))
+        {
+          Log.LogError("Invalid SixLaborsLicenseCheckTimeUtc.");
+        }
+        else
+        {
+          now = string.IsNullOrEmpty(CheckTimeUtc) ? DateTimeOffset.UtcNow : DateTimeOffset.Parse(CheckTimeUtc, CultureInfo.InvariantCulture);
+          var message = string.Format(CultureInfo.InvariantCulture,
+            "{0} expires {1:u}. Renew the Six Labors community key (assembly-scoped) at https://licensing.sixlabors.com.", source, expires);
+          if ((!IsDebugBuild && expires <= now) || (FailOnRenewal && expires <= now.AddDays(90))) Log.LogError(message);
+          else if (expires <= now.AddDays(90)) Log.LogWarning(message);
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+  <Target Name="ValidateSixLaborsLicenseExpiry" BeforeTargets="SixLabors_ValidateLicense"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <PropertyGroup>
+      <_SixLaborsExpiryFile Condition="'$(SixLaborsLicenseFile)' != ''">$(SixLaborsLicenseFile)</_SixLaborsExpiryFile>
+      <_SixLaborsExpiryFile Condition="'$(_SixLaborsExpiryFile)' == ''">$(MSBuildProjectDirectory)/sixlabors.lic</_SixLaborsExpiryFile>
+      <FailOnSixLaborsRenewal Condition="'$(FailOnSixLaborsRenewal)' == ''">false</FailOnSixLaborsRenewal>
+    </PropertyGroup>
+    <CheckSixLaborsExpiry LicenseFile="$(_SixLaborsExpiryFile)" LicenseKey="$([MSBuild]::Unescape('$(SixLaborsLicenseKey)'))"
+                         CheckTimeUtc="$(SixLaborsLicenseCheckTimeUtc)" FailOnRenewal="$(FailOnSixLaborsRenewal)"
+                         IsDebugBuild="$(Configuration.StartsWith('Debug'))" />
+  </Target>
+</Project>

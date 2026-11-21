@@ -2,6 +2,7 @@ using NLog;
 using NLog.Config;
 using NLog.Targets;
 using NzbDrone.Core.Lifecycle;
+using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 
@@ -28,6 +29,9 @@ namespace NzbDrone.Core.ProgressMessaging
                 return;
             }
 
+            var message = command.Body is InteractiveAuthorSearchCommand search ? search.ProgressMessage : logEvent.FormattedMessage;
+            if (command.Body is InteractiveAuthorSearchCommand && command.Message == message) return;
+
             if (!ProgressMessageContext.LockReentrancy())
             {
                 return;
@@ -35,7 +39,7 @@ namespace NzbDrone.Core.ProgressMessaging
 
             try
             {
-                _commandQueueManager.SetMessage(command, logEvent.FormattedMessage);
+                _commandQueueManager.SetMessage(command, message);
                 _eventAggregator.PublishEvent(new CommandUpdatedEvent(command));
             }
             finally

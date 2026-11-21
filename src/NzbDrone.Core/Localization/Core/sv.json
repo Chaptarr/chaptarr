@@ -771,7 +771,6 @@
     "RenameFiles": "Byt namn på filer",
     "Test": "Test",
     "AddList": "Lägg till lista",
-    "DataExistingBooks": "Bevaka album som har filer eller inte har släppts än",
     "DataFirstBook": "Bevaka första album. Alla andra album kommer bli ignorerade",
     "DataMissingBooks": "Bevaka album som har filer eller inte har släppts än",
     "ApplicationURL": "Applikations-URL",

@@ -9,7 +9,6 @@ using System.Threading;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
-using NzbDrone.Core.Configuration;
 
 namespace NzbDrone.Core.MediaFiles
 {
@@ -40,17 +39,14 @@ namespace NzbDrone.Core.MediaFiles
     {
         private readonly IExternalToolsService _externalTools;
         private readonly IDiskProvider _diskProvider;
-        private readonly IConfigService _configService;
         private readonly Logger _logger;
 
         public M4bConversionService(IExternalToolsService externalTools,
                                   IDiskProvider diskProvider,
-                                  IConfigService configService,
                                   Logger logger)
         {
             _externalTools = externalTools;
             _diskProvider = diskProvider;
-            _configService = configService;
             _logger = logger;
         }
 
@@ -97,9 +93,11 @@ namespace NzbDrone.Core.MediaFiles
                 }
 
                 var conversionOptions = options ?? new ConversionOptions();
+                conversionOptions.CancellationToken.ThrowIfCancellationRequested();
                 var tagOptions = CloneTagOptions(conversionOptions.TagOptions) ?? new ConversionTagOptions();
+                var conversionInputFiles = CreateProviderChapterSidecarInputs(inputFiles, conversionOptions, tagOptions);
                 TryApplyExtractedSourceCover(inputFiles, conversionOptions, tagOptions);
-                var arguments = BuildM4bToolArguments(inputFiles, outputFile, conversionOptions, tagOptions);
+                var arguments = BuildM4bToolArguments(conversionInputFiles, outputFile, conversionOptions, tagOptions);
                 var progressParser = new M4bToolProgressParser(inputFiles.Length);
                 var progressLock = new object();
                 decimal? lastProgress = null;
@@ -169,6 +167,8 @@ namespace NzbDrone.Core.MediaFiles
                     if (!validation.Success)
                     {
                         SetFailure(result, ConversionFailureCategory.OutputInvalid, validation.ErrorMessage, output);
+                        result.RetainOutputOnFailure = validation.ReadableAudio;
+                        if (result.RetainOutputOnFailure) result.OutputFileSize = GetFileSizeSafely(outputFile);
                         _logger.Error("M4B conversion produced an invalid output: {0}", result.ErrorMessage);
                     }
                     else
@@ -191,6 +191,11 @@ namespace NzbDrone.Core.MediaFiles
                     }
                 }
             }
+            catch (OperationCanceledException)
+            {
+                SetFailure(result, ConversionFailureCategory.Cancelled, "M4B conversion cancelled");
+                _logger.Debug("M4B conversion cancelled while preparing inputs");
+            }
             catch (Exception ex)
             {
                 SetFailure(result, ConversionFailureCategory.Unknown, ex.Message, ex.ToString());
@@ -198,6 +203,36 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             return result;
+        }
+
+        private string[] CreateProviderChapterSidecarInputs(string[] inputFiles, ConversionOptions options, ConversionTagOptions tagOptions)
+        {
+            if (tagOptions.ChaptersTxtContent.IsNullOrWhiteSpace())
+            {
+                return inputFiles;
+            }
+
+            var cancellationToken = options.CancellationToken;
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (options.TempDirectory.IsNullOrWhiteSpace())
+                {
+                    throw new IOException("Conversion workspace is required to prepare provider chapters.");
+                }
+
+                // m4b-tool reads chapters from its first input; a metadata-only directory
+                // keeps the original audio paths in order without creating links or copies.
+                var chapterFolder = Path.Combine(options.TempDirectory, "chapter-metadata");
+                _diskProvider.CreateFolder(chapterFolder);
+                _diskProvider.WriteAllText(Path.Combine(chapterFolder, "chapters.txt"), tagOptions.ChaptersTxtContent);
+                cancellationToken.ThrowIfCancellationRequested();
+                return new[] { chapterFolder }.Concat(inputFiles).ToArray();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw new IOException($"Unable to prepare provider chapters: {ex.Message}", ex);
+            }
         }
 
         public bool CanConvert(string[] inputFiles)
@@ -545,7 +580,7 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             var validation = ValidateConvertedOutput(inputFiles, outputFile, options);
-            if (!validation.Success)
+            if (!validation.ReadableAudio)
             {
                 _logger.Warn("Not retaining failed conversion output because validation failed: {0}", validation.ErrorMessage);
                 return;
@@ -595,7 +630,7 @@ namespace NzbDrone.Core.MediaFiles
                 if (actualDifference > allowedDifference)
                 {
                     return ConversionOutputValidationResult.Fail(
-                        $"Converted M4B duration looks wrong. Source duration is about {FormatDuration(expectedDuration)} but output is {FormatDuration(outputDuration)}; allowed difference is {FormatDuration(allowedDifference)}.");
+                        $"Converted M4B duration looks wrong. Source duration is about {FormatDuration(expectedDuration)} but output is {FormatDuration(outputDuration)}; allowed difference is {FormatDuration(allowedDifference)}.", readableAudio: true);
                 }
             }
 
@@ -947,23 +982,25 @@ namespace NzbDrone.Core.MediaFiles
 
     internal sealed class ConversionOutputValidationResult
     {
-        private ConversionOutputValidationResult(bool success, string errorMessage)
+        private ConversionOutputValidationResult(bool success, string errorMessage, bool readableAudio)
         {
             Success = success;
             ErrorMessage = errorMessage;
+            ReadableAudio = readableAudio;
         }
 
         public bool Success { get; }
+        public bool ReadableAudio { get; }
         public string ErrorMessage { get; }
 
         public static ConversionOutputValidationResult Ok()
         {
-            return new ConversionOutputValidationResult(true, null);
+            return new ConversionOutputValidationResult(true, null, true);
         }
 
-        public static ConversionOutputValidationResult Fail(string errorMessage)
+        public static ConversionOutputValidationResult Fail(string errorMessage, bool readableAudio = false)
         {
-            return new ConversionOutputValidationResult(false, errorMessage);
+            return new ConversionOutputValidationResult(false, errorMessage, readableAudio);
         }
     }
 

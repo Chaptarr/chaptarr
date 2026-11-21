@@ -114,6 +114,8 @@ namespace Chaptarr.Core.Test.Download
                 trackedDownload.State = _stateAfterImport;
             }
 
+            public bool CanRemoveDownload(TrackedDownload trackedDownload, DownloadCleanupContext cleanup = null) => throw new NotImplementedException();
+
             public bool VerifyImport(TrackedDownload trackedDownload, List<ImportResult> importResults) => throw new NotImplementedException();
         }
 
@@ -124,7 +126,8 @@ namespace Chaptarr.Core.Test.Download
             public void Start(string downloadId, int targetQualityId, string targetQualityName, string message = null) => throw new NotImplementedException();
             public void Progress(string downloadId, decimal? progress, string message = null) => throw new NotImplementedException();
             public void RegisterCancellation(string downloadId, CancellationTokenSource cancellationTokenSource) => throw new NotImplementedException();
-            public bool Cancel(string downloadId) => throw new NotImplementedException();
+            public void UnregisterCancellation(string downloadId, CancellationTokenSource cancellationTokenSource) => throw new NotImplementedException();
+            public bool Cancel(string downloadId, CancellationTokenSource expectedSource = null) => throw new NotImplementedException();
             public void Cancelled(string downloadId, string message = null) => throw new NotImplementedException();
             public void Complete(string downloadId) => throw new NotImplementedException();
             public void Fail(string downloadId, string errorMessage) => throw new NotImplementedException();
@@ -142,7 +145,7 @@ namespace Chaptarr.Core.Test.Download
             public List<string> DeletedDownloadIds { get; } = new();
 
             public void CaptureClientList(DownloadClientItem item) => throw new NotImplementedException();
-            public void CaptureCompletedOutput(DownloadClientItem item) => throw new NotImplementedException();
+            public void CaptureCompletedOutput(DownloadClientItem item, bool throwOnError = false, DownloadCleanupContext cleanup = null) => throw new NotImplementedException();
             public void ApplySnapshot(DownloadClientItem item) => throw new NotImplementedException();
 
             public void Delete(DownloadClientItem item)
@@ -252,7 +255,7 @@ namespace Chaptarr.Core.Test.Download
         }
 
         [Test]
-        public void should_delete_persisted_file_snapshots_before_retrying_import()
+        public void should_preserve_source_inventory_when_retrying_the_same_download_path()
         {
             var trackedDownload = CreateTrackedDownload("download-1", TrackedDownloadState.ImportBlocked, DownloadItemStatus.Completed);
             trackedDownload.ImportItem = CreateClientItem("download-1", DownloadItemStatus.Completed, "/downloads/book");
@@ -260,7 +263,7 @@ namespace Chaptarr.Core.Test.Download
 
             subject.Execute(new RetryFailedImportCommand { DownloadId = "download-1" });
 
-            Assert.That(snapshotService.DeletedDownloadIds, Is.EqualTo(new[] { "download-1", "download-1" }));
+            Assert.That(snapshotService.DeletedDownloadIds, Is.Empty);
         }
 
         [Test]

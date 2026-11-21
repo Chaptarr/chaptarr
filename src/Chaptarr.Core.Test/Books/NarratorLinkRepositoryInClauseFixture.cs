@@ -78,7 +78,7 @@ namespace Chaptarr.Core.Test.Books
                 var mainDatabase = new MainDatabase(database);
                 var sut = new BookNarratorLinkRepository(mainDatabase, new StubEventAggregator());
 
-                Assert.DoesNotThrow(() => sut.DeleteByBookIds(new[] { 1, 3 }.ToList()));
+                Assert.DoesNotThrow(() => sut.ReplaceByBookIds(new[] { 1, 3 }.ToList(), new()));
 
                 using (var verify = new SqliteConnection(connectionString))
                 {
@@ -106,7 +106,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void should_delete_edition_narrator_links_by_edition_ids()
+        public void should_delete_only_selected_edition_narrator_link_ids()
         {
             var databasePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"edition_narrator_link_in_{Guid.NewGuid():N}.db");
             var connectionString = new SqliteConnectionStringBuilder
@@ -152,7 +152,7 @@ namespace Chaptarr.Core.Test.Books
                 var mainDatabase = new MainDatabase(database);
                 var sut = new EditionNarratorLinkRepository(mainDatabase, new StubEventAggregator());
 
-                Assert.DoesNotThrow(() => sut.DeleteByEditionIds(new[] { 10, 12 }.ToList()));
+                Assert.DoesNotThrow(() => sut.ApplyChanges(new[] { 1, 3 }.ToList(), new()));
 
                 using (var verify = new SqliteConnection(connectionString))
                 {
@@ -263,4 +263,3 @@ namespace Chaptarr.Core.Test.Books
         }
     }
 }
-

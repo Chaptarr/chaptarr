@@ -5,6 +5,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         Imported,
         Rejected,
         Skipped,
-        Pending
+        Pending,
+        WaitingForConfirmation
     }
 }

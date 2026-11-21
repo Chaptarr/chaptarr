@@ -19,6 +19,7 @@ namespace NzbDrone.Core.Books
 
         public void Handle(AuthorEditedEvent message)
         {
+            if (message.IdentityReconciliation) return;
             _logger.Debug("[FLOW-DEBUG] ========== AuthorEditedService.Handle START ==========");
             _logger.Debug("[FLOW-DEBUG] Author: '{0}' (ID: {1})", message.Author.Name, message.Author.Id);
             _logger.Debug("[FLOW-DEBUG] Old MetadataProfileId: {0}, New MetadataProfileId: {1}", message.OldAuthor.MetadataProfileId, message.Author.MetadataProfileId);
@@ -30,15 +31,18 @@ namespace NzbDrone.Core.Books
                                    !string.IsNullOrWhiteSpace(message.Author.EbookRootFolderPath);
             var gainedRootFolder = gainedAudiobookFolder || gainedEbookFolder;
 
-            if (gainedRootFolder)
+            var metadataProfileChanged = message.Author.MetadataProfileId != message.OldAuthor.MetadataProfileId;
+
+            // Initial format setup already owns catalog loading and the following scan.
+            // Ordinary root edits without that saved setup intent still need hydration.
+            if (!metadataProfileChanged && gainedRootFolder &&
+                (!gainedAudiobookFolder || message.Author.AddOptions?.AudiobookMonitor.HasValue == true) &&
+                (!gainedEbookFolder || message.Author.AddOptions?.EbookMonitor.HasValue == true))
             {
-                // Root-folder linkage does not rewrite independent book-row flags.
-                // Any one-time catalog seed is applied by the add/import request;
-                // the author gate only participates in eligibility.
-                _logger.Debug("[BOOK-MONITORING] Author '{0}' gained a root folder; preserving existing book-row monitoring", message.Author.Name);
+                _logger.Debug("Author {0} is initializing its added format; retaining the existing catalog/scan handoff", message.Author.Id);
+                return;
             }
 
-            var metadataProfileChanged = message.Author.MetadataProfileId != message.OldAuthor.MetadataProfileId;
 
             // Refresh metadata when profile filters change, or when a per-format root is
             // explicitly added for the first time. The root-folder case is intentionally

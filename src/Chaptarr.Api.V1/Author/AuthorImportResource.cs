@@ -10,6 +10,19 @@ namespace Chaptarr.Api.V1.Author
         [JsonPropertyName("foreignAuthorId")]
         public string ForeignAuthorId { get; set; }
 
+        [JsonPropertyName("authorName")]
+        public string AuthorName { get; set; }
+
+        public bool? SyncMonitoredAcrossFormats { get; set; }
+        public string AudiobookRootFolderPath { get; set; }
+        public int? AudiobookQualityProfileId { get; set; }
+        public int? AudiobookMetadataProfileId { get; set; }
+        public HashSet<int> AudiobookTags { get; set; }
+        public string EbookRootFolderPath { get; set; }
+        public int? EbookQualityProfileId { get; set; }
+        public int? EbookMetadataProfileId { get; set; }
+        public HashSet<int> EbookTags { get; set; }
+
         [JsonPropertyName("mediaType")]
         public string MediaType { get; set; }
 

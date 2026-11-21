@@ -1,0 +1,63 @@
+{
+  "product": {
+    "asin": "B0F14RPXHR",
+    "title": "Harry Potter and the Sorcerer’s Stone (Full-Cast Edition)",
+    "publisher_name": "Pottermore Publishing and Audible Studios",
+    "authors": [
+      {
+        "asin": "B000AP9A6K",
+        "name": "J.K. Rowling"
+      }
+    ],
+    "narrators": [
+      {
+        "name": "Hugh Laurie"
+      },
+      {
+        "name": "Matthew Macfadyen"
+      },
+      {
+        "name": "Riz Ahmed"
+      },
+      {
+        "name": "Michelle Gomez"
+      },
+      {
+        "name": "Cush Jumbo"
+      },
+      {
+        "name": "Frankie Treadaway"
+      },
+      {
+        "name": "Max Lester"
+      },
+      {
+        "name": "Arabella Stanton"
+      },
+      {
+        "name": "Mark Addy"
+      },
+      {
+        "name": "Indira Varma"
+      },
+      {
+        "name": "Sacha Dhawan"
+      },
+      {
+        "name": "Nina Wadia"
+      },
+      {
+        "name": "Joel Fry"
+      },
+      {
+        "name": "Adeel Akhtar"
+      },
+      {
+        "name": "Tracy Ann Oberman"
+      }
+    ],
+    "language": "english",
+    "runtime_length_min": 521,
+    "release_date": "2025-11-04"
+  }
+}

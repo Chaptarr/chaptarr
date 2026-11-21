@@ -293,6 +293,45 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(plan.ShouldUpdateStoredAuthorPath, Is.False);
         }
 
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void canonical_organize_accepts_tracked_files_outside_the_author_layout(bool ebook, bool directlyInRoot)
+        {
+            var root = @"C:\library".AsOsAgnostic();
+            var mediaType = ebook ? "ebook" : "audiobook";
+            var extension = ebook ? ".epub" : ".m4b";
+            var source = Path.Combine(directlyInRoot ? root : @"C:\old-share\nested".AsOsAgnostic(), "original" + extension);
+            var builder = DispatchProxy.Create<IBuildFileNames, BuildFileNamesProxy>();
+            var proxy = (BuildFileNamesProxy)(object)builder;
+            proxy.AuthorFolderFactory = (_, media) =>
+            {
+                Assert.That(media, Is.EqualTo(mediaType));
+                return "Author";
+            };
+            proxy.BookFileNameFactory = (_, _, _, _) => Path.Combine("Book", "renamed");
+            var service = CreateService(builder, DispatchProxy.Create<INamingConfigService, NamingConfigServiceProxy>());
+            var author = new Author { Id = 1, AudiobookRootFolderPath = ebook ? null : root, EbookRootFolderPath = ebook ? root : null };
+            var file = new BookFile
+            {
+                Path = source,
+                EditionId = 7,
+                Edition = new Edition { Id = 7, BookId = 42, Book = new Book { Id = 42, AuthorId = 1, MediaType = ebook ? BookMediaType.Ebook : BookMediaType.Audiobook } },
+                Quality = new QualityModel(ebook ? Quality.EPUB : Quality.M4B),
+                MediaType = mediaType
+            };
+
+            var plan = service.GetOrganizeDestination(file, author, true);
+
+            Assert.That(plan.CanOrganize, Is.True, plan.SkipReason);
+            Assert.That(plan.DestinationPath, Is.EqualTo(Path.Combine(root, "Author", "Book", "renamed" + extension)));
+            Assert.That(plan.SourceAuthorFolderPath, Is.Null, "Unknown source layout must not authorize ancestor cleanup");
+            Assert.That(plan.ShouldUpdateStoredAuthorPath, Is.True);
+            Assert.That(file.Path, Is.EqualTo(source), "Preview must not move or relink a file");
+            Assert.That(file.EditionId, Is.EqualTo(7));
+        }
+
         [Test]
         public void should_skip_organize_when_physical_author_folder_cannot_be_proven()
         {

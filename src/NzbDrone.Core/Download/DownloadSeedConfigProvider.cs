@@ -24,6 +24,7 @@ namespace NzbDrone.Core.Download
         {
             public int IndexerId { get; set; }
             public bool Discography { get; set; }
+            public bool KeepSeeding { get; set; }
         }
 
         private readonly ICached<CachedSeedConfiguration> _cacheDownloads;
@@ -53,9 +54,9 @@ namespace NzbDrone.Core.Download
                 return null;
             }
 
-            var seedConfig = _indexerSeedConfigProvider.GetSeedConfiguration(cachedConfig.IndexerId, cachedConfig.Discography);
-
-            return seedConfig;
+            return cachedConfig.KeepSeeding
+                ? new TorrentSeedConfiguration { KeepSeeding = true }
+                : _indexerSeedConfigProvider.GetSeedConfiguration(cachedConfig.IndexerId, cachedConfig.Discography);
         }
 
         private CachedSeedConfiguration FetchIndexer(string infoHash)
@@ -66,6 +67,11 @@ namespace NzbDrone.Core.Download
             {
                 _logger.Debug("No download history item for infohash {0}, unable to provide seed configuration", infoHash);
                 return null;
+            }
+
+            if (historyItem.ShouldKeepSeeding())
+            {
+                return new CachedSeedConfiguration { KeepSeeding = true };
             }
 
             ParsedBookInfo parsedBookInfo = null;

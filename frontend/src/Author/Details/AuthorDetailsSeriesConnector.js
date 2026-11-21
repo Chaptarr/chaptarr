@@ -11,8 +11,10 @@ import createAuthorSelector from 'Store/Selectors/createAuthorSelector';
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
-import AuthorDetailsSeries from './AuthorDetailsSeries';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
+import createBookSearchFilter from 'Utilities/Book/createBookSearchFilter';
+import isLibraryBook from 'Utilities/Book/isLibraryBook';
+import AuthorDetailsSeries from './AuthorDetailsSeries';
 
 function createMapStateToProps() {
   return createSelector(
@@ -54,6 +56,10 @@ function createMapStateToProps() {
         acc[curr.bookId] = curr.position;
         return acc;
       }, {});
+      const positionOrderMap = (currentSeries.links || []).reduce((acc, curr) => {
+        acc[curr.bookId] = curr.positionOrder;
+        return acc;
+      }, {});
 
       let booksInSeries = _.filter(books.items, (book) => bookIds.includes(book.id));
 
@@ -76,60 +82,13 @@ function createMapStateToProps() {
       
       // Apply search filter first if there's a value
       if (typeof filterValue === 'string' && filterValue.trim()) {
-        const searchTerm = filterValue.toLowerCase().trim();
-        const includes = (value) => typeof value === 'string' && value.toLowerCase().includes(searchTerm);
-        const listIncludes = (list) => Array.isArray(list) && list.some((value) => includes(value));
-        const seriesMatches = includes(currentSeries.title);
-
-        const editionMatches = (edition) => {
-          if (!edition) {
-            return false;
-          }
-
-          return includes(edition.narrator) || includes(edition.title) || includes(edition.subtitle);
-        };
-
-        booksInSeries = booksInSeries.filter((book) => {
-          if (!book) {
-            return false;
-          }
-
-          // If the series name matches, keep the whole series visible.
-          if (seriesMatches) {
-            return true;
-          }
-
-          if (includes(book.title) || includes(book.authorTitle) || includes(book.seriesTitle) || includes(book.narrator)) {
-            return true;
-          }
-
-          if (listIncludes(book.availableNarrators)) {
-            return true;
-          }
-
-          if (Array.isArray(book.editions) && book.editions.some(editionMatches)) {
-            return true;
-          }
-
-          return false;
-        });
+        booksInSeries = booksInSeries.filter(createBookSearchFilter(filterValue, currentSeries.title));
       }
-      
+
       // Apply hide unmonitored/missing filter ONLY if not searching
       // When searching, show all results regardless of monitored/missing status
       if (hideUnmonitoredMissing && !filterValue && booksInSeries.length > 0) {
-        const selectedMediaType = effectiveMediaType;
-        booksInSeries = booksInSeries.filter(book => {
-          // Show the book if:
-          // 1. It's monitored for the current media type, OR
-          // 2. It has files (not missing)
-          // Hide only if: unmonitored AND missing
-          const isMonitored = selectedMediaType === 'audiobook' 
-            ? book.audiobookMonitored 
-            : book.ebookMonitored;
-          const hasFiles = book.statistics && book.statistics.bookFileCount > 0;
-          return isMonitored || hasFiles;
-        });
+        booksInSeries = booksInSeries.filter((book) => isLibraryBook(book));
       }
 
       // Never show empty series groups in the UI. A series with no visible books is either:
@@ -145,11 +104,9 @@ function createMapStateToProps() {
 
       let sortedBooks = [];
       if (series.sortKey === 'position') {
-        sortedBooks = booksInSeries.sort((a, b) => {
-          const apos = positionMap[a.id] || '';
-          const bpos = positionMap[b.id] || '';
-          return apos.localeCompare(bpos, undefined, { numeric: true, sensitivity: 'base' });
-        });
+        sortedBooks = _.orderBy(booksInSeries,
+          [(book) => positionOrderMap[book.id], (book) => positionMap[book.id] || ''],
+          [sortDir, sortDir]);
       } else {
         sortedBooks = _.orderBy(booksInSeries, series.sortKey, sortDir);
       }

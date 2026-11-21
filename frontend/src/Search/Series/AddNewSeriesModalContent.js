@@ -96,7 +96,8 @@ class AddNewSeriesModalContent extends Component {
       .filter((b) => selectedBookIds.includes(b.foreignBookId))
       .map((b) => ({
         foreignBookId: b.foreignBookId,
-        foreignAuthorId: b.foreignAuthorId
+        foreignAuthorId: b.foreignAuthorId,
+        authorName: b.authorName
       }));
 
     if (!selectedBooks.length) {

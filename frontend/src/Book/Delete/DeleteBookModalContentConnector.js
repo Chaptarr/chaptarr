@@ -11,7 +11,8 @@ import DeleteBookModalContent from './DeleteBookModalContent';
 function createMapStateToProps() {
   return createSelector(
     createBookSelector(),
-    (book) => book || {}
+    (state) => state.books,
+    (book, { isDeleting, deleteError }) => ({ ...book, isDeleting, deleteError })
   );
 }
 
@@ -37,6 +38,7 @@ class DeleteBookModalContentConnector extends Component {
   }
 
   componentDidMount() {
+    this._isMounted = true;
     this._fetchSiblingDeleteInfo();
   }
 
@@ -47,6 +49,7 @@ class DeleteBookModalContentConnector extends Component {
   }
 
   componentWillUnmount() {
+    this._isMounted = false;
     if (this._abortSiblingRequest) {
       this._abortSiblingRequest();
       this._abortSiblingRequest = null;
@@ -104,16 +107,22 @@ class DeleteBookModalContentConnector extends Component {
   // Listeners
 
   onDeletePress = (deleteFiles, addImportListExclusion, applyToBothFormats) => {
+    const location = window.location.href;
+
     this.props.deleteBook({
       id: this.props.bookId,
       deleteFiles,
       addImportListExclusion,
       applyToBothFormats
+    }).done(() => {
+      if (this._isMounted) {
+        this.props.onModalClose(true);
+      }
+
+      if (window.location.href === location) {
+        this.props.push(`${window.Chaptarr.urlBase}/author/${this.props.authorId}`);
+      }
     });
-
-    this.props.onModalClose(true);
-
-    this.props.push(`${window.Chaptarr.urlBase}/author/${this.props.authorId}`);
   };
 
   //

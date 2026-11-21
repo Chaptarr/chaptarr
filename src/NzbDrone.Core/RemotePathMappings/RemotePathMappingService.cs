@@ -62,7 +62,7 @@ namespace NzbDrone.Core.RemotePathMappings
 
             var all = AllStored();
 
-            ValidateMapping(all, mapping);
+            ValidateMapping(all, mapping, _diskProvider);
 
             var result = _remotePathMappingRepository.Insert(mapping);
 
@@ -89,7 +89,7 @@ namespace NzbDrone.Core.RemotePathMappings
 
             var existing = AllStored().Where(v => v.Id != mapping.Id).ToList();
 
-            ValidateMapping(existing, mapping);
+            ValidateMapping(existing, mapping, _diskProvider);
 
             var result = _remotePathMappingRepository.Update(mapping);
 
@@ -102,7 +102,7 @@ namespace NzbDrone.Core.RemotePathMappings
         {
             mapping = PrepareMapping(mapping);
 
-            ValidateMapping(new List<RemotePathMapping>(), mapping, false, false);
+            ValidateMapping(new List<RemotePathMapping>(), mapping, _diskProvider, false, false);
 
             var remotePath = new OsPath(mapping.RemotePath);
             var mappedPath = RemapRemoteToLocal(new[] { mapping }, mapping.DownloadClientId, mapping.Host, remotePath);
@@ -196,7 +196,7 @@ namespace NzbDrone.Core.RemotePathMappings
             return host;
         }
 
-        private void ValidateMapping(List<RemotePathMapping> existing, RemotePathMapping mapping, bool requireLocalPathExists = true, bool checkDuplicates = true)
+        internal static void ValidateMapping(List<RemotePathMapping> existing, RemotePathMapping mapping, IDiskProvider diskProvider, bool requireLocalPathExists = true, bool checkDuplicates = true)
         {
             if (mapping.Host.IsNullOrWhiteSpace())
             {
@@ -221,7 +221,7 @@ namespace NzbDrone.Core.RemotePathMappings
                 throw ValidationError("LocalPath", "Invalid LocalPath. LocalPath cannot be empty and must not be the root.");
             }
 
-            if (requireLocalPathExists && !_diskProvider.FolderExists(localPath.FullPath))
+            if (requireLocalPathExists && !diskProvider.FolderExists(localPath.FullPath))
             {
                 throw ValidationError("LocalPath", "Can't add mount point directory that doesn't exist.");
             }
