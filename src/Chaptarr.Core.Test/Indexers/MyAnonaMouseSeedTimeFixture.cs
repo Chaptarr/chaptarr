@@ -31,7 +31,7 @@ namespace Chaptarr.Core.Test.Indexers
         public void default_definition_should_set_seed_time_hours_to_72()
         {
             var logger = LogManager.GetCurrentClassLogger();
-            var indexer = new MyAnonaMouse(null, null, null, null, logger);
+            var indexer = new MyAnonaMouse(null, null, null, null, null, logger);
 
             var definition = (IndexerDefinition)indexer.DefaultDefinitions.Single();
             var settings = (MyAnonaMouseSettings)definition.Settings;

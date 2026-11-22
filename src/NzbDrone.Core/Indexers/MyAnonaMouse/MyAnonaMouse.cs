@@ -17,6 +17,8 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 {
     public class MyAnonaMouse : HttpIndexerBase<MyAnonaMouseSettings>
     {
+        private readonly IMyAnonaMouseAccountSummaryThrottle _accountSummaryThrottle;
+
         public override string Name => "MyAnonaMouse";
 
         public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
@@ -24,9 +26,11 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         public override bool SupportsSearch => true;
         public override int PageSize => 100;
 
-        public MyAnonaMouse(IIndexerHttpClientFactory httpClientFactory, IIndexerStatusService indexerStatusService, IConfigService configService, IParsingService parsingService, Logger logger)
+        public MyAnonaMouse(IIndexerHttpClientFactory httpClientFactory, IIndexerStatusService indexerStatusService, IConfigService configService, IParsingService parsingService,
+                            IMyAnonaMouseAccountSummaryThrottle accountSummaryThrottle, Logger logger)
             : base(httpClientFactory, indexerStatusService, configService, parsingService, logger)
         {
+            _accountSummaryThrottle = accountSummaryThrottle;
         }
 
         public override IEnumerable<ProviderDefinition> DefaultDefinitions
@@ -179,7 +183,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
                 _logger.Trace("MAM_TEST_SUCCESS: JSON API test successful, found {0} results", releases.Count);
 
-                // The test result must not present cached counts as if this refresh verified them.
+                // The test result must not present previously stored counts as verified.
                 try
                 {
                     await RefreshAccountStatus();
@@ -235,32 +239,35 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             }
         }
 
-        // Requests always send Settings.MamId, so adopt MAM's rotated cookie or the original expires after
-        // ~30 days. MyAnonaMouseAccountStatusService saves Settings after each successful refresh.
-        private void PersistRefreshedMamId(HttpResponse response)
-        {
-            if (!response.GetCookies().TryGetValue("mam_id", out var refreshedMamId) ||
-                string.IsNullOrWhiteSpace(refreshedMamId) ||
-                string.Equals(refreshedMamId, Settings.MamId, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            _logger.Debug("MAM issued a refreshed mam_id for indexer '{0}'", Definition?.Name);
-            Settings.MamId = refreshedMamId;
-        }
-
         public async Task<MyAnonaMouseAccountStatus> RefreshAccountStatus()
         {
-            var request = new HttpRequestBuilder($"{Settings.BaseUrl.TrimEnd('/')}/jsonLoad.php?snatch_summary&pretty")
+            var connection = MamConnection.For((IndexerDefinition)Definition);
+            var status = await _accountSummaryThrottle.SendAsync(connection, () => FetchAccountStatus(connection));
+
+            Settings.ApplyAccountStatus(status);
+
+            // Requests send the configured cookie, so adopt MAM's rotation before the original expires.
+            if (!string.IsNullOrWhiteSpace(status.RotatedMamId) && Settings.MamId != status.RotatedMamId)
+            {
+                _logger.Debug("MAM issued a refreshed mam_id for indexer '{0}'", Definition?.Name);
+                Settings.MamId = status.RotatedMamId;
+            }
+
+            _logger.Debug("MAM account status detected: {0} (VIP: {1}), unsatisfied {2}/{3}", status.UserClass, status.IsVip, status.UnsatisfiedCount, status.UnsatisfiedLimit);
+            return status;
+        }
+
+        private async Task<MyAnonaMouseAccountStatus> FetchAccountStatus(MamConnection connection)
+        {
+            var request = new HttpRequestBuilder($"{connection.BaseUrl}/jsonLoad.php?snatch_summary&pretty")
                 .Accept(HttpAccept.Json)
                 .SetHeader("User-Agent", $"{BuildInfo.AppName}/{BuildInfo.Version}")
                 .Build();
 
             request.SuppressHttpErrorStatusCodes = new[] { HttpStatusCode.NotFound };
             request.RateLimitKey = Definition?.Id > 0 ? Definition.Id.ToString() : null;
-            request.Cookies["mam_id"] = Settings.MamId;
-            if (Settings.MamSsl)
+            request.Cookies["mam_id"] = connection.MamId;
+            if (connection.MamSsl)
             {
                 request.Cookies["mam_ssl"] = "1";
             }
@@ -312,32 +319,22 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 throw new MyAnonaMouseAccountSummaryException("MAM user data response included an invalid summary timestamp");
             }
 
-            var refreshedUtc = DateTime.UtcNow;
-            var isVip = IsVipClass(className);
             if (string.IsNullOrWhiteSpace(userId))
             {
                 _logger.Debug("MAM account response for indexer '{0}' had no user ID, so other MAM indexers' grabs count toward its limit", Definition?.Name);
             }
 
-            Settings.UserId = userId;
-            Settings.UserClass = className;
-            Settings.IsVip = isVip;
-            Settings.UnsatisfiedCount = userData.Unsatisfied.Count;
-            Settings.UnsatisfiedLimit = userData.Unsatisfied.Limit;
-            Settings.UnsatisfiedSnapshotUtc = snapshotCreatedUtc;
-            Settings.UnsatisfiedStatusRefreshedUtc = refreshedUtc;
-            PersistRefreshedMamId(response);
-
-            _logger.Debug("MAM account status detected: {0} (VIP: {1}), unsatisfied {2}/{3}", className, isVip, userData.Unsatisfied.Count, userData.Unsatisfied.Limit);
-
+            response.GetCookies().TryGetValue("mam_id", out var rotatedMamId);
             return new MyAnonaMouseAccountStatus
             {
+                UserId = userId,
                 UserClass = className,
-                IsVip = isVip,
+                IsVip = IsVipClass(className),
                 UnsatisfiedCount = userData.Unsatisfied.Count,
                 UnsatisfiedLimit = userData.Unsatisfied.Limit,
                 SnapshotCreatedUtc = snapshotCreatedUtc,
-                RefreshedUtc = refreshedUtc
+                RefreshedUtc = DateTime.UtcNow,
+                RotatedMamId = rotatedMamId
             };
         }
 
@@ -396,12 +393,14 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
     public class MyAnonaMouseAccountStatus
     {
-        public string UserClass { get; set; }
-        public bool IsVip { get; set; }
-        public int UnsatisfiedCount { get; set; }
-        public int UnsatisfiedLimit { get; set; }
-        public DateTime SnapshotCreatedUtc { get; set; }
-        public DateTime RefreshedUtc { get; set; }
+        internal string UserId { get; init; }
+        internal string RotatedMamId { get; init; }
+        public string UserClass { get; init; }
+        public bool IsVip { get; init; }
+        public int UnsatisfiedCount { get; init; }
+        public int UnsatisfiedLimit { get; init; }
+        public DateTime SnapshotCreatedUtc { get; init; }
+        public DateTime RefreshedUtc { get; init; }
     }
 
     public class MyAnonaMouseUserDataResponse

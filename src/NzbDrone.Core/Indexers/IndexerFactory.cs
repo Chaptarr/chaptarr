@@ -102,7 +102,9 @@ namespace NzbDrone.Core.Indexers
         public override ValidationResult Test(IndexerDefinition definition)
         {
             var result = base.Test(definition);
+            var testMessage = definition.Message;
             SetProviderCharacteristics(definition);
+            definition.Message = testMessage; // Keep the message the Test set.
 
             var success = result == null || result.IsValid;
 

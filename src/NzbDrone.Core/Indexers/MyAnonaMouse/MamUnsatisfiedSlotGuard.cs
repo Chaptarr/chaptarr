@@ -37,7 +37,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
     public class MamUnsatisfiedSlotGuard : IMamUnsatisfiedSlotGuard
     {
-        // Covers delayed accounting and clock skew. Revisit 5 minutes after more timing tests.
+        // Covers MAM's accounting lag and clock skew. I may drop this to 5 minutes after more testing.
         internal static readonly TimeSpan SummaryAccountingLag = TimeSpan.FromMinutes(10);
 
         private static readonly TimeSpan MaximumStatusAge = TimeSpan.FromHours(2);
@@ -107,7 +107,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             var now = DateTime.UtcNow;
             if (!HasFreshStatus(settings, now))
             {
-                return MamUnsatisfiedSlotAvailability.Reject("MAM safety pause: the unsatisfied-slot status is unavailable or stale; test the indexer and try again");
+                return MamUnsatisfiedSlotAvailability.Reject("MAM safety pause: the unsatisfied-slot status is unavailable or stale. Chaptarr rechecks every hour; to recheck now, test the indexer and save it.");
             }
 
             // MAM's count at the last check plus the other torrents grabbed on that account since then.

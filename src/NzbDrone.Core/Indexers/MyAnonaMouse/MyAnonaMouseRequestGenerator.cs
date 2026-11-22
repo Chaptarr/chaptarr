@@ -20,7 +20,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         private const int RecentPageSize = 500;
         private const int SearchPageSize = 100;
         private const int SearchMaxPages = 10;
-        private static readonly Regex BookNumberSuffixRegex = new Regex(@"\s*book\s+\d+\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex BookNumberSuffixRegex = new Regex(@"\s*\bbook\s+\d+\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex MultiWhitespaceRegex = new Regex(@"\s{2,}", RegexOptions.Compiled);
 
         public MyAnonaMouseSettings Settings { get; set; }
