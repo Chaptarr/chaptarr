@@ -212,8 +212,8 @@ namespace Chaptarr.Core.Test.Indexers
         [Test]
         public void a_torrent_grabbed_through_two_indexers_should_count_once()
         {
-            var first = FreshSettings(count: 3, limit: 50, safetyReserve: 45);
-            var second = FreshSettings(count: 3, limit: 50, safetyReserve: 45);
+            var first = FreshSettings(count: 3, limit: 50, safetyReserve: 46);
+            var second = FreshSettings(count: 3, limit: 50, safetyReserve: 46);
             var repository = CreateRepository(out var state);
             var guard = CreateGuard(CreateFactory(Definition(first), Definition(second, 10, "MAM ebooks")), repository);
 
@@ -223,7 +223,11 @@ namespace Chaptarr.Core.Test.Indexers
 
             var next = guard.Check(Release("100"));
 
-            Assert.That(next.Accepted, Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(next.Accepted, Is.False);
+                Assert.That(next.Reason, Does.Contain("4 of 50"));
+            });
         }
 
         [Test]
