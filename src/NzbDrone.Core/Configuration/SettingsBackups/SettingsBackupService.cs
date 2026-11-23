@@ -1532,7 +1532,8 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                     SkipMissingAsin = profile.SkipMissingAsin,
                     AllowedLanguages = profile.AllowedLanguages,
                     MinPages = profile.MinPages,
-                    Ignored = profile.Ignored ?? new List<string>()
+                    Ignored = profile.Ignored ?? new List<string>(),
+                    IgnoredGenres = profile.IgnoredGenres ?? new List<string>()
                 };
 
                 if (string.Equals(restored.Name, MetadataProfileService.NONE_PROFILE_NAME, StringComparison.OrdinalIgnoreCase))

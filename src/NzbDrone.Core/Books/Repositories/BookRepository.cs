@@ -60,6 +60,7 @@ namespace NzbDrone.Core.Books
 	        PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null);
 	        PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null, bool? library = null) => GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded);
 	        List<int> GetBookIds(bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null, bool? library = null) => throw new NotImplementedException();
+	List<string> GetAllGenres() => throw new NotImplementedException();
 	    }
 
     public class BookRepository : BasicRepository<Book>, IBookRepository
@@ -752,6 +753,50 @@ namespace NzbDrone.Core.Books
                          .Join<Book, SeriesBookLink>((b, sbl) => b.Id == sbl.BookId)
                          .Where<SeriesBookLink>(sbl => sbl.SeriesId == seriesId))
                          .OrderBy(b => BookSeries.PositionOrder(b.SeriesLinks?.FirstOrDefault(link => link.SeriesId == seriesId)?.Position)).ToList();
+        }
+
+        // Genres is stored as a JSON-serialized string column (same convention as Ignored/IgnoredGenres on
+        // MetadataProfile), so it's pulled raw and deserialized here rather than via a jsonb-specific query -
+        // this needs to work identically on SQLite and PostgreSQL.
+        public List<string> GetAllGenres()
+        {
+            using (var conn = _database.OpenConnection())
+            {
+                // Ordered so which casing wins a case-insensitive dedupe below is deterministic
+                // across runs/installs, instead of depending on unordered SELECT row order.
+                var rawGenreLists = conn.Query<string>(
+                    "SELECT \"Genres\" FROM \"Books\" WHERE \"Genres\" IS NOT NULL AND \"Genres\" <> '' AND \"Genres\" <> '[]' ORDER BY \"Id\"");
+
+                var genres = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var raw in rawGenreLists)
+                {
+                    List<string> parsed;
+                    try
+                    {
+                        parsed = System.Text.Json.JsonSerializer.Deserialize<List<string>>(raw);
+                    }
+                    catch (System.Text.Json.JsonException)
+                    {
+                        continue;
+                    }
+
+                    if (parsed == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var genre in parsed)
+                    {
+                        if (!string.IsNullOrWhiteSpace(genre))
+                        {
+                            genres.Add(genre.Trim());
+                        }
+                    }
+                }
+
+                return genres.OrderBy(g => g, StringComparer.OrdinalIgnoreCase).ToList();
+            }
         }
 
         public void UpdateMonitoringByAuthorAndMediaType(int authorId, BookMediaType mediaType, bool monitored, IEnumerable<int> exceptBookIds = null)

@@ -71,6 +71,7 @@ class MetadataProfile extends Component {
       minPopularity,
       minPages,
       ignored,
+      ignoredGenres,
       isDeleting
     } = this.props;
 
@@ -135,6 +136,28 @@ class MetadataProfile extends Component {
               );
             })
           }
+
+          {
+            ignoredGenres.map((item) => {
+              if (!item) {
+                return null;
+              }
+
+              return (
+                <Label
+                  className={styles.label}
+                  key={item}
+                  kind={kinds.WARNING}
+                >
+                  <MiddleTruncate
+                    text={item}
+                    start={10}
+                    end={10}
+                  />
+                </Label>
+              );
+            })
+          }
         </div>
 
         <EditMetadataProfileModalConnector
@@ -166,6 +189,7 @@ MetadataProfile.propTypes = {
   minPopularity: PropTypes.number.isRequired,
   minPages: PropTypes.number.isRequired,
   ignored: PropTypes.arrayOf(PropTypes.string).isRequired,
+  ignoredGenres: PropTypes.arrayOf(PropTypes.string).isRequired,
   isDeleting: PropTypes.bool.isRequired,
   onConfirmDeleteMetadataProfile: PropTypes.func.isRequired,
   onCloneMetadataProfilePress: PropTypes.func.isRequired
@@ -175,7 +199,8 @@ MetadataProfile.propTypes = {
 MetadataProfile.defaultProps = {
   minPopularity: 0,
   minPages: 0,
-  ignored: []
+  ignored: [],
+  ignoredGenres: []
 };
 
 export default MetadataProfile;
