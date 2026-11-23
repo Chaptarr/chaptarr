@@ -1,4 +1,3 @@
-using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Authentication;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Configuration.Events;
@@ -33,15 +32,21 @@ namespace NzbDrone.Core.HealthCheck.Checks
                     "#oidc-configuration-incomplete");
             }
 
-            if (_configFileProvider.OidcAllowedEmails.IsNullOrWhiteSpace() &&
-                _configFileProvider.OidcAllowedEmailDomains.IsNullOrWhiteSpace() &&
-                !_configFileProvider.OidcAllowAnyVerifiedUser)
+            if (OidcAccessList.HasNoAccessRule(_configFileProvider.OidcAllowedEmails, _configFileProvider.OidcAllowedEmailDomains, _configFileProvider.OidcAllowAnyVerifiedUser))
             {
                 return new HealthCheck(
                     GetType(),
                     HealthCheckResult.Warning,
                     "OIDC is enabled without an email or domain allow-list. Configure allowed emails/domains or explicitly enable Allow Any Verified OIDC User.",
                     "#oidc-allowlist-missing");
+            }
+
+            if (!OidcAccessList.HasValidDomains(_configFileProvider.OidcAllowedEmailDomains))
+            {
+                return new HealthCheck(
+                    GetType(),
+                    HealthCheckResult.Warning,
+                    "Allowed Email Domains contains an invalid entry. In Settings > General, enter exact email domains such as family.org.");
             }
 
             return new HealthCheck(GetType());
