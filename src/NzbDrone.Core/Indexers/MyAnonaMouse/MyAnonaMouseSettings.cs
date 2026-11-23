@@ -83,7 +83,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         [FieldDefinition(9, Type = FieldType.Textbox, Label = "MAM User Class", HelpText = "Detected on connection test", Hidden = HiddenType.Hidden)]
         public string UserClass { get; set; }
 
-        [FieldDefinition(10, Type = FieldType.Checkbox, Label = "VIP Member", HelpText = "Detected on connection test", Hidden = HiddenType.Hidden)]
         public bool IsVip { get; set; }
 
         [FieldDefinition(11, Type = FieldType.Checkbox, Label = "Protect Unsatisfied Slots", HelpText = "Pause MAM grabs before your unsatisfied-torrent limit is reached. Disabling this can trigger MAM's 24-hour download suspension.", Advanced = true)]
@@ -99,10 +98,45 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         public bool NeverMoveOnImport { get; set; }
 
         // Persisted provider snapshot used by the grab guard. These are not user-editable.
+        public string UserId { get; set; }
         public int? UnsatisfiedCount { get; set; }
         public int? UnsatisfiedLimit { get; set; }
         public DateTime? UnsatisfiedSnapshotUtc { get; set; }
         public DateTime? UnsatisfiedStatusRefreshedUtc { get; set; }
+
+        public void CopyAccountStatusFrom(MyAnonaMouseSettings source)
+        {
+            // MAM can issue a new cookie with the account status.
+            MamId = source.MamId;
+            UserId = source.UserId;
+            UserClass = source.UserClass;
+            IsVip = source.IsVip;
+            UnsatisfiedCount = source.UnsatisfiedCount;
+            UnsatisfiedLimit = source.UnsatisfiedLimit;
+            UnsatisfiedSnapshotUtc = source.UnsatisfiedSnapshotUtc;
+            UnsatisfiedStatusRefreshedUtc = source.UnsatisfiedStatusRefreshedUtc;
+        }
+
+        public bool ApplyAccountStatus(MyAnonaMouseAccountStatus status, string sentMamId)
+        {
+            var changed = UserClass != status.UserClass || IsVip != status.IsVip ||
+                UnsatisfiedCount != status.UnsatisfiedCount || UnsatisfiedLimit != status.UnsatisfiedLimit ||
+                UnsatisfiedSnapshotUtc != status.SnapshotCreatedUtc;
+
+            if (MamId == sentMamId && !string.IsNullOrWhiteSpace(status.RotatedMamId))
+            {
+                MamId = status.RotatedMamId;
+            }
+
+            UserId = status.UserId;
+            UserClass = status.UserClass;
+            IsVip = status.IsVip;
+            UnsatisfiedCount = status.UnsatisfiedCount;
+            UnsatisfiedLimit = status.UnsatisfiedLimit;
+            UnsatisfiedSnapshotUtc = status.SnapshotCreatedUtc;
+            UnsatisfiedStatusRefreshedUtc = status.RefreshedUtc;
+            return changed;
+        }
 
         // Required by ITorrentIndexerSettings but hidden from UI
         public SeedCriteriaSettings SeedCriteria

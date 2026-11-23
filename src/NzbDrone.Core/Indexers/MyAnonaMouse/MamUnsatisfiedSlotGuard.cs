@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using NLog;
-using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Indexers.MyAnonaMouse
@@ -11,7 +11,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
     {
         MamUnsatisfiedSlotAvailability Check(RemoteBook remoteBook);
         MamUnsatisfiedSlotAvailability TryReserve(RemoteBook remoteBook);
-        void Reconcile(MyAnonaMouse indexer, MyAnonaMouseAccountStatus status);
     }
 
     public sealed class MamUnsatisfiedSlotAvailability
@@ -38,18 +37,17 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
     public class MamUnsatisfiedSlotGuard : IMamUnsatisfiedSlotGuard
     {
+        // Covers MAM's accounting lag and clock skew. I may drop this to 5 minutes after more testing.
+        internal static readonly TimeSpan SummaryAccountingLag = TimeSpan.FromMinutes(10);
+
         private static readonly TimeSpan MaximumStatusAge = TimeSpan.FromHours(2);
-        // MAM documents a 5-20 minute lag before snatches reach account summaries. Keep counting locally through the full window.
-        private static readonly TimeSpan SummaryAccountingLag = TimeSpan.FromMinutes(20);
 
         private readonly IIndexerFactory _indexerFactory;
         private readonly IMamUnsatisfiedSlotReservationRepository _repository;
         private readonly Logger _logger;
         private readonly object _reservationLock = new object();
 
-        public MamUnsatisfiedSlotGuard(IIndexerFactory indexerFactory,
-                                       IMamUnsatisfiedSlotReservationRepository repository,
-                                       Logger logger)
+        public MamUnsatisfiedSlotGuard(IIndexerFactory indexerFactory, IMamUnsatisfiedSlotReservationRepository repository, Logger logger)
         {
             _indexerFactory = indexerFactory;
             _repository = repository;
@@ -72,45 +70,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             }
         }
 
-        public void Reconcile(MyAnonaMouse indexer, MyAnonaMouseAccountStatus status)
-        {
-            if (indexer?.Definition is not IndexerDefinition definition ||
-                definition.Settings is not MyAnonaMouseSettings settings ||
-                !settings.ProtectUnsatisfiedSlots ||
-                status == null)
-            {
-                return;
-            }
-
-            var reservations = GetAccountReservations(definition, settings);
-
-            // This does not infer that a torrent became satisfied. Once MAM's own snapshot covers the
-            // latest attempt plus its documented accounting lag, a served torrent is in the reported
-            // count and an unserved attempt is a phantom; either way, retaining the row would double-count.
-            foreach (var reservation in reservations.Where(r =>
-                         status.SnapshotCreatedUtc >= (r.ConfirmedUtc ?? r.ReservedUtc).Add(SummaryAccountingLag)))
-            {
-                lock (_reservationLock)
-                {
-                    var current = _repository.Find(reservation.IndexerId, reservation.TorrentId);
-                    if (current != null &&
-                        status.SnapshotCreatedUtc >= (current.ConfirmedUtc ?? current.ReservedUtc).Add(SummaryAccountingLag))
-                    {
-                        var accountingAnchor = current.ConfirmedUtc ?? current.ReservedUtc;
-                        _repository.Delete(current.Id);
-                        _logger.Debug(
-                            "Retired MAM slot reservation for torrent {0} on indexer '{1}': provider snapshot {2:u} covers {3:u} plus the {4}-minute accounting window",
-                            current.TorrentId,
-                            definition.Name,
-                            status.SnapshotCreatedUtc,
-                            accountingAnchor,
-                            SummaryAccountingLag.TotalMinutes);
-                    }
-                }
-            }
-        }
-
-        internal static bool TryGetTorrentId(ReleaseInfo release, out string torrentId)
+        private static bool TryGetTorrentId(ReleaseInfo release, out string torrentId)
         {
             torrentId = null;
             var guid = release?.Guid;
@@ -131,14 +91,10 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
         private MamUnsatisfiedSlotAvailability Evaluate(RemoteBook remoteBook, bool reserve)
         {
+            var started = Stopwatch.GetTimestamp();
             var release = remoteBook?.Release;
-            var definition = GetMamDefinition(release);
-            if (definition == null)
-            {
-                return MamUnsatisfiedSlotAvailability.Accept();
-            }
-
-            if (definition.Settings is not MyAnonaMouseSettings settings || !settings.ProtectUnsatisfiedSlots)
+            var definition = release?.IndexerId > 0 ? _indexerFactory.Find(release.IndexerId) : null;
+            if (definition?.Settings is not MyAnonaMouseSettings settings || !settings.ProtectUnsatisfiedSlots)
             {
                 return MamUnsatisfiedSlotAvailability.Accept();
             }
@@ -148,31 +104,36 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 return MamUnsatisfiedSlotAvailability.Reject("MAM safety pause: this release has no valid MAM torrent identity");
             }
 
-            var reservations = GetAccountReservations(definition, settings);
-            var existingReservation = reservations.FirstOrDefault(r => string.Equals(r.TorrentId, torrentId, StringComparison.Ordinal));
-            if (existingReservation != null)
-            {
-                if (reserve && !existingReservation.ConfirmedUtc.HasValue)
-                {
-                    existingReservation.ReservedUtc = DateTime.UtcNow;
-                    _repository.Update(existingReservation);
-                }
-
-                return MamUnsatisfiedSlotAvailability.Accept();
-            }
-
             var now = DateTime.UtcNow;
             if (!HasFreshStatus(settings, now))
             {
-                return MamUnsatisfiedSlotAvailability.Reject("MAM safety pause: the unsatisfied-slot status is unavailable or stale; test the indexer and try again");
+                return MamUnsatisfiedSlotAvailability.Reject("MAM safety pause: the unsatisfied-slot status is unavailable or stale. Chaptarr rechecks every hour; to recheck now, test the indexer and save it.");
             }
+
+            // MAM's count at the last check plus the other torrents grabbed on that account since then.
+            var reservations = _repository.All().ToList();
+            var countedSince = settings.UnsatisfiedSnapshotUtc.Value - SummaryAccountingLag;
+            var recent = reservations.Where(r => r.ReservedUtc > countedSince && r.TorrentId != torrentId).ToList();
+            var otherAccountIndexerIds = GetOtherAccountIndexerIds(recent, definition.Id, settings.UserId);
+            var grabsSince = recent
+                .Where(r => !otherAccountIndexerIds.Contains(r.IndexerId))
+                .Select(r => r.TorrentId)
+                .Distinct()
+                .Count();
+            var effectiveUnsatisfied = settings.UnsatisfiedCount.Value + grabsSince;
 
             var manualGrab = remoteBook.ReleaseSource == ReleaseSourceType.InteractiveSearch;
             var safetyReserve = Math.Max(0, settings.UnsatisfiedSlotReserve);
             var manualGrabBuffer = Math.Max(0, settings.ManualGrabBuffer);
             var reservedSlots = safetyReserve + (manualGrab ? 0 : manualGrabBuffer);
             var usableSlots = Math.Max(0, settings.UnsatisfiedLimit.Value - reservedSlots);
-            var effectiveUnsatisfied = settings.UnsatisfiedCount.Value + reservations.Count;
+
+            if (!reserve)
+            {
+                _logger.Trace(
+                    "Checked MAM torrent {0} on indexer '{1}': {2} reported at the last check plus {3} grabbed since, {4} usable, read {5} reservation rows in {6:F1} ms",
+                    torrentId, definition.Name, settings.UnsatisfiedCount.Value, grabsSince, usableSlots, reservations.Count, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            }
 
             if (effectiveUnsatisfied >= usableSlots)
             {
@@ -186,48 +147,46 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
             if (reserve)
             {
-                _repository.Insert(new MamUnsatisfiedSlotReservation
-                {
-                    IndexerId = definition.Id,
-                    TorrentId = torrentId,
-                    ReservedUtc = now
-                });
+                var reservation = reservations.FirstOrDefault(r => r.IndexerId == definition.Id && r.TorrentId == torrentId) ??
+                                  new MamUnsatisfiedSlotReservation { IndexerId = definition.Id, TorrentId = torrentId };
+                // A retry may be the first request MAM counts, so it restarts this torrent's window.
+                reservation.ReservedUtc = now;
+                _repository.Upsert(reservation);
+
+                // Status older than two hours is never used, so no usable check can still count these grabs.
+                var expired = reservations.Where(r => r.ReservedUtc <= now - MaximumStatusAge - SummaryAccountingLag).Select(r => r.Id).ToList();
+                _repository.DeleteMany(expired);
+
+                _logger.Debug(
+                    "Reserved MAM torrent {0} on indexer '{1}': {2} reported at the last check plus {3} grabbed since, {4} usable; read {5} reservation rows and removed {6} old records in {7:F1} ms",
+                    torrentId,
+                    definition.Name,
+                    settings.UnsatisfiedCount.Value,
+                    grabsSince,
+                    usableSlots,
+                    reservations.Count,
+                    expired.Count,
+                    Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
 
             return MamUnsatisfiedSlotAvailability.Accept();
         }
 
-        private IndexerDefinition GetMamDefinition(ReleaseInfo release)
+        // MAM tracks unsatisfied slots per user ID, not per indexer, so every MAM indexer on one user ID shares the count.
+        private HashSet<int> GetOtherAccountIndexerIds(List<MamUnsatisfiedSlotReservation> recent, int indexerId, string userId)
         {
-            if (release?.IndexerId <= 0)
+            if (string.IsNullOrWhiteSpace(userId))
             {
-                return null;
+                return new HashSet<int>();
             }
 
-            var definition = _indexerFactory.Find(release.IndexerId);
-            return definition?.Settings is MyAnonaMouseSettings ? definition : null;
-        }
-
-        // MAM reports one unsatisfied limit per account. Native indexers sharing the same mam_id
-        // must also share in-flight reservations or each can spend the same apparent free slots.
-        private List<MamUnsatisfiedSlotReservation> GetAccountReservations(
-            IndexerDefinition definition,
-            MyAnonaMouseSettings settings)
-        {
-            var accountIndexerIds = _indexerFactory.All()
-                .Where(candidate =>
-                    candidate.Id > 0 &&
-                    candidate.Settings is MyAnonaMouseSettings candidateSettings &&
-                    !string.IsNullOrWhiteSpace(settings.MamId) &&
-                    string.Equals(candidateSettings.MamId, settings.MamId, StringComparison.Ordinal))
-                .Select(candidate => candidate.Id)
+            return recent.Select(r => r.IndexerId)
+                .Where(id => id != indexerId)
+                .Distinct()
+                .Where(id => _indexerFactory.Find(id)?.Settings is MyAnonaMouseSettings other &&
+                             !string.IsNullOrWhiteSpace(other.UserId) &&
+                             other.UserId != userId)
                 .ToHashSet();
-
-            accountIndexerIds.Add(definition.Id);
-
-            return _repository.All()
-                .Where(reservation => accountIndexerIds.Contains(reservation.IndexerId))
-                .ToList();
         }
 
         internal static bool HasFreshStatus(MyAnonaMouseSettings settings, DateTime now)
@@ -247,6 +206,5 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                    now - settings.UnsatisfiedSnapshotUtc.Value <= MaximumStatusAge &&
                    now - settings.UnsatisfiedStatusRefreshedUtc.Value <= MaximumStatusAge;
         }
-
     }
 }

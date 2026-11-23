@@ -56,23 +56,62 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(GetRequestPayload(chain, 1), Does.Contain("\"text\":\"Godblight\""));
         }
 
+        [TestCase("'")]
+        [TestCase("’")]
+        public void should_preserve_apostrophes_in_search_terms(string apostrophe)
+        {
+            var criteria = CreateAudiobookCriteria("en");
+            criteria.BookTitle = $"It{apostrophe}s Beginning to Look a Lot Like Murder";
+            criteria.Author.Name = $"Morgan D{apostrophe}Arcy";
+            criteria.Books[0].AnyEditionOk = false;
+            criteria.Books[0].Editions = new List<Edition>
+            {
+                new Edition { ReadingFormatId = 2, Monitored = true, Narrator = $"Casey O{apostrophe}Connor" }
+            };
+
+            var chain = CreateGenerator().GetSearchRequests(criteria);
+            var titleAndAuthor = $"{criteria.BookTitle} {criteria.Author.Name}";
+
+            Assert.That(chain.Tiers, Is.EqualTo(3));
+            Assert.That(GetRequestPayloadObject(chain, 0)["tor"]?["text"]?.Value<string>(),
+                Is.EqualTo($"{titleAndAuthor} Casey O{apostrophe}Connor"));
+            Assert.That(GetRequestPayloadObject(chain, 1)["tor"]?["text"]?.Value<string>(), Is.EqualTo(titleAndAuthor));
+            Assert.That(GetRequestPayloadObject(chain, 2)["tor"]?["text"]?.Value<string>(), Is.EqualTo(criteria.BookTitle));
+        }
+
         [Test]
-        public void should_add_book_number_fallback_as_last_tier_for_interactive_search()
+        public void should_normalize_spacing_when_the_shared_search_keeps_a_punctuation_only_title()
+        {
+            var criteria = CreateAudiobookCriteria("en");
+            criteria.BookTitle = "?!  …";
+
+            var chain = CreateGenerator().GetSearchRequests(criteria);
+
+            Assert.That(GetRequestPayloadObject(chain, 0)["tor"]?["text"]?.Value<string>(), Is.EqualTo("?! … Author"));
+            Assert.That(GetRequestPayloadObject(chain, 1)["tor"]?["text"]?.Value<string>(), Is.EqualTo("?! …"));
+        }
+
+        [TestCase("The Trouble With Peace, Book 2", "Trouble With Peace Book 2", "Trouble With Peace")]
+        [TestCase("Spellbook 2", "Spellbook 2", null)]
+        public void should_add_only_standalone_book_number_fallbacks(string title, string query, string fallback)
         {
             var generator = CreateGenerator();
             var searchCriteria = new BookSearchCriteria
             {
                 Author = new Author { Name = "Joe Abercrombie" },
-                BookTitle = "The Trouble With Peace, Book 2",
+                BookTitle = title,
                 InteractiveSearch = true
             };
 
             var chain = generator.GetSearchRequests(searchCriteria);
 
-            Assert.That(chain.Tiers, Is.EqualTo(3));
-            Assert.That(GetRequestPayload(chain, 0), Does.Contain("\"text\":\"Trouble With Peace Book 2 Joe Abercrombie\""));
-            Assert.That(GetRequestPayload(chain, 1), Does.Contain("\"text\":\"Trouble With Peace Book 2\""));
-            Assert.That(GetRequestPayload(chain, 2), Does.Contain("\"text\":\"Trouble With Peace\""));
+            Assert.That(GetRequestPayloadObject(chain, 0)["tor"]?["text"]?.Value<string>(), Is.EqualTo($"{query} Joe Abercrombie"));
+            Assert.That(GetRequestPayloadObject(chain, 1)["tor"]?["text"]?.Value<string>(), Is.EqualTo(query));
+            Assert.That(chain.Tiers, Is.EqualTo(fallback == null ? 2 : 3));
+            if (fallback != null)
+            {
+                Assert.That(GetRequestPayloadObject(chain, 2)["tor"]?["text"]?.Value<string>(), Is.EqualTo(fallback));
+            }
         }
 
         [Test]

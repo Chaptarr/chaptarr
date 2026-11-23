@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using NLog;
 using NzbDrone.Core.HealthCheck;
@@ -9,27 +11,39 @@ using NzbDrone.Core.Messaging.Events;
 
 namespace NzbDrone.Core.Indexers.MyAnonaMouse
 {
-    public class MyAnonaMouseAccountStatusService : IHandle<ApplicationStartedEvent>,
+    public interface IMyAnonaMouseAccountStatusService
+    {
+        IReadOnlyDictionary<int, DateTime> GetUnreadableSummaryFailures();
+    }
+
+    public class MyAnonaMouseAccountStatusService : IMyAnonaMouseAccountStatusService,
+                                                    IHandle<ApplicationStartedEvent>,
                                                     IHandle<HealthCheckCompleteEvent>,
                                                     IExecute<RefreshMyAnonaMouseAccountStatusCommand>
     {
         private readonly IIndexerFactory _indexerFactory;
+        private readonly IIndexerRepository _indexerRepository;
+        private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
-        private readonly IMamUnsatisfiedSlotGuard _slotGuard;
         private readonly object _refreshLock = new object();
+        private readonly ConcurrentDictionary<int, DateTime> _unreadableSummaries = new();
 
         private DateTime _lastRefreshAttemptUtc = DateTime.MinValue;
         private bool _refreshInProgress;
 
         private static readonly TimeSpan RefreshInterval = TimeSpan.FromHours(1);
 
-        public MyAnonaMouseAccountStatusService(IIndexerFactory indexerFactory,
-                                                IMamUnsatisfiedSlotGuard slotGuard,
-                                                Logger logger)
+        public MyAnonaMouseAccountStatusService(IIndexerFactory indexerFactory, IIndexerRepository indexerRepository, IEventAggregator eventAggregator, Logger logger)
         {
             _indexerFactory = indexerFactory;
+            _indexerRepository = indexerRepository;
+            _eventAggregator = eventAggregator;
             _logger = logger;
-            _slotGuard = slotGuard;
+        }
+
+        public IReadOnlyDictionary<int, DateTime> GetUnreadableSummaryFailures()
+        {
+            return _unreadableSummaries;
         }
 
         [EventHandleOrder(EventHandleOrder.Last)]
@@ -71,35 +85,39 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
             var refreshed = 0;
             var changed = 0;
+            var summaryHealthChanged = false;
 
             foreach (var indexer in _indexerFactory.GetAvailableProviders().OfType<MyAnonaMouse>())
             {
-                if (indexer.Definition is not IndexerDefinition definition ||
-                    definition.Settings is not MyAnonaMouseSettings settings)
+                if (indexer.Definition is not IndexerDefinition definition || MamConnection.For(definition) is not { } connection)
                 {
                     continue;
                 }
 
-                var previousUserClass = settings.UserClass;
-                var previousIsVip = settings.IsVip;
-                var previousUnsatisfiedCount = settings.UnsatisfiedCount;
-                var previousUnsatisfiedLimit = settings.UnsatisfiedLimit;
-                var previousSnapshotUtc = settings.UnsatisfiedSnapshotUtc;
-
                 try
                 {
-                    var status = indexer.RefreshAccountStatus().GetAwaiter().GetResult();
+                    var status = indexer.GetAccountStatus(connection).GetAwaiter().GetResult();
+                    summaryHealthChanged |= _unreadableSummaries.TryRemove(definition.Id, out _);
                     refreshed++;
 
-                    // Persist every successful fetch because its refresh timestamp is the restart-safe freshness boundary.
-                    _indexerFactory.Update(definition);
-                    _slotGuard.Reconcile(indexer, status);
+                    var stored = _indexerFactory.Find(definition.Id);
+                    if (stored?.Settings is not MyAnonaMouseSettings settings)
+                    {
+                        _logger.Debug("Skipped saving MAM account status for indexer '{0}' because its configuration was removed or replaced", definition.Name);
+                        continue;
+                    }
 
-                    if (!string.Equals(previousUserClass, status.UserClass, StringComparison.Ordinal) ||
-                        previousIsVip != status.IsVip ||
-                        previousUnsatisfiedCount != status.UnsatisfiedCount ||
-                        previousUnsatisfiedLimit != status.UnsatisfiedLimit ||
-                        previousSnapshotUtc != status.SnapshotCreatedUtc)
+                    // Persist the refresh timestamp even when the counts are unchanged.
+                    var previousMamId = settings.MamId;
+                    var statusChanged = settings.ApplyAccountStatus(status, connection.MamId);
+                    _indexerRepository.UpdateSettings(stored);
+
+                    if (settings.MamId != previousMamId)
+                    {
+                        _logger.Debug("MAM issued a refreshed mam_id for indexer '{0}'", stored.Name);
+                    }
+
+                    if (statusChanged)
                     {
                         changed++;
                         _logger.Info("Updated MAM account status for indexer '{0}': {1} (VIP: {2}), unsatisfied {3}/{4}",
@@ -110,10 +128,21 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                             status.UnsatisfiedLimit);
                     }
                 }
+                catch (MyAnonaMouseAccountSummaryException ex)
+                {
+                    _unreadableSummaries[definition.Id] = DateTime.UtcNow;
+                    summaryHealthChanged = true;
+                    _logger.Warn("Failed to read MAM account summary for indexer '{0}': {1}", definition.Name, ex.Message);
+                }
                 catch (Exception ex)
                 {
                     _logger.Warn("Failed to refresh MAM account status for indexer '{0}' ({1})", definition.Name, ex.GetType().Name);
                 }
+            }
+
+            if (summaryHealthChanged)
+            {
+                _eventAggregator.PublishEvent(new MyAnonaMouseAccountSummaryHealthChangedEvent());
             }
 
             _logger.Debug("Refreshed MAM account status for {0} indexers; {1} changed", refreshed, changed);

@@ -76,13 +76,14 @@ namespace Chaptarr.Api.V1
         public ActionResult<TProviderResource> CreateProvider([FromBody] TProviderResource providerResource, [FromQuery] bool forceSave = false)
         {
             var providerDefinition = GetDefinition(providerResource, true, !forceSave, false, true);
+            PrepareForSave(providerDefinition, null);
 
             // Set provider characteristics (e.g., SupportsRss, SupportsSearch) before creation
             _providerFactory.SetProviderCharacteristics(providerDefinition);
 
             if (providerDefinition.Enable)
             {
-                Test(providerDefinition, !forceSave);
+                TestOnSave(providerDefinition, null, !forceSave);
             }
 
             providerDefinition = _providerFactory.Create(providerDefinition);
@@ -97,6 +98,7 @@ namespace Chaptarr.Api.V1
         {
             var existing = _providerFactory.Get(providerResource.Id);
             var providerDefinition = GetDefinition(providerResource, true, !forceSave, false, !forceSave, existing);
+            PrepareForSave(providerDefinition, existing);
             var comparison = _resourceMapper.ToModel(STJson.Deserialize<TProviderResource>(STJson.ToJson(_resourceMapper.ToResource(existing))));
             comparison.Settings = existing.Settings;
             _providerFactory.SetProviderCharacteristics(comparison);
@@ -110,7 +112,7 @@ namespace Chaptarr.Api.V1
             // Test enabled definitions unless explicitly bypassed.
             if (providerDefinition.Enable && !forceSave)
             {
-                Test(providerDefinition, true);
+                TestOnSave(providerDefinition, existing, true);
             }
 
             _providerFactory.Update(providerDefinition);
@@ -302,6 +304,15 @@ namespace Chaptarr.Api.V1
             var validationResult = definition.Settings.Validate();
 
             VerifyValidationResult(validationResult, includeWarnings);
+        }
+
+        protected virtual void PrepareForSave(TProviderDefinition definition, TProviderDefinition existing)
+        {
+        }
+
+        protected virtual void TestOnSave(TProviderDefinition definition, TProviderDefinition existing, bool includeWarnings)
+        {
+            Test(definition, includeWarnings);
         }
 
         protected virtual void Test(TProviderDefinition definition, bool includeWarnings)
