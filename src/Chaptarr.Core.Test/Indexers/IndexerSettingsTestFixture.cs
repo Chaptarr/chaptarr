@@ -580,7 +580,7 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(serverOnly.Except(expected.Keys.Concat(nonStatus)), Is.Empty, "Classify each server-only property.");
 
             var source = new MyAnonaMouseSettings { MamId = "current-cookie", ManualGrabBuffer = 2 };
-            source.ApplyAccountStatus(status);
+            source.ApplyAccountStatus(status, "superseded-cookie");
             Assert.Multiple(() =>
             {
                 foreach (var property in properties.Where(property => expected.ContainsKey(property.Name)))

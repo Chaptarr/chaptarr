@@ -117,8 +117,17 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             UnsatisfiedStatusRefreshedUtc = source.UnsatisfiedStatusRefreshedUtc;
         }
 
-        public void ApplyAccountStatus(MyAnonaMouseAccountStatus status)
+        public bool ApplyAccountStatus(MyAnonaMouseAccountStatus status, string sentMamId)
         {
+            var changed = UserClass != status.UserClass || IsVip != status.IsVip ||
+                UnsatisfiedCount != status.UnsatisfiedCount || UnsatisfiedLimit != status.UnsatisfiedLimit ||
+                UnsatisfiedSnapshotUtc != status.SnapshotCreatedUtc;
+
+            if (MamId == sentMamId && !string.IsNullOrWhiteSpace(status.RotatedMamId))
+            {
+                MamId = status.RotatedMamId;
+            }
+
             UserId = status.UserId;
             UserClass = status.UserClass;
             IsVip = status.IsVip;
@@ -126,6 +135,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             UnsatisfiedLimit = status.UnsatisfiedLimit;
             UnsatisfiedSnapshotUtc = status.SnapshotCreatedUtc;
             UnsatisfiedStatusRefreshedUtc = status.RefreshedUtc;
+            return changed;
         }
 
         // Required by ITorrentIndexerSettings but hidden from UI

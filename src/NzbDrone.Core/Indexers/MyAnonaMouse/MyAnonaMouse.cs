@@ -242,20 +242,21 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         public async Task<MyAnonaMouseAccountStatus> RefreshAccountStatus()
         {
             var connection = MamConnection.For((IndexerDefinition)Definition);
-            var status = await _accountSummaryThrottle.SendAsync(connection, () => FetchAccountStatus(connection));
+            var status = await GetAccountStatus(connection);
 
-            Settings.ApplyAccountStatus(status);
-
-            // Requests send the configured cookie, so adopt MAM's rotation before the original expires.
-            if (!string.IsNullOrWhiteSpace(status.RotatedMamId) && Settings.MamId != status.RotatedMamId)
+            var previousMamId = Settings.MamId;
+            Settings.ApplyAccountStatus(status, connection.MamId);
+            if (Settings.MamId != previousMamId)
             {
                 _logger.Debug("MAM issued a refreshed mam_id for indexer '{0}'", Definition?.Name);
-                Settings.MamId = status.RotatedMamId;
             }
 
             _logger.Debug("MAM account status detected: {0} (VIP: {1}), unsatisfied {2}/{3}", status.UserClass, status.IsVip, status.UnsatisfiedCount, status.UnsatisfiedLimit);
             return status;
         }
+
+        internal Task<MyAnonaMouseAccountStatus> GetAccountStatus(MamConnection connection) =>
+            _accountSummaryThrottle.SendAsync(connection, () => FetchAccountStatus(connection));
 
         private async Task<MyAnonaMouseAccountStatus> FetchAccountStatus(MamConnection connection)
         {

@@ -22,6 +22,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                                                     IExecute<RefreshMyAnonaMouseAccountStatusCommand>
     {
         private readonly IIndexerFactory _indexerFactory;
+        private readonly IIndexerRepository _indexerRepository;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
         private readonly object _refreshLock = new object();
@@ -32,9 +33,10 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
         private static readonly TimeSpan RefreshInterval = TimeSpan.FromHours(1);
 
-        public MyAnonaMouseAccountStatusService(IIndexerFactory indexerFactory, IEventAggregator eventAggregator, Logger logger)
+        public MyAnonaMouseAccountStatusService(IIndexerFactory indexerFactory, IIndexerRepository indexerRepository, IEventAggregator eventAggregator, Logger logger)
         {
             _indexerFactory = indexerFactory;
+            _indexerRepository = indexerRepository;
             _eventAggregator = eventAggregator;
             _logger = logger;
         }
@@ -87,32 +89,35 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
             foreach (var indexer in _indexerFactory.GetAvailableProviders().OfType<MyAnonaMouse>())
             {
-                if (indexer.Definition is not IndexerDefinition definition ||
-                    definition.Settings is not MyAnonaMouseSettings settings)
+                if (indexer.Definition is not IndexerDefinition definition || MamConnection.For(definition) is not { } connection)
                 {
                     continue;
                 }
 
-                var previousUserClass = settings.UserClass;
-                var previousIsVip = settings.IsVip;
-                var previousUnsatisfiedCount = settings.UnsatisfiedCount;
-                var previousUnsatisfiedLimit = settings.UnsatisfiedLimit;
-                var previousSnapshotUtc = settings.UnsatisfiedSnapshotUtc;
-
                 try
                 {
-                    var status = indexer.RefreshAccountStatus().GetAwaiter().GetResult();
+                    var status = indexer.GetAccountStatus(connection).GetAwaiter().GetResult();
                     summaryHealthChanged |= _unreadableSummaries.TryRemove(definition.Id, out _);
                     refreshed++;
 
-                    // Persist every successful fetch because its refresh timestamp is the restart-safe freshness boundary.
-                    _indexerFactory.Update(definition);
+                    var stored = _indexerFactory.Find(definition.Id);
+                    if (stored?.Settings is not MyAnonaMouseSettings settings)
+                    {
+                        _logger.Debug("Skipped saving MAM account status for indexer '{0}' because its configuration was removed or replaced", definition.Name);
+                        continue;
+                    }
 
-                    if (!string.Equals(previousUserClass, status.UserClass, StringComparison.Ordinal) ||
-                        previousIsVip != status.IsVip ||
-                        previousUnsatisfiedCount != status.UnsatisfiedCount ||
-                        previousUnsatisfiedLimit != status.UnsatisfiedLimit ||
-                        previousSnapshotUtc != status.SnapshotCreatedUtc)
+                    // Persist the refresh timestamp even when the counts are unchanged.
+                    var previousMamId = settings.MamId;
+                    var statusChanged = settings.ApplyAccountStatus(status, connection.MamId);
+                    _indexerRepository.UpdateSettings(stored);
+
+                    if (settings.MamId != previousMamId)
+                    {
+                        _logger.Debug("MAM issued a refreshed mam_id for indexer '{0}'", stored.Name);
+                    }
+
+                    if (statusChanged)
                     {
                         changed++;
                         _logger.Info("Updated MAM account status for indexer '{0}': {1} (VIP: {2}), unsatisfied {3}/{4}",
