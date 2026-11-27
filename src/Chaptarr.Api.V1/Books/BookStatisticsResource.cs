@@ -9,11 +9,17 @@ namespace Chaptarr.Api.V1.Books
         public int AvailableBookCount { get; set; }
         public int TotalBookCount { get; set; }
         public long SizeOnDisk { get; set; }
+        internal bool ReportFileAvailability { get; init; }
 
         public decimal PercentOfBooks
         {
             get
             {
+                if (ReportFileAvailability)
+                {
+                    return BookFileCount > 0 ? 100 : 0;
+                }
+
                 if (BookCount == 0)
                 {
                     return 0;
@@ -26,7 +32,7 @@ namespace Chaptarr.Api.V1.Books
 
     public static class BookStatisticsResourceMapper
     {
-        public static BookStatisticsResource ToResource(this BookStatistics model)
+        public static BookStatisticsResource ToResource(this BookStatistics model, bool reportFileAvailability = false)
         {
             if (model == null)
             {
@@ -35,6 +41,7 @@ namespace Chaptarr.Api.V1.Books
 
             return new BookStatisticsResource
             {
+                ReportFileAvailability = reportFileAvailability,
                 BookFileCount = model.BookFileCount,
                 BookCount = model.BookCount,
                 AvailableBookCount = model.AvailableBookCount,
