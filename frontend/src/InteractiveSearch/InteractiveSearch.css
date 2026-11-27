@@ -7,8 +7,8 @@
 .table {
   composes: table from '~Components/Table/Table.css';
 
-  /* Reserve 240px for Title plus 930px of fixed columns, a 1px collapsed border and 1px slack. */
-  min-width: 1172px;
+  /* Reserve 240px for Title plus 968px of fixed columns, a 1px collapsed border and 1px slack. */
+  min-width: 1210px;
   max-width: none;
   width: 100%;
   table-layout: fixed;
@@ -26,8 +26,9 @@
   width: 76px;
 }
 
+/* Indexer: wide enough for typical names; longer ones are truncated with the full name on hover. */
 .table th:nth-child(5) {
-  width: 82px;
+  width: 120px;
 }
 
 .table th:nth-child(6) {
@@ -68,7 +69,7 @@
 .ebookTable {
   composes: table;
 
-  min-width: 1042px;
+  min-width: 1080px;
 }
 
 .filteredMessage {
