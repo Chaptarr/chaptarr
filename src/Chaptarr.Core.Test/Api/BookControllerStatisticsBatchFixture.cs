@@ -144,9 +144,14 @@ namespace Chaptarr.Core.Test.Api
                 {
                     nameof(IBookService.FindAllByWorkProviderId) => Books.Where(book => book.MediaType == (BookMediaType)args[2]).ToList(),
                     nameof(IBookService.GetBooks) => Books.Where(book => ((IEnumerable<int>)args[0]).Contains(book.Id)).ToList(),
+                    nameof(IBookService.GetBooksForDisplay) => Books.Where(book =>
+                        (string)args[1] == (book.MediaType == BookMediaType.Audiobook ? "audiobook" : "ebook")).ToList(),
                     _ => throw new AssertionException(method.Name)
                 });
-                Controller = new BookController(null, bookService, null, null, null,
+                var authorService = Proxy<IAuthorService>((method, args) => method.Name == nameof(IAuthorService.GetAllAuthors)
+                    ? Books.Select(book => book.Author).DistinctBy(author => author.Id).ToList()
+                    : throw new AssertionException(method.Name));
+                Controller = new BookController(authorService, bookService, null, null, null,
                     Proxy<ISeriesBookLinkService>((method, args) => new List<SeriesBookLink>()), Service,
                     Proxy<IMediaFileService>((method, args) =>
                     {
@@ -218,6 +223,54 @@ namespace Chaptarr.Core.Test.Api
             harness.Controller.GetBooks(null, null, null, titleSlug: "1001", mediaType: mediaType, monitored: monitored);
             Assert.That(harness.Commands.Count, Is.EqualTo(2));
             Assert.That(harness.Results.Last().Select(stat => stat.AuthorId).Distinct(), Is.EqualTo(new[] { 1 }));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void facade_book_list_should_report_existing_files_independently_of_monitoring(bool postgres)
+        {
+            using var harness = new Harness(postgres);
+            var controller = harness.Controller;
+            var items = controller.HttpContext.Items;
+            var audio = new ReadarrFacadeContext("hc", "audiobook", "/audiobook");
+            var ebook = new ReadarrFacadeContext("gr", "ebook", "/readarr/gr/ebook");
+            harness.Books.Single(book => book.Id == 1).AudiobookMonitored = false;
+            harness.Connection.Execute("UPDATE \"Books\" SET \"AudiobookMonitored\" = FALSE WHERE \"Id\" = 1");
+
+            BookResource ReadBook(ReadarrFacadeContext facade, int id, string mediaType)
+            {
+                items[ReadarrFacadeContext.ItemKey] = facade;
+                return controller.GetBooks(null, null, null, mediaType: mediaType).Single(book => book.Id == id);
+            }
+
+            var ownedAudio = ReadBook(audio, 1, "audiobook");
+            var ownedEbook = ReadBook(ebook, 2, "ebook");
+            items[ReadarrFacadeContext.ItemKey] = audio;
+            var wrongFormat = controller.GetBooks(null, new List<int> { 2 }, null, mediaType: "audiobook").Single();
+            Assert.Multiple(() =>
+            {
+                Assert.That(ownedAudio.Statistics.BookFileCount, Is.EqualTo(2));
+                Assert.That(ownedAudio.Statistics.BookCount, Is.Zero);
+                Assert.That(ownedAudio.Statistics.AvailableBookCount, Is.Zero);
+                Assert.That(ownedAudio.Statistics.TotalBookCount, Is.Zero);
+                Assert.That(ownedAudio.Statistics.PercentOfBooks, Is.EqualTo(100));
+                Assert.That(ownedAudio.Monitored, Is.False);
+                Assert.That(ownedEbook.Statistics.PercentOfBooks, Is.EqualTo(100));
+                Assert.That(ownedEbook.Monitored, Is.False);
+                Assert.That(wrongFormat.Statistics.PercentOfBooks, Is.Zero);
+                Assert.That(ReadBook(null, 1, "audiobook").Statistics.PercentOfBooks, Is.Zero);
+            });
+
+            harness.Connection.Execute("DELETE FROM \"BookFiles\" WHERE \"Id\" = 3");
+            harness.Service.InvalidateAuthorCache(1);
+            Assert.That(ReadBook(ebook, 2, "ebook").Statistics.PercentOfBooks, Is.Zero);
+            Assert.That(ReadBook(audio, 1, "audiobook").Statistics.PercentOfBooks, Is.EqualTo(100));
+
+            harness.Connection.Execute("DELETE FROM \"BookFiles\" WHERE \"Id\" IN (1, 2)");
+            harness.Service.InvalidateAuthorCache(1);
+            var missingAudio = ReadBook(audio, 1, "audiobook");
+            Assert.That(missingAudio.Statistics.PercentOfBooks, Is.Zero);
+            Assert.That(missingAudio.Monitored, Is.False);
         }
 
         [TestCase(false, true)]
