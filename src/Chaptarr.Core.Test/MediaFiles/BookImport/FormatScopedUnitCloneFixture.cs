@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO.Abstractions;
 using System.Linq;
+using System.Reflection;
 using Microsoft.Data.Sqlite;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles;
@@ -32,6 +34,31 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 	            {
 	            }
 	        }
+
+        // Answers the destination service's "is this file still on disk?" checks; nothing else is used.
+        public class DiskStub : DispatchProxy
+        {
+            private Func<string, bool> _isOnDisk = _ => true;
+
+            public static IDiskProvider AllOnDisk() => Create(_ => true);
+
+            public static IDiskProvider Create(Func<string, bool> isOnDisk)
+            {
+                var proxy = Create<IDiskProvider, DiskStub>();
+                ((DiskStub)(object)proxy)._isOnDisk = isOnDisk;
+                return proxy;
+            }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod.Name is nameof(IDiskProvider.FileExists) or nameof(IDiskProvider.FileExistsCanonical))
+                {
+                    return _isOnDisk((string)args[0]);
+                }
+
+                throw new NotImplementedException(targetMethod.Name);
+            }
+        }
 
 	        private sealed class StubMediaFileService : IMediaFileService
 	        {
@@ -313,6 +340,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 bookService: bookService,
                 editionService: editionService,
                 mainDatabase: new StubMainDatabase(),
+                diskProvider: DiskStub.AllOnDisk(),
                 logger: logger);
 
             string BuildDestKey(string filePath) =>
@@ -328,6 +356,138 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var destMp3 = unitDestination.ResolveDestinationForUnit(canonicalBook, editionMp3, BuildDestKey(mp3Path));
             Assert.That(destMp3.Item1, Is.Not.EqualTo(canonicalBook.Id));
             Assert.That(destMp3.Item2, Is.Not.EqualTo(editionMp3.Id));
+        }
+
+        private const string MoreauFolder = "/audiobooks/H.G. Wells/The Island of Dr. Moreau - Flo Gibson";
+
+        private static (Book Book, Edition Edition, List<BookFile> Mp3s) BookWithMp3s(string folder = MoreauFolder)
+        {
+            var book = new Book
+            {
+                Id = 5,
+                AuthorId = 1,
+                Title = "The Island of Dr. Moreau",
+                TitleSlug = "the-island-of-doctor-moreau",
+                MediaType = BookMediaType.Audiobook,
+                AnyEditionOk = true
+            };
+
+            var edition = new Edition
+            {
+                Id = 224,
+                BookId = book.Id,
+                Title = book.Title,
+                TitleSlug = "the-island-of-dr-moreau",
+                Monitored = true
+            };
+
+            var mp3s = Enumerable.Range(1, 4)
+                .Select(n => new BookFile { EditionId = edition.Id, Path = $"{folder}/The Island of Dr. Moreau - 0{n}.mp3" })
+                .ToList();
+
+            return (book, edition, mp3s);
+        }
+
+        private static BookUnitDestinationService DestinationService(Book book, Edition edition, List<BookFile> files, InMemoryBookService bookService, Func<string, bool> isOnDisk)
+        {
+            return new BookUnitDestinationService(
+                mediaFileService: new StubMediaFileService(new Dictionary<int, List<BookFile>> { [book.Id] = files }),
+                bookService: bookService,
+                editionService: new InMemoryEditionService(new[] { edition }),
+                mainDatabase: new StubMainDatabase(),
+                diskProvider: DiskStub.Create(isOnDisk),
+                logger: LogManager.GetCurrentClassLogger());
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_reuse_the_book_when_another_tool_replaced_its_files_in_place(bool perFileKey)
+        {
+            // An outside tool (Audiobookshelf's M4B encoder, say) turned the MP3s into one M4B in the same
+            // folder. The rescan places the M4B before it deletes the MP3 rows, so those rows are still here.
+            var (book, edition, mp3s) = BookWithMp3s();
+            var bookService = new InMemoryBookService(new[] { book });
+            var unitDestination = DestinationService(book, edition, mp3s, bookService, isOnDisk: _ => false);
+
+            var m4bKey = IncomingM4bKey(unitDestination, book, perFileKey);
+            var destination = unitDestination.ResolveDestinationForUnit(book, edition, m4bKey);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(destination.BookId, Is.EqualTo(book.Id));
+                Assert.That(destination.EditionId, Is.EqualTo(edition.Id));
+                Assert.That(bookService.GetBooksByAuthor(book.AuthorId).Select(b => b.Id), Is.EqualTo(new[] { book.Id }), "no copy of the book is created");
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_still_create_a_copy_while_any_of_the_other_container_is_on_disk(bool perFileKey)
+        {
+            // Three MP3s are gone but one is still next to the new M4B, so the folder really holds both.
+            var (book, edition, mp3s) = BookWithMp3s();
+            var bookService = new InMemoryBookService(new[] { book });
+            var unitDestination = DestinationService(book, edition, mp3s, bookService, isOnDisk: path => path.EndsWith(" - 04.mp3", StringComparison.Ordinal));
+
+            var m4bKey = IncomingM4bKey(unitDestination, book, perFileKey);
+            var destination = unitDestination.ResolveDestinationForUnit(book, edition, m4bKey);
+
+            Assert.That(destination.BookId, Is.Not.EqualTo(book.Id));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_still_create_a_copy_when_the_missing_files_were_in_another_folder(bool perFileKey)
+        {
+            // Files that are missing from a different folder (a drive that isn't mounted, say) still stand for
+            // a separate copy. Only files gone from the incoming unit's own folder were replaced in place.
+            var (book, edition, mp3s) = BookWithMp3s("/audiobooks2/H.G. Wells/The Island of Dr. Moreau - Flo Gibson");
+            var bookService = new InMemoryBookService(new[] { book });
+            var unitDestination = DestinationService(book, edition, mp3s, bookService, isOnDisk: _ => false);
+
+            var m4bKey = IncomingM4bKey(unitDestination, book, perFileKey);
+            var destination = unitDestination.ResolveDestinationForUnit(book, edition, m4bKey);
+
+            Assert.That(destination.BookId, Is.Not.EqualTo(book.Id));
+        }
+
+        // A full-length single file (an M4B whose duration matches the edition) is imported as a
+        // standalone recording with a per-file key; other units use the folder key with the extension.
+        private static string IncomingM4bKey(BookUnitDestinationService unitDestination, Book book, bool perFileKey)
+        {
+            var path = $"{MoreauFolder}/The Island of Dr. Moreau.m4b";
+            return perFileKey
+                ? BookCoalescingHelper.BuildPerFileUnitKey(path, book.Title, book.MediaType)
+                : unitDestination.BuildRootUnitKeyWithExtension(path, book.Title, book.MediaType);
+        }
+
+        [Test]
+        public void should_keep_a_second_complete_copy_in_the_same_folder_separate_while_the_first_is_on_disk()
+        {
+            // Per-file keys keep two complete recordings in one folder apart. Reusing a book for a
+            // replaced file must not merge a copy whose existing file is still there.
+            var (book, edition, _) = BookWithMp3s();
+            var first = new BookFile { Id = 900, EditionId = edition.Id, Edition = edition, Path = $"{MoreauFolder}/The Island of Dr. Moreau (Flo Gibson).m4b", MediaType = "audiobook" };
+            var bookService = new InMemoryBookService(new[] { book });
+            var unitDestination = DestinationService(book, edition, new List<BookFile> { first }, bookService, isOnDisk: _ => true);
+
+            var secondKey = BookCoalescingHelper.BuildPerFileUnitKey($"{MoreauFolder}/The Island of Dr. Moreau (Simon Prebble).m4b", book.Title, book.MediaType);
+            var destination = unitDestination.ResolveDestinationForUnit(book, edition, secondKey);
+
+            Assert.That(destination.BookId, Is.Not.EqualTo(book.Id));
+        }
+
+        [Test]
+        public void should_keep_counting_a_file_whose_presence_cannot_be_checked()
+        {
+            var (book, edition, mp3s) = BookWithMp3s();
+            var bookService = new InMemoryBookService(new[] { book });
+            var unitDestination = DestinationService(book, edition, mp3s, bookService, isOnDisk: _ => throw new UnauthorizedAccessException());
+
+            var m4bKey = unitDestination.BuildRootUnitKeyWithExtension($"{MoreauFolder}/The Island of Dr. Moreau.m4b", book.Title, book.MediaType);
+            var destination = unitDestination.ResolveDestinationForUnit(book, edition, m4bKey);
+
+            Assert.That(destination.BookId, Is.Not.EqualTo(book.Id), "an unreadable file is treated as present, as before this check existed");
         }
 
         [TestCase("VII")]
@@ -360,7 +520,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var filesByBook = new Dictionary<int, List<BookFile>>();
             var editions = new InMemoryEditionService(new[] { edition });
             var service = new BookUnitDestinationService(new StubMediaFileService(filesByBook),
-                new InMemoryBookService(new[] { book }), editions, new StubMainDatabase(), LogManager.GetCurrentClassLogger());
+                new InMemoryBookService(new[] { book }), editions, new StubMainDatabase(), DiskStub.AllOnDisk(), LogManager.GetCurrentClassLogger());
             var destinations = new List<(int BookId, int EditionId)>();
             foreach (var unit in units)
             {
@@ -393,7 +553,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var editions = new InMemoryEditionService(new[] { edition });
             var books = new InMemoryBookService(new[] { book });
             BookUnitDestinationService NewService() => new(new StubMediaFileService(filesByBook), books, editions,
-                new StubMainDatabase(), LogManager.GetCurrentClassLogger());
+                new StubMainDatabase(), DiskStub.AllOnDisk(), LogManager.GetCurrentClassLogger());
             var service = NewService();
             var expected = new List<(string Key, int BookId, int EditionId)>();
             for (var copy = 1; copy <= 2; copy++)
@@ -492,6 +652,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 bookService: bookService,
                 editionService: editionService,
                 mainDatabase: new StubMainDatabase(),
+                diskProvider: DiskStub.AllOnDisk(),
                 logger: logger);
 
             var cloneUnitKey = unitDestination.BuildRootUnitKeyWithExtension(cloneFile.Path, canonicalBook.Title, canonicalBook.MediaType);
@@ -565,6 +726,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 bookService: bookService,
                 editionService: editionService,
                 mainDatabase: new StubMainDatabase(),
+                diskProvider: DiskStub.AllOnDisk(),
                 logger: logger);
 
             var unitKey = unitDestination.BuildRootUnitKeyWithExtension("/incoming/Dune/Dune.m4b", canonicalBook.Title, canonicalBook.MediaType);
@@ -640,6 +802,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 bookService: bookService,
                 editionService: editionService,
                 mainDatabase: new StubMainDatabase(),
+                diskProvider: DiskStub.AllOnDisk(),
                 logger: logger);
 
             var unitKey = unitDestination.BuildRootUnitKeyWithExtension("/incoming/Dune/Dune.m4b", canonicalBook.Title, canonicalBook.MediaType);
@@ -686,6 +849,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 bookService,
                 editionService,
                 new StubMainDatabase(),
+                DiskStub.AllOnDisk(),
                 logger);
 
             var unitKey = unitDestination.BuildRootUnitKeyWithExtension("/incoming/Dune/Dune.m4b", matchedEdition.Title, canonicalBook.MediaType);
@@ -738,6 +902,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 bookService,
                 editionService,
                 new StubMainDatabase(),
+                DiskStub.AllOnDisk(),
                 logger);
             var unitKey = unitDestination.BuildRootUnitKeyWithExtension("/incoming/Dune/Dune.m4b", matchedEdition.Title, canonicalBook.MediaType);
 
@@ -807,6 +972,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 bookService: bookService,
                 editionService: editionService,
                 mainDatabase: new StubMainDatabase(),
+                diskProvider: DiskStub.AllOnDisk(),
                 logger: logger);
 
             var unitKey = unitDestination.BuildRootUnitKeyWithExtension("/incoming/Frank Herbert/Dune/Dune.mp3", canonicalBook.Title, canonicalBook.MediaType);
@@ -830,6 +996,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 bookService: new InMemoryBookService(Array.Empty<Book>()),
                 editionService: new InMemoryEditionService(Array.Empty<Edition>()),
                 mainDatabase: new StubMainDatabase(),
+                diskProvider: DiskStub.AllOnDisk(),
                 logger: logger);
 
             var alpha = unitDestination.BuildRootUnitKeyWithExtension("/incoming/Dune/Alpha.m4b", "Alpha", BookMediaType.Audiobook);
@@ -899,6 +1066,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 bookService: bookService,
                 editionService: editionService,
                 mainDatabase: new StubMainDatabase(),
+                diskProvider: DiskStub.AllOnDisk(),
                 logger: logger);
 
             var unitKey = unitDestination.BuildRootUnitKeyWithExtension("/incoming/Dune/Dune.m4b", canonicalBook.Title, canonicalBook.MediaType);
