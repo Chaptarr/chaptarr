@@ -211,7 +211,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     Assert.That(result.MatchedFiles.All(match => match.EditionId == captured[match.BookId]), Is.True);
                     var remote = new RemoteBook { Author = author, Books = new() { a,b }, AlternativeCopies = true, TargetEditionIds = captured, AlternativeCopyGrabDate = DateTime.UtcNow };
                     var disk = Proxy<IDiskProvider>((method,args) => method.Name == nameof(IDiskProvider.GetFileSize) ? 1L : (object)DateTime.UtcNow);
-                    var importer = new DownloadedBooksImportService(disk,null,matcher,null,null,bookService,authorService,editionService,null,null,null,null,null,events,null,null,logger, queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    var importer = new DownloadedBooksImportService(disk,null,matcher,null,null,bookService,authorService,editionService,null,null,null,null,null,events,null,null,logger, queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
                     var decisionBuilder = typeof(DownloadedBooksImportService).GetMethod("CreateDecisionForMatch", BindingFlags.NonPublic|BindingFlags.Instance);
                     var tagsByPath = files.ToDictionary(file=>file.Path,file=>file.AllTags);
                     var bookCache = new Dictionary<int,Book>(); var authorCache = new Dictionary<int,Author>();
