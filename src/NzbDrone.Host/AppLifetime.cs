@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
@@ -24,6 +26,7 @@ namespace NzbDrone.Host
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
         private readonly Lazy<IBackupService> _backupService;
+        private readonly IOsInfo _osInfo;
 
         public AppLifetime(IHostApplicationLifetime appLifetime,
             IConfigFileProvider configFileProvider,
@@ -33,7 +36,8 @@ namespace NzbDrone.Host
             IProcessProvider processProvider,
             IEventAggregator eventAggregator,
             Lazy<IBackupService> backupService,
-            Logger logger)
+            Logger logger,
+            IOsInfo osInfo = null)
         {
             _appLifetime = appLifetime;
             _configFileProvider = configFileProvider;
@@ -44,6 +48,7 @@ namespace NzbDrone.Host
             _eventAggregator = eventAggregator;
             _backupService = backupService;
             _logger = logger;
+            _osInfo = osInfo;
 
             appLifetime.ApplicationStarted.Register(OnAppStarted);
         }
@@ -83,11 +88,78 @@ namespace NzbDrone.Host
         {
             if (_runtimeInfo.RestartPending && !_runtimeInfo.IsWindowsService)
             {
-                var restartArgs = GetRestartArgs();
+                // Logging is already shut down here, so container output goes straight to stdout for `docker logs`.
+                if (ShouldReplaceProcess(_osInfo?.IsDocker == true, Environment.ProcessId))
+                {
+                    var argv = BuildReplacementArguments(
+                        _runtimeInfo.ExecutingApplication,
+                        Assembly.GetEntryAssembly()?.Location,
+                        _startupContext.Args.TryGetValue(StartupContext.APPDATA, out var appData) ? appData : null);
+
+                    Console.WriteLine("Restart requested inside a container: starting Chaptarr again in place.");
+
+                    // Only returns when the replacement could not be started.
+                    var error = ProcessReplacement.Replace(argv);
+                    Console.WriteLine("Could not start Chaptarr again in place (error {0}); exiting so the container restart policy " +
+                                      "(e.g. 'restart: unless-stopped') can start it.", error);
+                    return;
+                }
+
+                var (path, restartArgs) = BuildRestartCommand(
+                    _runtimeInfo.ExecutingApplication,
+                    Assembly.GetEntryAssembly()?.Location,
+                    GetRestartArgs());
 
                 _logger.Info("Attempting restart with arguments: {0}", restartArgs);
-                _processProvider.SpawnNewProcess(_runtimeInfo.ExecutingApplication, restartArgs);
+                _processProvider.SpawnNewProcess(path, restartArgs);
             }
+        }
+
+        // A child spawned by a container's main process (PID 1) is killed as soon as that process
+        // exits, and exiting would leave the restart to the container's restart policy (none, or
+        // 'on-failure', leaves Chaptarr stopped). So in a container the stopped process is replaced
+        // in place by a new one (exec): same PID, no state carried over from the old host.
+        public static bool ShouldReplaceProcess(bool isDocker, int processId)
+        {
+            return isDocker || processId == 1;
+        }
+
+        // The argument vector for the replacement process. Under `dotnet Chaptarr.dll` (the Docker
+        // image's CMD) the executing module is the dotnet host, so the entry assembly comes first.
+        public static string[] BuildReplacementArguments(string executingApplication, string entryAssemblyPath, string appDataPath)
+        {
+            var argv = new System.Collections.Generic.List<string> { executingApplication };
+
+            var hostName = Path.GetFileNameWithoutExtension(executingApplication ?? string.Empty);
+            if (string.Equals(hostName, "dotnet", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(entryAssemblyPath))
+            {
+                argv.Add(entryAssemblyPath);
+            }
+
+            if (!string.IsNullOrWhiteSpace(appDataPath))
+            {
+                argv.Add("/" + StartupContext.APPDATA + "=" + appDataPath);
+            }
+
+            argv.Add("/" + StartupContext.NO_BROWSER);
+            argv.Add("/" + StartupContext.RESTART);
+
+            return argv.ToArray();
+        }
+
+        // Under `dotnet Chaptarr.dll` (the Docker image's CMD) the executing module is the dotnet
+        // host, so the entry assembly has to come first or dotnet treats "/data=..." as the app.
+        public static (string Path, string Args) BuildRestartCommand(string executingApplication, string entryAssemblyPath, string args)
+        {
+            var hostName = Path.GetFileNameWithoutExtension(executingApplication ?? string.Empty);
+            if (string.Equals(hostName, "dotnet", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(entryAssemblyPath))
+            {
+                return (executingApplication, $"\"{entryAssemblyPath}\" {args}");
+            }
+
+            return (executingApplication, args);
         }
 
         private void Shutdown()
