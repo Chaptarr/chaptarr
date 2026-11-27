@@ -75,6 +75,35 @@ namespace NzbDrone.Core.Books
         public static SeriesBookLink GetHeaderLink(Book book) => book?.SeriesId is > 0
             ? GetHeaderLink(book, GetLinks(book).ToList()) : null;
 
+        // Audio tags require an original header membership or a sole numbered original series.
+        public static SeriesBookLink SelectForAudioTags(Book book)
+        {
+            var links = GetLinks(book).Where(link => link.SeriesInstanceType == "original" && !link.IsInheritedLink).ToList();
+            if (book?.SeriesId is > 0)
+            {
+                var header = GetHeaderLink(book, links);
+                if (header == null) return null;
+                var id = CanonicalGoodreadsId(header.Series.Value.GoodreadsSeriesId);
+                links = links.Where(link => CanonicalGoodreadsId(link.Series.Value.GoodreadsSeriesId) == id).ToList();
+            }
+
+            var identities = links.Select(link => CanonicalGoodreadsId(link.Series.Value.GoodreadsSeriesId)).Distinct().ToList();
+            return identities.Count == 1 && identities[0] != null &&
+                (book.SeriesId is > 0 || !string.IsNullOrWhiteSpace(links[0].Position)) &&
+                links.Select(link => link.Position ?? string.Empty).Distinct(StringComparer.Ordinal).Count() == 1 &&
+                links.Select(link => link.Series.Value.Title).Distinct(StringComparer.Ordinal).Count() == 1
+                ? links[0] : null;
+        }
+
+        internal static (string Title, string Position) AudioTagPair(Book book)
+        {
+            var selected = SelectForAudioTags(book);
+            return (selected?.Series.Value.Title, selected?.Position);
+        }
+
+        internal static bool AudioTagPairChanged((string Title, string Position) before, (string Title, string Position) after) =>
+            after.Title != null && after != before;
+
         internal static SeriesBookLink GetHeaderLink(Book book, IReadOnlyList<SeriesBookLink> links)
         {
             if (book?.SeriesId is not > 0)

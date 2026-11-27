@@ -149,7 +149,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                             if (postCommitThrows && args[0] is TrackImportedEvent importedEvent && importedEvent.ImportedBook.EditionId == 4)
                                 throw new InvalidOperationException("Imported event observer unavailable");
                             return null;
-                        }),
+                        }), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                         Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(), Proxy<IQualityProfileService>(),
                         Proxy<IM4bConversionService>(), LogManager.GetCurrentClassLogger());
                 }

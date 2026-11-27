@@ -40,6 +40,7 @@ class RetagAuthorModalContentConnector extends Component {
     this.props.executeCommand({
       name: commandNames.RETAG_AUTHOR,
       authorIds: this.props.authorIds,
+      mediaType: this.props.selectedMediaType,
       updateCovers,
       embedMetadata
     });
@@ -62,6 +63,7 @@ class RetagAuthorModalContentConnector extends Component {
 
 RetagAuthorModalContentConnector.propTypes = {
   authorIds: PropTypes.arrayOf(PropTypes.number).isRequired,
+  selectedMediaType: PropTypes.oneOf(['all', 'audiobook', 'ebook']),
   onModalClose: PropTypes.func.isRequired,
   executeCommand: PropTypes.func.isRequired
 };

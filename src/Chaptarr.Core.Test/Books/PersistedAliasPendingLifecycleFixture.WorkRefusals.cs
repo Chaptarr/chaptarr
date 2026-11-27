@@ -74,7 +74,7 @@ namespace Chaptarr.Core.Test.Books
                     return new HttpResponse(request, new HttpHeader { ContentType = "application/json", ["Retry-After"] = "0" }, payload, status);
                 });
                 var metadata = BookInfoProxyCanonicalLookupFixture.CreateProxy(client);
-                void Run() => new ProcessPendingImportsCommandHandler(h.Pending, library, h.BookService, metadata,
+                void Run() => new ProcessPendingImportsCommandHandler(h.Pending, library, h.BookService, metadata, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     h.Queue, h.EventAggregator, LogManager.GetCurrentClassLogger(), h.Aliases).Execute(new ProcessPendingImportsCommand());
                 Run();
                 if (failure != "503")

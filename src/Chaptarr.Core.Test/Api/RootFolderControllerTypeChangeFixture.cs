@@ -5,7 +5,6 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using Chaptarr.Api.V1.RootFolders;
-using Chaptarr.Core.Test;
 using Chaptarr.Http.REST;
 using FluentValidation.Results;
 using Microsoft.AspNetCore.Http;
@@ -13,22 +12,19 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
-using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
-using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Localization;
-using NzbDrone.Core.Profiles.Metadata;
-using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Validation;
 using NzbDrone.Core.Validation.Paths;
 using NzbDrone.SignalR;
+using static Chaptarr.Core.Test.Common.InterfaceProxy;
 
 namespace Chaptarr.Core.Test.Api
 {
@@ -51,9 +47,10 @@ namespace Chaptarr.Core.Test.Api
             public RootFolder Updated { get; private set; }
             public int UpdateCallCount { get; private set; }
 
-            public List<RootFolder> All() => new();
+            public List<RootFolder> Roots { get; set; } = new();
+            public List<RootFolder> All() => Roots;
             public List<RootFolder> AllWithSpaceStats() => new();
-            public RootFolder Add(RootFolder rootFolder) => throw new NotImplementedException();
+            public RootFolder Add(RootFolder rootFolder) { rootFolder.Id = 42; Existing = rootFolder; return rootFolder; }
 
             public RootFolder Update(RootFolder rootFolder)
             {
@@ -154,12 +151,12 @@ namespace Chaptarr.Core.Test.Api
             public TestableRootFolderController(
                 StubRootFolderService rootFolderService,
                 StubAuthorService authorService,
-                StubLocalizationService localizationService, bool writable = true)
+                StubLocalizationService localizationService, bool writable = true, ICalibreProxy calibre = null)
                 : base(
                     rootFolderService,
                     DispatchProxy.Create<IRootFolderScanService, ThrowingProxy<IRootFolderScanService>>(),
                     authorService,
-                    DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
+                    calibre ?? DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
                     ConfigServiceTestProxy.Create(),
                     localizationService,
                     DispatchProxy.Create<IBroadcastSignalRMessage, ThrowingProxy<IBroadcastSignalRMessage>>(),
@@ -214,6 +211,109 @@ namespace Chaptarr.Core.Test.Api
             var disk = DispatchProxy.Create<IDiskProvider, ValidationEnvironmentProxy<IDiskProvider>>();
             ((ValidationEnvironmentProxy<IDiskProvider>)(object)disk).Writable = writable;
             return disk;
+        }
+
+        [TestCase("create")]
+        [TestCase("enable")]
+        [TestCase("unchanged")]
+        [TestCase("name")]
+        [TestCase("anonymous-null")]
+        [TestCase("anonymous-empty")]
+        [TestCase("anonymous-legacy-password")]
+        [TestCase("disable-auth")]
+        [TestCase("password")]
+        [TestCase("host")]
+        [TestCase("library")]
+        [TestCase("disable")]
+        public void calibre_is_tested_only_for_creation_enabling_or_changed_settings(string change)
+        {
+            var existing = new RootFolder
+            {
+                Id = 42, Name = "Books", Path = @"C:\books".AsOsAgnostic(), FolderType = FolderType.Ebook,
+                IsCalibreLibrary = change != "enable",
+                CalibreSettings = new CalibreSettings { Host = "localhost", Library = "Books", Username = "reader", Password = "saved" }
+            };
+            if (change.StartsWith("anonymous"))
+            {
+                existing.CalibreSettings.Username = string.Empty;
+                existing.CalibreSettings.Password = change == "anonymous-null" ? null : change == "anonymous-legacy-password" ? "saved" : string.Empty;
+            }
+            var roots = new StubRootFolderService { Existing = existing };
+            if (change != "create") roots.Roots.Add(existing);
+            var tests = 0;
+            string testedPassword = null;
+            var controller = new TestableRootFolderController(roots, new StubAuthorService(new List<Author>()), new StubLocalizationService(),
+                calibre: Proxy<ICalibreProxy>((method, args) =>
+                {
+                    Assert.That(method.Name, Is.EqualTo(nameof(ICalibreProxy.Test)));
+                    tests++;
+                    testedPassword = ((CalibreSettings)args[0]).Password;
+                    return null;
+                }));
+            var originalPassword = existing.CalibreSettings.Password;
+            var resource = existing.ToResource();
+            resource.IsCalibreLibrary = change != "disable";
+            if (change == "disable-auth") resource.Username = string.Empty;
+            if (change == "name") resource.Name = "New name";
+            if (change == "password") resource.Password = "changed";
+            if (change == "host") resource.Host = "another-host";
+            if (change == "library") resource.Library = "Other";
+            if (change == "create") { resource.Password = "saved"; controller.CreateRootFolder(resource); }
+            else controller.UpdateRootFolder(resource);
+            if (change.StartsWith("anonymous")) Assert.That(roots.Updated.CalibreSettings.Password, Is.EqualTo(originalPassword));
+            Assert.That(tests, Is.EqualTo(change is "unchanged" or "name" or "disable" or "anonymous-null" or "anonymous-empty" or "anonymous-legacy-password" ? 0 : 1));
+            if (change != "create") Assert.That(roots.UpdateCallCount, Is.EqualTo(1));
+            if (tests > 0) Assert.That(testedPassword, Is.EqualTo(change == "password" ? "changed" : change == "disable-auth" ? string.Empty : "saved"));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void resolved_default_library_cannot_duplicate_an_existing_root(bool update)
+        {
+            var existing = new RootFolder { Id = 42, Path = @"C:\other".AsOsAgnostic(), FolderType = FolderType.Ebook };
+            var roots = new StubRootFolderService { Existing = existing, Roots = new()
+            {
+                new RootFolder { Id = 1, CalibreSettings = new CalibreSettings { Host = "localhost", Library = "books" } }
+            } };
+            var controller = new TestableRootFolderController(roots, new StubAuthorService(new List<Author>()), new StubLocalizationService(),
+                calibre: Proxy<ICalibreProxy>((_, args) => { ((CalibreSettings)args[0]).Library = "books"; return null; }));
+            var resource = existing.ToResource();
+            resource.IsCalibreLibrary = true;
+            resource.Host = "localhost";
+            resource.Port = roots.Roots[0].CalibreSettings.Port;
+            resource.Library = string.Empty;
+            Assert.That(controller.ValidateShared(resource).Errors.Select(failure => failure.ErrorMessage),
+                Does.Not.Contain("Calibre library is already configured as a root folder"));
+            var error = Assert.Throws<FluentValidation.ValidationException>(() =>
+            {
+                if (update) controller.UpdateRootFolder(resource);
+                else controller.CreateRootFolder(resource);
+            });
+            Assert.That(error.Errors.Single().ErrorMessage, Is.EqualTo("Calibre library is already configured as a root folder"));
+            Assert.That(roots.Existing, Is.SameAs(existing));
+            Assert.That(roots.UpdateCallCount, Is.Zero);
+        }
+
+        [TestCase(false)] [TestCase(true)]
+        public void duplicate_calibre_library_uses_the_same_normalized_identity_as_backoff(bool sameLibrary)
+        {
+            var settings = new CalibreSettings { Host = "localhost", Port = 8080, UrlBase = "/calibre", Library = "books" };
+            var roots = new StubRootFolderService { Roots = new() { new RootFolder { Id = 1, Path = @"C:\existing".AsOsAgnostic(), CalibreSettings = settings } } };
+            var controller = BuildController(roots, new StubAuthorService(new List<Author>()));
+            var resource = new RootFolderResource { Id = 2, Name = "Other", Path = @"C:\other".AsOsAgnostic(), FolderType = (int)FolderType.Ebook,
+                IsCalibreLibrary = true, Host = "LOCALHOST", Port = 8080, UrlBase = "/calibre/", Library = sameLibrary ? "books" : "other" };
+            var result = controller.ValidateShared(resource);
+            Assert.That(result.Errors.Any(failure => failure.ErrorMessage == "Calibre library is already configured as a root folder"), Is.EqualTo(sameLibrary));
+        }
+
+        [Test]
+        public void invalid_calibre_identities_do_not_collide()
+        {
+            var roots = new StubRootFolderService { Roots = new() { new RootFolder { Id = 1, Path = @"C:\existing".AsOsAgnostic(), CalibreSettings = new CalibreSettings { Host = "" } } } };
+            var controller = BuildController(roots, new StubAuthorService(new List<Author>()));
+            var resource = new RootFolderResource { Id = 2, Name = "Other", Path = @"C:\other".AsOsAgnostic(), FolderType = (int)FolderType.Ebook,
+                IsCalibreLibrary = true, Host = "", Port = 0 };
+            Assert.That(controller.ValidateShared(resource).Errors, Has.None.Matches<FluentValidation.Results.ValidationFailure>(failure => failure.ErrorMessage == "Calibre library is already configured as a root folder"));
         }
 
         [TestCase("POST")]

@@ -1,66 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-FRAMEWORK="net10.0"
-PLATFORM="${1:-}"
-ARCHITECTURE="${2:-x64}"
-SWAGGER_WAIT_SECONDS="${SWAGGER_WAIT_SECONDS:-45}"
-
-case "$PLATFORM" in
-  Windows)
-    RUNTIME="win-$ARCHITECTURE"
-    APPLICATION="Chaptarr.Console.dll"
-    ;;
-  Linux)
-    RUNTIME="linux-$ARCHITECTURE"
-    APPLICATION="Chaptarr.dll"
-    ;;
-  Mac)
-    RUNTIME="osx-$ARCHITECTURE"
-    APPLICATION="Chaptarr.dll"
-    ;;
-  *)
-    echo "Platform must be provided as first argument: Windows, Linux or Mac" >&2
-    exit 1
-    ;;
-esac
-
-SLN_FILE="src/Chaptarr.sln"
-OUTPUT_FILE="src/Chaptarr.Api.V1/openapi.json"
-APP_PATH="_output/$FRAMEWORK/$RUNTIME/$APPLICATION"
-TOOL_DIR="$(mktemp -d)"
-SWAGGER_PID=""
-
+# A legacy platform argument is ignored: the contract is generated on this host.
+# Startup/Swagger registration runs without booting the app or opening a database.
+DOCS_DIR="$(mktemp -d)"
+DOCS_PID=""
+DOCS_OUTPUT="src/Chaptarr.Api.V1/openapi.json"
 cleanup() {
-  if [[ -n "$SWAGGER_PID" ]] && kill -0 "$SWAGGER_PID" 2>/dev/null; then
-    kill "$SWAGGER_PID" 2>/dev/null || true
-    wait "$SWAGGER_PID" 2>/dev/null || true
+  if [[ -n "$DOCS_PID" ]]; then
+    kill -- "-$DOCS_PID" 2>/dev/null || true
+    wait "$DOCS_PID" 2>/dev/null || true
   fi
-
-  rm -rf "$TOOL_DIR"
+  rm -rf "$DOCS_DIR"
+  rm -f "$DOCS_OUTPUT.tmp"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-dotnet msbuild -restore "$SLN_FILE"   -p:Configuration=Debug   -p:Platform=Posix   -p:RuntimeIdentifiers="$RUNTIME"   -t:PublishAllRids
+# dotnet build/test also spawn children. Stop the whole owned group on interruption.
+set -m
+run() {
+  "$@" &
+  DOCS_PID="$!"
+  wait "$DOCS_PID"
+  kill -- "-$DOCS_PID" 2>/dev/null || true
+  DOCS_PID=""
+}
+run dotnet build src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj -m:1 -nr:false -p:UseSharedCompilation=false
+run dotnet test _tests/net10.0/Chaptarr.Core.Test.dll \
+  --filter 'FullyQualifiedName=Chaptarr.Core.Test.Api.OpenApiContractFixture.export_current_contract' \
+  --results-directory "$DOCS_DIR/results" -- \
+  "NUnit.WorkDirectory=$DOCS_DIR"
 
-dotnet tool install --tool-path "$TOOL_DIR" --version 9.0.6 Swashbuckle.AspNetCore.Cli
-
-rm -f "$OUTPUT_FILE"
-
-Chaptarr__App__LaunchBrowser=false DOTNET_ROLL_FORWARD=Major "$TOOL_DIR/swagger" tofile --output "$OUTPUT_FILE" "$APP_PATH" v1 &
-SWAGGER_PID="$!"
-
-sleep "$SWAGGER_WAIT_SECONDS"
-
-if kill -0 "$SWAGGER_PID" 2>/dev/null; then
-  kill "$SWAGGER_PID" 2>/dev/null || true
-  wait "$SWAGGER_PID" 2>/dev/null || true
-else
-  wait "$SWAGGER_PID"
-fi
-SWAGGER_PID=""
-
-if [[ ! -f "$OUTPUT_FILE" ]]; then
-  echo "$OUTPUT_FILE not found, check logs for errors" >&2
+if [[ ! -s "$DOCS_DIR/openapi.generated.json" ]]; then
+  echo "OpenAPI export failed: the contract test produced no openapi.generated.json" >&2
   exit 1
 fi
+cp "$DOCS_DIR/openapi.generated.json" "$DOCS_OUTPUT.tmp"
+mv "$DOCS_OUTPUT.tmp" "$DOCS_OUTPUT"

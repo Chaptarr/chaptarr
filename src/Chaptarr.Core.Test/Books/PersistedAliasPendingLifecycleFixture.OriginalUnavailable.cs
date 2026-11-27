@@ -110,7 +110,7 @@ namespace Chaptarr.Core.Test.Books
                     return Tuple.Create(owner.HardcoverAuthorId,
                         new Book { HardcoverBookId = work, MediaType = media, Author = owner }, new List<Author> { source, h.Author });
                 });
-                void Run() => new ProcessPendingImportsCommandHandler(h.Pending, library, books, info, h.Queue,
+                void Run() => new ProcessPendingImportsCommandHandler(h.Pending, library, books, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Queue,
                     h.EventAggregator, LogManager.GetCurrentClassLogger(), h.Aliases).Execute(new ProcessPendingImportsCommand());
                 if (scenario == "search-rejected") h.RejectedBookId = audio.Id;
                 queries.Clear();
@@ -274,10 +274,10 @@ namespace Chaptarr.Core.Test.ImportLists
                 book.Author = owner;
                 return Tuple.Create(owner.GoodreadsAuthorId, book, new List<Author> { owner });
             });
-            new ProcessPendingImportsCommandHandler(stored.Pending, library, stored.Books, info, stored.Queue,
+            new ProcessPendingImportsCommandHandler(stored.Pending, library, stored.Books, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  stored.Queue,
                 stored.Events, stored.Logger, stored.Aliases).Execute(new ProcessPendingImportsCommand());
             Assert.That(stored.Pending.GetByProviderId(owner.GoodreadsAuthorId), Is.Not.Null);
-            new ProcessPendingImportsCommandHandler(stored.Pending, library, stored.Books, info, stored.Queue,
+            new ProcessPendingImportsCommandHandler(stored.Pending, library, stored.Books, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  stored.Queue,
                 stored.Events, stored.Logger, stored.Aliases).Execute(new ProcessPendingImportsCommand());
             var saved = stored.Requests.Get(pending.Id);
             var catalog = stored.Books.GetBooksByAuthor(owner.Id);

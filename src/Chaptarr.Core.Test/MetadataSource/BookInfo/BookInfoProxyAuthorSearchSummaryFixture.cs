@@ -14,6 +14,7 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
 using NzbDrone.Core.MetadataSource.Goodreads;
@@ -80,6 +81,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             }
 
             public void DownloadFile(string url, string fileName, string userAgent = null) => throw new NotImplementedException();
+            public void DownloadFile(HttpRequest request, string fileName) => throw new System.NotImplementedException();
             public HttpResponse Execute(HttpRequest request) => Get(request);
             public HttpResponse<T> Get<T>(HttpRequest request) where T : new() => throw new NotImplementedException();
             public HttpResponse Head(HttpRequest request) => throw new NotImplementedException();
@@ -202,7 +204,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             var logger = LogManager.GetCurrentClassLogger();
             return new BookInfoProxy(httpClient, null, new GoodreadsSearchClient(), null, null, null, null, null,
                 configService, new MetadataRequestBuilder(configService), logger, new CacheManager(),
-                new MetadataServerHealthGate(configService, new MetadataServerHealthService(logger), logger));
+                new MetadataServerHealthGate(configService, new HttpServiceHealth(logger), logger));
         }
 
         [Test]
@@ -224,7 +226,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 new MetadataRequestBuilder(configService),
                 logger,
                 new CacheManager(),
-                new MetadataServerHealthGate(configService, new MetadataServerHealthService(logger), logger));
+                new MetadataServerHealthGate(configService, new HttpServiceHealth(logger), logger));
 
             var author = proxy.SearchForNewEntity("Provider Candidate", "hardcover").Single() as Author;
 
@@ -258,7 +260,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             var httpClient = new SummaryHttpClient();
             httpClient.TimedOutAuthorIds.Add("hc:124");
             var logger = LogManager.GetCurrentClassLogger();
-            var healthService = new MetadataServerHealthService(logger);
+            var healthService = new HttpServiceHealth(logger);
             var healthGate = new MetadataServerHealthGate(configService, healthService, logger);
             var proxy = new BookInfoProxy(
                 httpClient,
@@ -293,7 +295,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
             var httpClient = new SummaryHttpClient();
             var logger = LogManager.GetCurrentClassLogger();
-            var healthService = new MetadataServerHealthService(logger);
+            var healthService = new HttpServiceHealth(logger);
             var healthGate = new MetadataServerHealthGate(configService, healthService, logger);
             healthService.ReportFailure(healthGate.SourceName, new TimeoutException("metadata server unavailable"));
             var status = healthService.GetStatus(healthGate.SourceName);
@@ -425,7 +427,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 new NzbDrone.Core.MetadataSource.Hardcover.HardcoverSearchClient(http, config),
                 new NzbDrone.Core.MetadataSource.Audible.AudibleCatalogProxy(cache, logger), null, null, null,
                 config, new MetadataRequestBuilder(config), logger, new CacheManager(),
-                new MetadataServerHealthGate(config, new MetadataServerHealthService(logger), logger));
+                new MetadataServerHealthGate(config, new HttpServiceHealth(logger), logger));
             var controller = new Chaptarr.Api.V1.Search.SearchController(proxy, null,
                 Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.MediaCover.IMapCoversToLocal>((method, args) => null),
                 Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.MediaCover.IMediaCoverProxy>((method, args) => args[0]),

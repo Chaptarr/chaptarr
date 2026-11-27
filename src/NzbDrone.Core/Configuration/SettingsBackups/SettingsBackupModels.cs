@@ -286,6 +286,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         public bool AutoUnmonitorPreviouslyDownloadedBooks { get; set; }
         public WriteAudioTagsType? WriteAudioTags { get; set; }
         public bool? ScrubAudioTags { get; set; }
+        public bool? EmbedCoverArt { get; set; }
         public WriteBookTagsType? WriteBookTags { get; set; }
         public bool? UpdateCovers { get; set; }
         public bool? EmbedMetadata { get; set; }

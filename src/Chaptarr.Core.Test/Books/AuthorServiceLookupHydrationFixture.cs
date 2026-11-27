@@ -42,6 +42,8 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubAuthorRepository : IAuthorRepository
         {
+            public bool UpdateSelectedPosterHash(int authorId, string hash, string expectedHash = null) => throw new NotImplementedException();
+
             public List<int> GetDueInitialFormatSync(DateTime now) => throw new NotSupportedException();
 
             private readonly Author _lookupAuthor;
@@ -142,6 +144,7 @@ namespace Chaptarr.Core.Test.Books
             public Author Single() => throw new NotImplementedException();
             public Author SingleOrDefault() => throw new NotImplementedException();
             public PagingSpec<Author> GetPaged(PagingSpec<Author> pagingSpec) => throw new NotImplementedException();
+            public bool RemoveImageUrls(int authorId, IReadOnlyCollection<string> urls) => throw new NotSupportedException();
             public List<Author> FindExisting(IEnumerable<int> ids) => throw new NotImplementedException();
             public bool AuthorPathExists(string path) => throw new NotImplementedException();
             public List<int> GetAuthorIdsByMetadataProfileId(int metadataProfileId) => throw new NotImplementedException();

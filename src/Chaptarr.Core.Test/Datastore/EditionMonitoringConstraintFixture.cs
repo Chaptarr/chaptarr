@@ -303,7 +303,7 @@ namespace Chaptarr.Core.Test.Datastore
 
         [TestCase(false)]
         [TestCase(true)]
-        public void migration_repairs_duplicates_using_files_then_pins_then_insertion_ranking_without_churn(bool postgres)
+        public void repair_selects_by_files_then_pins_then_ranking_and_queues_covers_after_commit(bool postgres)
         {
             DualDatabaseFixture.Run(postgres, db =>
             {
@@ -342,7 +342,20 @@ namespace Chaptarr.Core.Test.Datastore
                 Assert.That(editions.All().Where(edition => edition.Monitored).Select(edition => edition.Id), Is.EquivalentTo(expected));
                 Assert.That(connection.Query<(int Id, int EditionId)>("SELECT \"Id\",\"EditionId\" FROM \"BookFiles\""), Is.EqualTo(filesBefore));
                 Assert.That(editions.Get(unselected.Id).Monitored, Is.False);
-                new FixMultipleMonitoredEditions(db).Clean();
+                var queued = new List<int>();
+                var selectedWhenQueued = new List<bool>();
+                var queue = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Messaging.Commands.IManageCommandQueue>((_, args) =>
+                {
+                    queued.AddRange(((NzbDrone.Core.MediaCover.Commands.DownloadBookMediaCommand)args[0]).BookIds);
+                    selectedWhenQueued.Add(editions.Get(unselected.Id).Monitored);
+                    return new NzbDrone.Core.Messaging.Commands.CommandModel();
+                });
+                var housekeeper = new FixMultipleMonitoredEditions(db, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue);
+                housekeeper.Clean();
+                Assert.That(selectedWhenQueued, Is.EqualTo(new[] { true }), "Queue only after the selection commits; assertions must be outside the retry catch");
+                Assert.That(queued, Is.EqualTo(new[] { unselected.BookId }));
+                housekeeper.Clean();
+                Assert.That(queued, Is.EqualTo(new[] { unselected.BookId }));
                 Assert.That(editions.All().Where(edition => edition.Monitored).Select(edition => edition.Id), Is.EquivalentTo(expected.Append(unselected.Id)));
                 Assert.That(editions.All().Count(edition => edition.ManualAdd), Is.EqualTo(2),
                     "monitoring repair must preserve independent retention pins, including losing pins");

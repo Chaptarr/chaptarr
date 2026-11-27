@@ -92,7 +92,7 @@ namespace Chaptarr.Core.Test.Books
                     attempts++;
                     return Task.FromException<Author>(error);
                 });
-                var handler = new ProcessPendingImportsCommandHandler(pending, library, null, null, null, events, logger);
+                var handler = new ProcessPendingImportsCommandHandler(pending, library, null, null, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  null, events, logger);
                 handler.Execute(new ProcessPendingImportsCommand());
                 var saved = repository.Get(id);
                 var terminal = kind != "untyped";

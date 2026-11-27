@@ -1,12 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Diagnostics;
 using NLog;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Profiles.Metadata.Events;
+using NzbDrone.Core.Books.Events;
+using NzbDrone.Core.MediaCover;
+using NzbDrone.Core.MediaCover.Commands;
+using NzbDrone.Core.Messaging.Commands;
 
 namespace NzbDrone.Core.Books.Services
 {
@@ -19,6 +24,9 @@ namespace NzbDrone.Core.Books.Services
         private readonly IEditionSelector _editionSelector;
         private readonly IEditionMetadataProfileFilter _editionMetadataProfileFilter;
         private readonly Logger _logger;
+        private readonly IManageCommandQueue _commandQueue;
+        private readonly IDeferredCoverService _deferredCoverService;
+        private readonly IEventAggregator _eventAggregator;
 
         public UpdateEditionSelectionOnMetadataProfileChangeService(
             IAuthorService authorService,
@@ -27,7 +35,10 @@ namespace NzbDrone.Core.Books.Services
             IMediaFileService mediaFileService,
             IEditionSelector editionSelector,
             IEditionMetadataProfileFilter editionMetadataProfileFilter,
-            Logger logger)
+            Logger logger,
+            IDeferredCoverService deferredCoverService,
+            IManageCommandQueue commandQueue,
+            IEventAggregator eventAggregator)
         {
             _authorService = authorService;
             _bookService = bookService;
@@ -36,6 +47,9 @@ namespace NzbDrone.Core.Books.Services
             _editionSelector = editionSelector;
             _editionMetadataProfileFilter = editionMetadataProfileFilter;
             _logger = logger;
+            _commandQueue = commandQueue;
+            _deferredCoverService = deferredCoverService;
+            _eventAggregator = eventAggregator;
         }
 
         public void Handle(MetadataProfileUpdatedEvent message)
@@ -64,11 +78,10 @@ namespace NzbDrone.Core.Books.Services
             _logger.Info("Metadata profile '{0}' (ID: {1}) language settings changed to: {2}, updating edition selection for affected books",
                 profile.Name, profile.Id, profile.AllowedLanguages);
 
-                // Find all authors using this metadata profile
-                var affectedAuthors = _authorService.GetAllAuthors()
-                    .Where(a => a.AudiobookMetadataProfileId == profile.Id ||
-                               a.EbookMetadataProfileId == profile.Id)
-                    .ToList();
+            var timer = Stopwatch.StartNew();
+            var affectedAuthors = _authorService.GetAllAuthors()
+                .Where(a => a.AudiobookMetadataProfileId == profile.Id || a.EbookMetadataProfileId == profile.Id)
+                .ToList();
 
             if (!affectedAuthors.Any())
             {
@@ -76,18 +89,27 @@ namespace NzbDrone.Core.Books.Services
                 return;
             }
 
-            _logger.Info("Found {0} authors using metadata profile {1}", affectedAuthors.Count, profile.Id);
-
-            foreach (var author in affectedAuthors)
+            var examinedBooks = 0;
+            var changedBookIds = new List<int>();
+            try
             {
-                try
+                foreach (var author in affectedAuthors)
                 {
-                    UpdateAuthorEditionSelection(author, profile);
+                    try
+                    {
+                        UpdateAuthorEditionSelection(author, profile, changedBookIds, ref examinedBooks);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Error(ex, "Error updating edition selection for author {0}", author.Name);
+                    }
                 }
-                catch (System.Exception ex)
-                {
-                    _logger.Error(ex, "Error updating edition selection for author {0}", author.Name);
-                }
+            }
+            finally
+            {
+                DownloadBookMediaCommand.NotifyBookSelectionsChanged(changedBookIds, _commandQueue, _deferredCoverService, _logger);
+                _logger.Info("Metadata profile {0}: {1} authors, {2} affected books, {3} changed selections in {4}ms",
+                    profile.Id, affectedAuthors.Count, examinedBooks, changedBookIds.Count, timer.ElapsedMilliseconds);
             }
         }
 
@@ -130,14 +152,8 @@ namespace NzbDrone.Core.Books.Services
             return string.Join(",", tokens);
         }
 
-        private void UpdateAuthorEditionSelection(Author author, MetadataProfile changedProfile)
+        private void UpdateAuthorEditionSelection(Author author, MetadataProfile changedProfile, ICollection<int> changedBookIds, ref int examinedBooks)
         {
-            var allBooks = _bookService.GetBooksByAuthor(author.Id);
-            if (!allBooks.Any())
-            {
-                return;
-            }
-
             // Determine which media types are affected by this profile change.
             // Authors can legitimately use the same metadata profile for both audiobook and ebook.
             var affectedMediaTypes = new System.Collections.Generic.HashSet<BookMediaType>();
@@ -156,83 +172,89 @@ namespace NzbDrone.Core.Books.Services
                 return;
             }
 
-            foreach (var book in allBooks)
+            // GetBooksByAuthor already batch-loads the editions; do not read them again per book.
+            var books = _bookService.GetBooksByAuthor(author.Id).Where(book => affectedMediaTypes.Contains(book.MediaType)).ToList();
+            examinedBooks += books.Count;
+            if (books.Count == 0)
             {
-                // Skip books with physical files - we show what we have regardless of language preference
-                if (_mediaFileService.GetFilesByBook(book.Id).Any())
+                return;
+            }
+
+            var booksWithFiles = _mediaFileService.GetFilesByBooks(books.Select(book => book.Id).ToList())
+                .Select(file => file.Edition.BookId).ToHashSet();
+
+            foreach (var book in books)
+            {
+                try
                 {
-                    _logger.Debug("Skipping book '{0}' - has physical files", book.Title);
-                    continue;
-                }
-
-                // Skip if not the right media type for this profile
-                if (!affectedMediaTypes.Contains(book.MediaType))
-                {
-                    continue;
-                }
-
-                // Get all editions for this book
-                var editions = _editionService.GetEditionsByBook(book.Id);
-                if (!editions.Any())
-                {
-                    continue;
-                }
-
-                // Skip if any edition is manually selected
-                if (editions.Any(e => e.ManualAdd))
-                {
-                    _logger.Debug("Skipping book '{0}' - has manually selected edition", book.Title);
-                    continue;
-                }
-
-                var filteredEditions = _editionMetadataProfileFilter.Apply(editions, changedProfile);
-                var retainedSelection = _editionSelector.SelectRetainedEditions(
-                    book.MediaType,
-                    filteredEditions);
-
-                var eligibleEditions = retainedSelection?.RetainedEditions?.ToList() ?? filteredEditions;
-                if (!eligibleEditions.Any())
-                {
-                    continue;
-                }
-
-                var bestEdition = _editionSelector.SelectBestEdition(eligibleEditions, book.MediaType);
-
-                if (bestEdition != null)
-                {
-                    // Check if the selected edition changed
-                    var currentSelectedEdition = editions.FirstOrDefault(e => e.Monitored);
-
-                    if (currentSelectedEdition == null || currentSelectedEdition.Id != bestEdition.Id)
+                    // Skip books with physical files - we show what we have regardless of language preference
+                    if (booksWithFiles.Contains(book.Id))
                     {
-                        _logger.Info("Book '{0}': Changing selected edition from '{1}' to '{2}' based on retained edition ranking",
-                            book.Title,
-                            currentSelectedEdition?.Title ?? "none",
-                            bestEdition.Title);
+                        _logger.Debug("Skipping book '{0}' - has physical files", book.Title);
+                        continue;
+                    }
 
-                        // Update monitored status on editions
-                        foreach (var edition in editions)
+                    var editions = book.Editions;
+                    if (!editions.Any())
+                    {
+                        continue;
+                    }
+
+                    // Skip if any edition is manually selected
+                    if (editions.Any(e => e.ManualAdd))
+                    {
+                        _logger.Debug("Skipping book '{0}' - has manually selected edition", book.Title);
+                        continue;
+                    }
+
+                    var filteredEditions = _editionMetadataProfileFilter.Apply(editions, changedProfile);
+                    var retainedSelection = _editionSelector.SelectRetainedEditions(
+                        book.MediaType,
+                        filteredEditions);
+
+                    var eligibleEditions = retainedSelection?.RetainedEditions?.ToList() ?? filteredEditions;
+                    if (!eligibleEditions.Any())
+                    {
+                        continue;
+                    }
+
+                    var bestEdition = _editionSelector.SelectBestEdition(eligibleEditions, book.MediaType);
+
+                    if (bestEdition != null)
+                    {
+                        // Check if the selected edition changed
+                        var currentSelectedEdition = editions.FirstOrDefault(e => e.Monitored);
+
+                        if (currentSelectedEdition == null || currentSelectedEdition.Id != bestEdition.Id)
                         {
-                            edition.Monitored = (edition.Id == bestEdition.Id);
-                        }
+                            _logger.Info("Book '{0}': Changing selected edition from '{1}' to '{2}' based on retained edition ranking",
+                                book.Title,
+                                currentSelectedEdition?.Title ?? "none",
+                                bestEdition.Title);
 
-                        _editionService.UpdateMany(editions);
+                            var storedBook = BookService.CloneStoredBook(book);
 
-                        if (!string.Equals(book.ForeignEditionId, bestEdition.ForeignEditionId, StringComparison.OrdinalIgnoreCase))
-                        {
+                            // Update monitored status on editions
+                            foreach (var edition in editions)
+                            {
+                                edition.Monitored = (edition.Id == bestEdition.Id);
+                            }
+
+                            _editionService.UpdateSelection(editions);
+                            changedBookIds.Add(book.Id);
+
+                            // ForeignEditionId is not persisted on Books; the edition selection is authoritative.
+                            // Keep the existing UI/statistics notifications without rewriting an older Book snapshot.
                             book.ForeignEditionId = bestEdition.ForeignEditionId;
-                            _bookService.UpdateBook(book);
-                        }
-
-                        // Update book title if it should reflect the new edition
-                        if (bestEdition.Title != book.Title)
-                        {
-                            _logger.Debug("Updating book title from '{0}' to '{1}' to match selected edition",
-                                book.Title, bestEdition.Title);
-                            // Note: We might want to preserve the original book title and only change display
-                            // This depends on how the system handles book titles vs edition titles
+                            var change = new BookEditedEvent(book, storedBook);
+                            _eventAggregator.PublishEvent(change);
+                            _eventAggregator.PublishEvent(new BooksEditedEvent(new[] { change }));
                         }
                     }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warn(ex, "Unable to update edition selection for book {0} ({1}); continuing with the next book", book.Title, book.Id);
                 }
             }
         }

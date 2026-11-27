@@ -208,7 +208,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 void Sync()
                 {
                     var service = new ImportListSyncService(factory, exclusions, fetcher, metadata, authors, books, editions, pending, roots,
-                        new RootFolderSettingsResolver(roots), events, commandQueue, logger, new ImportListBookIdentityCacheRepository(database, events));
+                        new RootFolderSettingsResolver(roots), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  commandQueue, logger, new ImportListBookIdentityCacheRepository(database, events));
                     if (scheduled) service.Execute(new HardcoverLibrarySyncCommand { Trigger = CommandTrigger.Manual });
                     else service.Execute(new ImportListSyncCommand(definition.Id));
                 }

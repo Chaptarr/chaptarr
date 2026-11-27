@@ -83,6 +83,8 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             Assert.Multiple(() =>
             {
+                Assert.That(result.Output.Split("*** Migrating SQLite database ***").Length - 1, Is.EqualTo(1),
+                    "Release replay should open only the catalog. Constructing services must not migrate unused log and cache databases.");
                 Assert.That(section, Does.Contain("audit=complete"));
                 Assert.That(section, Does.Contain("APPROVED - James Hunt - Powerless (epub)"));
                 Assert.That(section, Does.Contain("REJECTED - James Hunt - The Final Homestead - EMP Survival in a Powerless World (epub)"));

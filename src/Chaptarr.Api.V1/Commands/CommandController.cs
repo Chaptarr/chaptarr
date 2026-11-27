@@ -101,6 +101,11 @@ namespace Chaptarr.Api.V1.Commands
                 ValidateUnmappedFilesSelection(refreshUnmappedFilesCommand.MediaType, refreshUnmappedFilesCommand.UnmappedFiles);
             }
 
+            if (command is RetagAuthorCommand retagAuthorCommand)
+            {
+                retagAuthorCommand.MediaType = ValidateMediaType(retagAuthorCommand.MediaType);
+            }
+
             if (command is RenameAuthorCommand renameAuthorCommand)
             {
                 renameAuthorCommand.MediaType = ValidateMediaType(renameAuthorCommand.MediaType);

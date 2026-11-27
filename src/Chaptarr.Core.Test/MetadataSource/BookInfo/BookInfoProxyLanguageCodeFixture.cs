@@ -7,6 +7,7 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
 
@@ -35,6 +36,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
 
             public HttpResponse Execute(HttpRequest request) => throw new NotImplementedException();
             public void DownloadFile(string url, string fileName, string userAgent = null) => throw new NotImplementedException();
+            public void DownloadFile(HttpRequest request, string fileName) => throw new System.NotImplementedException();
             public HttpResponse<T> Get<T>(HttpRequest request) where T : new() => throw new NotImplementedException();
             public HttpResponse Head(HttpRequest request) => throw new NotImplementedException();
             public HttpResponse Post(HttpRequest request) => throw new NotImplementedException();
@@ -66,7 +68,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         private static IMetadataServerHealthGate CreateHealthGate(IConfigService configService)
         {
             var logger = LogManager.GetCurrentClassLogger();
-            return new MetadataServerHealthGate(configService, new MetadataServerHealthService(logger), logger);
+            return new MetadataServerHealthGate(configService, new HttpServiceHealth(logger), logger);
         }
 
         [Test]

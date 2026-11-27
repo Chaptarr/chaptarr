@@ -4684,15 +4684,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             // tags, treat those numbers as explainable to avoid false rejections.
             if (allTags != null && allTags.Count > 0)
             {
-                var numericTagKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    "TRACKNUMBER", "DISCNUMBER", "TOTALTRACKS", "TOTALDISCS",
-                    "TRCK", "TPOS", "TRKN"
-                };
-
                 foreach (var kvp in allTags)
                 {
-                    if (!numericTagKeys.Contains(kvp.Key)) continue;
+                    if (!SeriesEvidenceNonSeriesNumericKeys.Contains(kvp.Key)) continue;
                     if (kvp.Value == null || kvp.Value.Count == 0) continue;
 
                     foreach (var v in kvp.Value.Where(x => !string.IsNullOrWhiteSpace(x)).Take(3))

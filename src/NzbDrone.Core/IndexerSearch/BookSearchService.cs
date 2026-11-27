@@ -43,21 +43,6 @@ namespace NzbDrone.Core.IndexerSearch
             _logger = logger;
         }
 
-        private static BookMediaType? ParseMediaType(string mediaType)
-        {
-            if (string.IsNullOrWhiteSpace(mediaType))
-            {
-                return null;
-            }
-
-            return mediaType.Trim().ToLowerInvariant() switch
-            {
-                "audiobook" => BookMediaType.Audiobook,
-                "ebook" => BookMediaType.Ebook,
-                _ => null
-            };
-        }
-
         private async Task<int> SearchForBooks(IEnumerable<Book> books, bool userInvokedSearch, HashSet<int> searchedBookIds = null, List<Book> authorCatalog = null,
             CancellationToken cancellationToken = default, Action<int> onBookCompleted = null, bool allowUnmonitored = false)
         {
@@ -243,7 +228,7 @@ namespace NzbDrone.Core.IndexerSearch
 
         public void Execute(MissingBookSearchCommand message)
         {
-            var requestedMediaType = ParseMediaType(message.MediaType);
+            var requestedMediaType = BookMediaTypeParser.ParseOptional(message.MediaType);
             var targets = _bookService.GetMissingBookSearchTargets(requestedMediaType, message.AuthorId);
 
             var totalBooks = 0;
@@ -279,7 +264,7 @@ namespace NzbDrone.Core.IndexerSearch
 
         public void Execute(CutoffUnmetBookSearchCommand message)
         {
-            var requestedMediaType = ParseMediaType(message.MediaType);
+            var requestedMediaType = BookMediaTypeParser.ParseOptional(message.MediaType);
             var qualitiesBelowCutoff = _bookCutoffService.GetQualitiesBelowCutoff();
             var targets = _bookCutoffService.GetCutoffUnmetSearchTargets(qualitiesBelowCutoff, requestedMediaType, message.AuthorId);
 

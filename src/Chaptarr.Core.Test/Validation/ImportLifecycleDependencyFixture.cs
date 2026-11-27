@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using Chaptarr.Core.Test.Common;
 using NUnit.Framework;
 
 namespace Chaptarr.Core.Test.Validation
@@ -15,10 +16,8 @@ namespace Chaptarr.Core.Test.Validation
         [Test]
         public void database_backed_refresh_constructors_use_a_working_author_repository()
         {
-            var root = new DirectoryInfo(TestContext.CurrentContext.TestDirectory);
-            while (root != null && !Directory.Exists(Path.Combine(root.FullName, "src", "Chaptarr.Core.Test"))) root = root.Parent;
-            Assert.That(root, Is.Not.Null, "Repository source is required for the dependency gate");
-            var source = Path.Combine(root.FullName, "src", "Chaptarr.Core.Test");
+            var root = RepositorySource.FindRoot();
+            var source = Path.Combine(root, "src", "Chaptarr.Core.Test");
             var failures = Directory.EnumerateFiles(source, "*.cs", SearchOption.AllDirectories)
                 .Where(path => Path.GetFileName(path) != nameof(ImportLifecycleDependencyFixture) + ".cs")
                 .Where(path => DatabaseWithThrowingRepository.IsMatch(File.ReadAllText(path)))

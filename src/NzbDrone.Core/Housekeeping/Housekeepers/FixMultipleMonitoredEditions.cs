@@ -6,24 +6,35 @@ using NLog;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Converters;
+using NzbDrone.Core.MediaCover;
+using NzbDrone.Core.MediaCover.Commands;
+using NzbDrone.Core.Messaging.Commands;
 
 namespace NzbDrone.Core.Housekeeping.Housekeepers
 {
     public class FixMultipleMonitoredEditions : IHousekeepingTask
     {
         private readonly IMainDatabase _database;
+        private readonly IManageCommandQueue _commandQueue;
+        private readonly IDeferredCoverService _deferredCoverService;
 
-        public FixMultipleMonitoredEditions(IMainDatabase database)
+        public FixMultipleMonitoredEditions(IMainDatabase database,
+            IDeferredCoverService deferredCoverService,
+            IManageCommandQueue commandQueue)
         {
             _database = database;
+            _commandQueue = commandQueue;
+            _deferredCoverService = deferredCoverService;
         }
 
         public void Clean()
         {
             using var connection = _database.OpenConnection();
             using var transaction = connection.BeginTransaction();
-            Repair(connection, transaction, _database.DatabaseType, LogManager.GetCurrentClassLogger(), duplicatesOnly: false);
+            var changed = new List<int>();
+            Repair(connection, transaction, _database.DatabaseType, LogManager.GetCurrentClassLogger(), duplicatesOnly: false, changedBookIds: changed);
             transaction.Commit();
+            DownloadBookMediaCommand.NotifyBookSelectionsChanged(changed, _commandQueue, _deferredCoverService, LogManager.GetCurrentClassLogger());
         }
 
         private sealed class RepairRow
@@ -39,7 +50,7 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
             public bool AnyEditionOk { get; set; }
         }
 
-        internal static int Repair(IDbConnection connection, IDbTransaction transaction, DatabaseType databaseType, Logger logger, bool duplicatesOnly, int? commandTimeout = null)
+        internal static int Repair(IDbConnection connection, IDbTransaction transaction, DatabaseType databaseType, Logger logger, bool duplicatesOnly, int? commandTimeout = null, ICollection<int> changedBookIds = null)
         {
             var afterId = 0;
             var repaired = 0;
@@ -83,6 +94,8 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
                 }
 
                 EditionRepository.PersistSelection(changed, connection, transaction, databaseType, commandTimeout);
+                if (changedBookIds != null)
+                    foreach (var bookId in changed.Select(edition => edition.BookId).Distinct()) changedBookIds.Add(bookId);
                 afterId = bookIds[^1];
             }
         }

@@ -287,7 +287,7 @@ SELECT
         JOIN ""BookFiles"" bf ON bf.""EditionId"" = ef.""Id""
         WHERE ef.""BookId"" = b.""Id""
     ) THEN true ELSE false END AS HasFiles,
-    b.""Images"" AS Images,
+    CASE WHEN me.""Id"" IS NULL THEN b.""Images"" ELSE me.""Images"" END AS Images,
     b.""BaseBookId"" AS BaseBookId,
     b.""HardcoverBookId"" AS HardcoverBookId,
     b.""GoodreadsBookId"" AS GoodreadsBookId,

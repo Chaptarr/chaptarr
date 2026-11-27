@@ -178,6 +178,7 @@ namespace Chaptarr.Core.Test.Notifications.AudioBookShelf
             }
 
             public void DownloadFile(string url, string fileName, string userAgent = null) => throw new NotImplementedException();
+            public void DownloadFile(HttpRequest request, string fileName) => throw new System.NotImplementedException();
             public HttpResponse Get(HttpRequest request) => throw new NotImplementedException();
             public HttpResponse<T> Get<T>(HttpRequest request) where T : new() => throw new NotImplementedException();
             public HttpResponse Head(HttpRequest request) => throw new NotImplementedException();

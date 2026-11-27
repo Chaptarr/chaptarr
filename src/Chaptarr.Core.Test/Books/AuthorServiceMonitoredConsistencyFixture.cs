@@ -32,6 +32,8 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubAuthorRepository : IAuthorRepository
         {
+            public bool UpdateSelectedPosterHash(int authorId, string hash, string expectedHash = null) => throw new NotImplementedException();
+
             public List<int> GetDueInitialFormatSync(DateTime now) => throw new NotSupportedException();
 
             private readonly Dictionary<int, Author> _authors;
@@ -59,7 +61,7 @@ namespace Chaptarr.Core.Test.Books
 
             // Unused members for this fixture
             public int Count() => throw new NotImplementedException();
-            public Author Find(int id) => throw new NotImplementedException();
+            public Author Find(int id) => Get(id);
             public Author Insert(Author model) => throw new NotImplementedException();
             public Author Upsert(Author model) => throw new NotImplementedException();
             public void SetFields(Author model, params Expression<Func<Author, object>>[] properties) => throw new NotImplementedException();
@@ -84,6 +86,14 @@ namespace Chaptarr.Core.Test.Books
             public Author SingleOrDefault() => throw new NotImplementedException();
             public PagingSpec<Author> GetPaged(PagingSpec<Author> pagingSpec) => throw new NotImplementedException();
 
+            public bool RemoveImageUrls(int authorId, IReadOnlyCollection<string> urls)
+            {
+                var current = Get(authorId);
+                var kept = current.Images.Where(image => !urls.Contains(image.Url)).ToList();
+                if (kept.Count == current.Images.Count) return false;
+                current.Images = kept;
+                return true;
+            }
             public List<Author> FindExisting(IEnumerable<int> ids) => throw new NotImplementedException();
             public bool AuthorPathExists(string path) => throw new NotImplementedException();
             public Author FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
@@ -230,6 +240,19 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void update_author_events_keep_the_latest_selected_photo()
+        {
+            var stored = new Author { Id = 1, Name = "Test Author", SelectedPosterHash = "new-choice" };
+            var stale = new Author { Id = 1, Name = "Test Author", SelectedPosterHash = "old-choice" };
+            var repository = new StubAuthorRepository(new Dictionary<int, Author> { { 1, stored } });
+            AuthorEditedEvent payload = null;
+            var events = new StubEventAggregator { OnPublish = e => { if (e is AuthorEditedEvent edit) payload = edit; } };
+            BuildService(repository, eventAggregator: events).UpdateAuthor(stale);
+            Assert.That(payload.Author.SelectedPosterHash, Is.EqualTo("new-choice"));
+            Assert.That(stale.SelectedPosterHash, Is.EqualTo("new-choice"), "Refresh completion reuses this object");
+        }
+
+        [Test]
         public void update_author_should_recompute_monitored_from_media_settings()
         {
             var stored = new Author
@@ -293,6 +316,29 @@ namespace Chaptarr.Core.Test.Books
             service.UpdateAuthor(update);
 
             Assert.That(repository.LastUpdatedAuthor.Monitored, Is.False);
+        }
+
+        [Test]
+        public void image_cleanup_invalidates_cache_without_publishing_a_heavy_cover_event()
+        {
+            var old = new Author { Id = 15, Name = "Before user edit", Monitored = true };
+            var rows = new Dictionary<int, Author> { [15] = old };
+            var repository = new StubAuthorRepository(rows);
+            var published = new List<IEvent>();
+            var service = BuildService(repository, eventAggregator: new StubEventAggregator { OnPublish = published.Add });
+            Assert.That(service.GetAuthor(15), Is.SameAs(old));
+            var current = new Author
+            {
+                Id = 15, Name = "After user edit", Monitored = false,
+                Images = new() { new(NzbDrone.Core.MediaCover.MediaCoverTypes.Poster, "https://images.example/rejected.jpg") }
+            };
+            rows[15] = current;
+            Assert.That(service.RemoveImageUrls(15, new[] { "https://images.example/rejected.jpg" }), Is.True);
+            Assert.That(service.GetAuthor(15), Is.SameAs(current));
+            Assert.That(current.Monitored, Is.False);
+            Assert.That(current.Images, Is.Empty);
+            Assert.That(repository.LastUpdatedAuthor, Is.Null, "Photo cleanup must never save the entire author");
+            Assert.That(published, Is.Empty, "The caller publishes once after its complete cover operation");
         }
 
         [Test]

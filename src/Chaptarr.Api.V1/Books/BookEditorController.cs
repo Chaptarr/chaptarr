@@ -58,8 +58,7 @@ namespace Chaptarr.Api.V1.Books
             _bookService.UpdateManyWithLifecycle(booksToUpdate);
 
             var resources = booksToUpdate.ToResource();
-            _coverMapper.ConvertBookCoversToLocalUrls(resources.Select(book =>
-                new KeyValuePair<int, List<MediaCover>>(book.Id, book.Images)));
+            _coverMapper.MapCoversToLocal(resources);
 
             return Accepted(resources);
         }

@@ -472,7 +472,7 @@ namespace NzbDrone.Core.Extras.Metadata
                         return false;
                     }
 
-                    _httpClient.DownloadFile(safeUrl, fullPath);
+                    MediaCoverHttpRequest.Download(_httpClient, _configService, safeUrl, fullPath, TimeSpan.FromSeconds(300));
                 }
                 else if (_diskProvider.FileExists(image.Url))
                 {
@@ -493,6 +493,10 @@ namespace NzbDrone.Core.Extras.Metadata
             catch (HttpException ex)
             {
                 _logger.Warn(ex, "Couldn't download image {0} for {1}. {2}", image.Url, author, ex.Message);
+            }
+            catch (UnsafeImageUrlException ex)
+            {
+                _logger.Warn("Skipping unsafe metadata image for {0}: {1}", author, ex.Message);
             }
             catch (WebException ex)
             {

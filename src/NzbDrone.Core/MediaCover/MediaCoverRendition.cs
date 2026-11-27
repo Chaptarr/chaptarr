@@ -24,8 +24,7 @@ namespace NzbDrone.Core.MediaCover
 
             // ImageSharp cannot decode these ISO-BMFF formats. Retain the originals;
             // the cover route serves AVIF; HEIC-family originals are retained but not served.
-            if (data.Length >= 16 && data.AsSpan(4, 4).SequenceEqual("ftyp"u8) &&
-                Encoding.ASCII.GetString(data, 8, 4) is "avif" or "avis" or "heic" or "heix" or "mif1" or "msf1")
+            if (IsIsoBmffImage(data))
             {
                 return;
             }
@@ -39,6 +38,136 @@ namespace NzbDrone.Core.MediaCover
                 throw new InvalidDataException($"Cover response is not a supported image (content type '{contentType}')", ex);
             }
         }
+
+        // The header check above accepts the first bytes of an image. Anything stored as a
+        // cover, or written into a user's files, must decode completely.
+        public static void ValidateCompleteImage(byte[] data, string contentType)
+        {
+            ValidateImageResponse(data, contentType);
+            if (!IsIsoBmffImage(data) && !IsCompleteImage(data))
+            {
+                throw new InvalidDataException($"Cover response is an incomplete or damaged image (content type '{contentType}')");
+            }
+        }
+
+        public static bool IsCompleteImage(byte[] data)
+        {
+            if (data == null || data.Length == 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                // ImageSharp fills in the missing part of a cut-off JPEG or WebP instead of
+                // failing, so each format must also reach its own structural end.
+                var complete = SixLabors.ImageSharp.Image.DetectFormat(data) switch
+                {
+                    SixLabors.ImageSharp.Formats.Jpeg.JpegFormat => JpegReachesEndOfImage(data),
+                    SixLabors.ImageSharp.Formats.Png.PngFormat => PngReachesEnd(data),
+                    SixLabors.ImageSharp.Formats.Webp.WebpFormat => RiffIsComplete(data),
+                    _ => true
+                };
+                if (!complete)
+                {
+                    return false;
+                }
+
+                using var image = SixLabors.ImageSharp.Image.Load(data);
+                return image.Width > 0 && image.Height > 0;
+            }
+            catch (Exception ex) when (ex is SixLabors.ImageSharp.UnknownImageFormatException or SixLabors.ImageSharp.InvalidImageContentException or
+                SixLabors.ImageSharp.ImageFormatException or NotSupportedException or EndOfStreamException)
+            {
+                return false;
+            }
+        }
+
+        // Walks the JPEG segments (skipping each by its length, so an EXIF thumbnail's own
+        // markers are not read) and the entropy-coded data after each scan header.
+        private static bool JpegReachesEndOfImage(byte[] data)
+        {
+            var i = 2;
+            while (i + 1 < data.Length)
+            {
+                if (data[i] != 0xFF)
+                {
+                    return false;
+                }
+
+                var marker = data[i + 1];
+                if (marker == 0xFF)
+                {
+                    i++;
+                    continue;
+                }
+
+                if (marker == 0xD9)
+                {
+                    return true;
+                }
+
+                if (marker == 0x01 || marker is >= 0xD0 and <= 0xD7)
+                {
+                    i += 2;
+                    continue;
+                }
+
+                if (i + 3 >= data.Length)
+                {
+                    return false;
+                }
+
+                var length = (data[i + 2] << 8) | data[i + 3];
+                if (length < 2)
+                {
+                    return false;
+                }
+
+                i += 2 + length;
+                if (marker == 0xDA)
+                {
+                    while (i + 1 < data.Length && !(data[i] == 0xFF && data[i + 1] != 0x00 && data[i + 1] is not (>= 0xD0 and <= 0xD7)))
+                    {
+                        i++;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        // PNG chunks are length, type, data and CRC; a complete file ends with IEND.
+        private static bool PngReachesEnd(byte[] data)
+        {
+            var i = 8;
+            while (i + 12 <= data.Length)
+            {
+                var length = ((long)data[i] << 24) | ((long)data[i + 1] << 16) | ((long)data[i + 2] << 8) | data[i + 3];
+                if (data[i + 4] == (byte)'I' && data[i + 5] == (byte)'E' && data[i + 6] == (byte)'N' && data[i + 7] == (byte)'D')
+                {
+                    return true;
+                }
+
+                // A chunk cannot be longer than what is left of the file.
+                if (length > data.Length - i - 12)
+                {
+                    return false;
+                }
+
+                i += 12 + (int)length;
+            }
+
+            return false;
+        }
+
+        // WebP is a RIFF file: bytes 4-7 give the size of everything after the first 8 bytes.
+        private static bool RiffIsComplete(byte[] data) =>
+            data.Length >= 12 && data.Length >= 8L + System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(4, 4));
+
+        private static bool IsIsoBmffImage(byte[] data) =>
+            data != null && data.Length >= 16 && data.AsSpan(4, 4).SequenceEqual("ftyp"u8) &&
+            Encoding.ASCII.GetString(data, 8, 4) is "avif" or "avis" or "heic" or "heix" or "mif1" or "msf1";
 
         private static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -88,6 +217,14 @@ namespace NzbDrone.Core.MediaCover
                 MediaCoverTypes.Fanart or MediaCoverTypes.Screenshot => FanartHeights,
                 _ => NoHeights
             };
+        }
+
+        public static bool IsCanonicalCoverFile(string path, MediaCoverTypes type)
+        {
+            var stem = Path.GetFileNameWithoutExtension(path);
+            return IsSupportedImagePath(path) &&
+                (stem.Equals(type.ToString(), StringComparison.OrdinalIgnoreCase) ||
+                 GetHeights(type).Any(height => stem.Equals($"{type}-{height}", StringComparison.OrdinalIgnoreCase)));
         }
 
         public static string ComputeStableAuthorImageHash(string url, MediaCoverTypes coverType)
@@ -144,12 +281,13 @@ namespace NzbDrone.Core.MediaCover
                 .ToList();
         }
 
+        public static bool HasImageUrl(MediaCover cover) => cover != null &&
+            cover.CoverType != MediaCoverTypes.Unknown && !string.IsNullOrWhiteSpace(cover.Url);
+
         public static IReadOnlyList<MediaCover> SelectCandidates(IEnumerable<MediaCover> covers)
         {
             return (covers ?? Enumerable.Empty<MediaCover>())
-                .Where(cover => cover != null &&
-                                cover.CoverType != MediaCoverTypes.Unknown &&
-                                !string.IsNullOrWhiteSpace(cover.Url) &&
+                .Where(cover => HasImageUrl(cover) &&
                                 !IsKnownPlaceholderImageUrl(cover.Url))
                 .ToList();
         }
@@ -202,7 +340,10 @@ namespace NzbDrone.Core.MediaCover
                 : Convert.ToHexString(SHA256.HashData(imageData)).ToLowerInvariant();
         }
 
-        public static string BuildAuthorCoverIdentity(string remoteUrl, string contentHash)
+        public static string ComputeContentSha256(System.IO.Stream imageData) =>
+            Convert.ToHexString(SHA256.HashData(imageData)).ToLowerInvariant();
+
+        public static string BuildAuthorCoverIdentity(string remoteUrl, string contentHash, string publishedVersion = null)
         {
             var normalizedHash = contentHash?.Trim().ToLowerInvariant();
             if (string.IsNullOrWhiteSpace(remoteUrl) || !IsVerifiedNonPlaceholderImageHash(normalizedHash))
@@ -210,11 +351,16 @@ namespace NzbDrone.Core.MediaCover
                 throw new ArgumentException("A verified non-placeholder image hash and remote URL are required.");
             }
 
-            return string.Join('\n', AuthorCoverIdentityVersion, normalizedHash, remoteUrl.Trim());
+            return string.Join('\n', AuthorCoverIdentityVersion, normalizedHash, remoteUrl.Trim()) +
+                (publishedVersion == null ? string.Empty : "\n" + publishedVersion);
         }
 
-        public static bool TryParseAuthorCoverIdentity(string value, out string remoteUrl, out string contentHash)
+        public static bool TryParseAuthorCoverIdentity(string value, out string remoteUrl, out string contentHash) =>
+            TryParseAuthorCoverIdentity(value, out remoteUrl, out contentHash, out _);
+
+        public static bool TryParseAuthorCoverIdentity(string value, out string remoteUrl, out string contentHash, out string publishedVersion)
         {
+            publishedVersion = null;
             remoteUrl = null;
             contentHash = null;
 
@@ -223,8 +369,8 @@ namespace NzbDrone.Core.MediaCover
                 return false;
             }
 
-            var lines = value.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n', 3);
-            if (lines.Length != 3 ||
+            var lines = value.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n', 4);
+            if ((lines.Length != 3 && lines.Length != 4) ||
                 !lines[0].Equals(AuthorCoverIdentityVersion, StringComparison.Ordinal) ||
                 string.IsNullOrWhiteSpace(lines[2]) ||
                 !IsVerifiedNonPlaceholderImageHash(lines[1]))
@@ -234,6 +380,7 @@ namespace NzbDrone.Core.MediaCover
 
             contentHash = lines[1].Trim().ToLowerInvariant();
             remoteUrl = lines[2].Trim();
+            publishedVersion = lines.Length == 4 && !string.IsNullOrWhiteSpace(lines[3]) ? lines[3].Trim() : contentHash;
             return true;
         }
 
@@ -274,27 +421,6 @@ namespace NzbDrone.Core.MediaCover
                    first.PathAndQuery.Equals(second.PathAndQuery, StringComparison.Ordinal);
         }
 
-        public static bool StoredRemoteUrlMatches(string identityPath, string remoteUrl, IDiskProvider diskProvider)
-        {
-            if (string.IsNullOrWhiteSpace(identityPath) ||
-                string.IsNullOrWhiteSpace(remoteUrl) ||
-                diskProvider == null ||
-                !diskProvider.FileExists(identityPath))
-            {
-                return false;
-            }
-
-            try
-            {
-                return TryParseAuthorCoverIdentity(diskProvider.ReadAllText(identityPath), out var storedUrl, out _) &&
-                       RemoteUrlsMatch(storedUrl, remoteUrl);
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
         public static bool HasAllGeneratedRenditions(
             Func<int?, string> getPath,
             IDiskProvider diskProvider,
@@ -313,19 +439,15 @@ namespace NzbDrone.Core.MediaCover
 
         public static IReadOnlyList<BookCoverSelection> SelectMonitoredBookCovers(Book book)
         {
-            var monitoredEdition = book?.Editions?
-                .Where(edition => edition != null && edition.Monitored)
-                .OrderBy(edition => edition.Id)
-                .FirstOrDefault();
+            return SelectMonitoredEditionCovers(BookEditionIdentity.GetMonitoredEdition(book));
+        }
 
-            if (monitoredEdition == null)
-            {
-                return Array.Empty<BookCoverSelection>();
-            }
-
-            return SelectCandidates(monitoredEdition.Images)
+        public static IReadOnlyList<BookCoverSelection> SelectMonitoredEditionCovers(Edition edition)
+        {
+            if (edition?.Monitored != true) return Array.Empty<BookCoverSelection>();
+            return SelectCandidates(edition.Images)
                 .Where(cover => cover.CoverType == MediaCoverTypes.Cover)
-                .Select(cover => new BookCoverSelection(monitoredEdition, cover))
+                .Select(cover => new BookCoverSelection(edition, cover))
                 .ToList();
         }
 

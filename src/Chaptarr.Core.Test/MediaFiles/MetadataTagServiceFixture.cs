@@ -42,8 +42,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void SyncTags(List<Edition> tracks) => throw new NotImplementedException();
             public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId) => throw new NotImplementedException();
             public List<RetagBookFilePreview> GetRetagPreviewsByBook(int bookId) => throw new NotImplementedException();
-            public void RetagFiles(RetagFilesCommand message) => throw new NotImplementedException();
-            public void RetagAuthor(RetagAuthorCommand message) => throw new NotImplementedException();
+            public TagBatch RetagFiles(RetagFilesCommand message, List<BookFile> files, TagBatch batch) => throw new NotImplementedException();
+            public TagBatch RetagAuthor(RetagAuthorCommand message, IReadOnlyList<NzbDrone.Core.Books.Author> authors, TagBatch batch) => throw new NotImplementedException();
         }
 
         private sealed class ResultAudioTagService : IAudioTagService
@@ -81,8 +81,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void SyncTags(List<Edition> tracks) => throw new NotImplementedException();
             public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId) => throw new NotImplementedException();
             public List<RetagBookFilePreview> GetRetagPreviewsByBook(int bookId) => throw new NotImplementedException();
-            public void RetagFiles(RetagFilesCommand message) => throw new NotImplementedException();
-            public void RetagAuthor(RetagAuthorCommand message) => throw new NotImplementedException();
+            public TagBatch RetagFiles(RetagFilesCommand message, List<BookFile> files, TagBatch batch) => throw new NotImplementedException();
+            public TagBatch RetagAuthor(RetagAuthorCommand message, IReadOnlyList<NzbDrone.Core.Books.Author> authors, TagBatch batch) => throw new NotImplementedException();
         }
 
         private sealed class CountingEBookTagService : IEBookTagService
@@ -102,8 +102,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void SyncTags(List<Edition> books) => throw new NotImplementedException();
             public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId) => throw new NotImplementedException();
             public List<RetagBookFilePreview> GetRetagPreviewsByBook(int bookId) => throw new NotImplementedException();
-            public void RetagFiles(RetagFilesCommand message) => throw new NotImplementedException();
-            public void RetagAuthor(RetagAuthorCommand message) => throw new NotImplementedException();
+            public TagBatch RetagFiles(RetagFilesCommand message, List<BookFile> files, TagBatch batch) => throw new NotImplementedException();
+            public TagBatch RetagAuthor(RetagAuthorCommand message, IReadOnlyList<NzbDrone.Core.Books.Author> authors, TagBatch batch) => throw new NotImplementedException();
         }
 
         private sealed class RecordingFileTagCacheRepository : IFileTagCacheRepository
@@ -188,7 +188,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var fileSystem = new FileSystem();
                 var ebookTagService = new CountingEBookTagService();
                 var audioTagService = new CountingAudioTagService();
-                var sut = new MetadataTagService(audioTagService, ebookTagService, LogManager.GetLogger("test"));
+                var sut = TagServiceTestFactory.Metadata(audioTagService, ebookTagService, LogManager.GetLogger("test"), null);
 
                 var first = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
                 var second = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
@@ -223,7 +223,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var fileSystem = new FileSystem();
                 var ebookTagService = new CountingEBookTagService();
                 var audioTagService = new CountingAudioTagService();
-                var sut = new MetadataTagService(audioTagService, ebookTagService, LogManager.GetLogger("test"));
+                var sut = TagServiceTestFactory.Metadata(audioTagService, ebookTagService, LogManager.GetLogger("test"), null);
 
                 _ = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
                 _ = sut.ReadAllTags(fileSystem.FileInfo.FromFileName(path));
@@ -256,7 +256,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var fileSystem = new FileSystem();
                 var ebookTagService = new CountingEBookTagService();
                 var audioTagService = new CountingAudioTagService();
-                var sut = new MetadataTagService(audioTagService, ebookTagService, LogManager.GetLogger("test"));
+                var sut = TagServiceTestFactory.Metadata(audioTagService, ebookTagService, LogManager.GetLogger("test"), null);
 
                 _ = sut.ReadAllTags(fileSystem.FileInfo.FromFileName(path));
                 _ = sut.ReadAllTags(fileSystem.FileInfo.FromFileName(path));
@@ -289,7 +289,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var fileSystem = new FileSystem();
                 var ebookTagService = new CountingEBookTagService();
                 var audioTagService = new CountingAudioTagService();
-                var sut = new MetadataTagService(audioTagService, ebookTagService, LogManager.GetLogger("test"));
+                var sut = TagServiceTestFactory.Metadata(audioTagService, ebookTagService, LogManager.GetLogger("test"), null);
 
                 _ = sut.ReadAllTags(fileSystem.FileInfo.FromFileName(path));
                 _ = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
@@ -322,7 +322,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var fileSystem = new FileSystem();
                 var ebookTagService = new CountingEBookTagService();
                 var audioTagService = new CountingAudioTagService();
-                var sut = new MetadataTagService(audioTagService, ebookTagService, LogManager.GetLogger("test"));
+                var sut = TagServiceTestFactory.Metadata(audioTagService, ebookTagService, LogManager.GetLogger("test"), null);
 
                 _ = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
                 _ = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
@@ -356,19 +356,19 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var fileTagCache = new RecordingFileTagCacheRepository();
 
                 var firstEbookTagService = new CountingEBookTagService();
-                var first = new MetadataTagService(
+                var first = TagServiceTestFactory.Metadata(
                     new CountingAudioTagService(),
                     firstEbookTagService,
-                    LogManager.GetLogger("test"),
+                    LogManager.GetLogger("test"), null,
                     fileTagCache);
 
                 var firstResult = first.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
 
                 var secondEbookTagService = new CountingEBookTagService();
-                var second = new MetadataTagService(
+                var second = TagServiceTestFactory.Metadata(
                     new CountingAudioTagService(),
                     secondEbookTagService,
-                    LogManager.GetLogger("test"),
+                    LogManager.GetLogger("test"), null,
                     fileTagCache);
 
                 var secondResult = second.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
@@ -406,10 +406,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var fileTagCache = new RecordingFileTagCacheRepository();
 
                 var firstEbookTagService = new CountingEBookTagService();
-                var first = new MetadataTagService(
+                var first = TagServiceTestFactory.Metadata(
                     new CountingAudioTagService(),
                     firstEbookTagService,
-                    LogManager.GetLogger("test"),
+                    LogManager.GetLogger("test"), null,
                     fileTagCache);
 
                 _ = first.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
@@ -418,10 +418,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                 File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(1));
 
                 var secondEbookTagService = new CountingEBookTagService();
-                var second = new MetadataTagService(
+                var second = TagServiceTestFactory.Metadata(
                     new CountingAudioTagService(),
                     secondEbookTagService,
-                    LogManager.GetLogger("test"),
+                    LogManager.GetLogger("test"), null,
                     fileTagCache);
 
                 _ = second.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
@@ -457,19 +457,19 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var fileTagCache = new RecordingFileTagCacheRepository();
 
                 var firstAudioTagService = new CountingAudioTagService();
-                var first = new MetadataTagService(
+                var first = TagServiceTestFactory.Metadata(
                     firstAudioTagService,
                     new CountingEBookTagService(),
-                    LogManager.GetLogger("test"),
+                    LogManager.GetLogger("test"), null,
                     fileTagCache);
 
                 var firstResult = first.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
 
                 var secondAudioTagService = new CountingAudioTagService();
-                var second = new MetadataTagService(
+                var second = TagServiceTestFactory.Metadata(
                     secondAudioTagService,
                     new CountingEBookTagService(),
-                    LogManager.GetLogger("test"),
+                    LogManager.GetLogger("test"), null,
                     fileTagCache);
 
                 var secondResult = second.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
@@ -507,19 +507,19 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var fileTagCache = new RecordingFileTagCacheRepository();
 
                 var firstAudioTagService = new CountingAudioTagService();
-                var first = new MetadataTagService(
+                var first = TagServiceTestFactory.Metadata(
                     firstAudioTagService,
                     new CountingEBookTagService(),
-                    LogManager.GetLogger("test"),
+                    LogManager.GetLogger("test"), null,
                     fileTagCache);
 
                 _ = first.ReadAllTags(fileSystem.FileInfo.FromFileName(path));
 
                 var secondAudioTagService = new CountingAudioTagService();
-                var second = new MetadataTagService(
+                var second = TagServiceTestFactory.Metadata(
                     secondAudioTagService,
                     new CountingEBookTagService(),
-                    LogManager.GetLogger("test"),
+                    LogManager.GetLogger("test"), null,
                     fileTagCache);
 
                 var secondResult = second.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
@@ -560,7 +560,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 {
                     ["comment"] = new List<string> { "Promotional description" }
                 }, 10);
-                var noisyService = new MetadataTagService(noisyAudio, new CountingEBookTagService(), LogManager.GetLogger("test"), noisyCache);
+                var noisyService = TagServiceTestFactory.Metadata(noisyAudio, new CountingEBookTagService(), LogManager.GetLogger("test"), null, noisyCache);
 
                 _ = noisyService.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(noisyPath));
 
@@ -568,7 +568,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 var taglessCache = new RecordingFileTagCacheRepository();
                 var taglessAudio = new ResultAudioTagService(new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase), 10);
-                var taglessService = new MetadataTagService(taglessAudio, new CountingEBookTagService(), LogManager.GetLogger("test"), taglessCache);
+                var taglessService = TagServiceTestFactory.Metadata(taglessAudio, new CountingEBookTagService(), LogManager.GetLogger("test"), null, taglessCache);
 
                 _ = taglessService.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(taglessPath));
 
@@ -594,7 +594,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var audio = new ResultAudioTagService(
                     null,
                     error: new TagExtractionException(path, new IOException("transient read failure")));
-                var service = new MetadataTagService(audio, new CountingEBookTagService(), LogManager.GetLogger("test"), cache);
+                var service = TagServiceTestFactory.Metadata(audio, new CountingEBookTagService(), LogManager.GetLogger("test"), null, cache);
 
                 Assert.Throws<TagExtractionException>(() =>
                     service.ReadAllTagsAndDuration(new FileSystem().FileInfo.FromFileName(path)));
@@ -626,7 +626,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 {
                     ["title"] = new List<string> { "Recovered Title" }
                 }, 20);
-                var service = new MetadataTagService(audio, new CountingEBookTagService(), LogManager.GetLogger("test"), cache);
+                var service = TagServiceTestFactory.Metadata(audio, new CountingEBookTagService(), LogManager.GetLogger("test"), null, cache);
 
                 var result = service.ReadAllTagsAndDuration(file);
 

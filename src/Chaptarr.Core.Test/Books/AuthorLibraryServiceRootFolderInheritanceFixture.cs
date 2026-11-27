@@ -545,7 +545,7 @@ namespace Chaptarr.Core.Test.Books
                     Proxy<NzbDrone.Core.ImportLists.Exclusions.IImportListExclusionService>((method, args) =>
                         method.Name == "FindByForeignId" ? new List<NzbDrone.Core.ImportLists.Exclusions.ImportListExclusion>() : throw new AssertionException(method.Name)),
                     null, null, null, null, null, editions, new EditionSelector(logger),
-                    new EditionMetadataProfileFilter(new TestTermMatcherService()), new TestMetadataProfileService(), logger, queue);
+                    new EditionMetadataProfileFilter(new TestTermMatcherService()), new TestMetadataProfileService(), logger, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue);
                 var bookController = new BookController(authors, books, add, editions, new EditionSelector(logger),
                     null, null, null, null, null, null, queue, events, roots,
                     new QualityProfileExistsValidator(new TestQualityProfileService()),
@@ -870,7 +870,7 @@ namespace Chaptarr.Core.Test.Books
                     return method.Invoke(library, args);
                 });
                 new ProcessPendingImportsCommandHandler(pending, workerLibrary, books,
-                    Proxy<IProvideBookInfo>((method, args) => throw new AssertionException("Author-wide modal must not request work rescue")),
+                    Proxy<IProvideBookInfo>((method, args) => throw new AssertionException("Author-wide modal must not request work rescue")), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     queue, events, logger).Execute(new ProcessPendingImportsCommand());
                 Assert.That(repository.Find(id), Is.Null, "The actual worker must complete the stored author request");
                 var author = authorRepository.All().Single();

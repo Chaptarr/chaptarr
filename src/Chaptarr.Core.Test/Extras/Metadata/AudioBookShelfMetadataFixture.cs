@@ -38,6 +38,25 @@ namespace Chaptarr.Core.Test.Extras.Metadata
         }
 
         [Test]
+        public void sidecar_identifiers_use_the_cleaned_matched_edition_only()
+        {
+            var subject = CreateSubject(new List<RootFolder> { BuildRoot(audiobookMetadata: true) });
+            var file = BuildBookFile("audiobook", "/library/Matt Dinniman/A Parade of Horribles/book.m4b");
+            file.Edition.AudibleASIN = "System.Collections.Generic.List`1[System.String]";
+            file.Edition.Asin = "asin:b002v5ecmk";
+            file.Edition.Isbn13 = "System.Collections.Generic.List`1[System.String]";
+            file.Edition.Isbn10 = "isbn:0593135202";
+            var metadata = JObject.Parse(subject.BookMetadata(BuildAuthor(), file).Contents);
+            Assert.That((string)metadata["asin"], Is.EqualTo("B002V5ECMK"));
+            Assert.That((string)metadata["isbn"], Is.EqualTo("0593135202"));
+            file.Edition.Asin = null;
+            file.Edition.Isbn10 = null;
+            metadata = JObject.Parse(subject.BookMetadata(BuildAuthor(), file).Contents);
+            Assert.That((string)metadata["asin"], Is.Null.Or.Empty);
+            Assert.That((string)metadata["isbn"], Is.Null.Or.Empty);
+        }
+
+        [Test]
         public void should_not_write_sidecars_by_default()
         {
             var subject = CreateSubject(new List<RootFolder>
@@ -76,7 +95,7 @@ namespace Chaptarr.Core.Test.Extras.Metadata
                 Assert.That(result.RelativePath, Is.EqualTo("A Parade of Horribles/metadata.json"));
                 Assert.That((string)json["title"], Is.EqualTo("A Parade of Horribles"));
                 Assert.That(json["authors"].Select(a => (string)a), Is.EqualTo(new[] { "Matt Dinniman" }));
-                Assert.That((string)json["asin"], Is.EqualTo("B0TESTASIN"));
+                Assert.That((string)json["asin"], Is.Null, "The book-only ASIN cannot identify this matched edition");
                 Assert.That((string)json["language"], Is.EqualTo("eng"));
                 Assert.That(json["series"].Select(s => (string)s), Is.EqualTo(new[] { "Dungeon Crawler Carl #8" }));
                 Assert.That((string)json["publishedDate"], Is.EqualTo("2026-01-02"));

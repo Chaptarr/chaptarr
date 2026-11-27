@@ -1,98 +1,81 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using NLog;
 using NzbDrone.Common.Disk;
-using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
-using NzbDrone.Core.Configuration;
 
 namespace NzbDrone.Core.MediaFiles
 {
     public interface IFileMutationSafetyService
     {
-        void PrepareImportDestination(BookFile bookFile, TransferMode actualTransferMode);
-        void EnsureMutableFile(string path);
+        bool EnsureMutableFile(string path);
+    }
+
+    public sealed class FileSymlinkMutationException : IOException
+    {
+        public FileSymlinkMutationException(string path)
+            : base($"Skipping tag writes through file symlink '{path}'.")
+        {
+        }
     }
 
     public class FileMutationSafetyService : IFileMutationSafetyService
     {
         private readonly IDiskProvider _diskProvider;
-        private readonly IConfigService _configService;
+        private readonly IDiskTransferService _diskTransferService;
+        private readonly IMediaFileAttributeService _mediaFileAttributeService;
         private readonly Logger _logger;
 
-        public FileMutationSafetyService(IDiskProvider diskProvider, IConfigService configService, Logger logger)
+        public FileMutationSafetyService(IDiskProvider diskProvider, IDiskTransferService diskTransferService, IMediaFileAttributeService mediaFileAttributeService, Logger logger)
         {
             _diskProvider = diskProvider;
-            _configService = configService;
+            _diskTransferService = diskTransferService;
+            _mediaFileAttributeService = mediaFileAttributeService;
             _logger = logger;
         }
 
-        public void PrepareImportDestination(BookFile bookFile, TransferMode actualTransferMode)
-        {
-            if (actualTransferMode != TransferMode.HardLink || !ImportCanMutate(bookFile))
-            {
-                return;
-            }
+        internal static bool IsFileSymlink(string path) => new FileInfo(path).LinkTarget != null;
 
-            BreakHardLink(bookFile.Path, knownHardLink: true);
-        }
-
-        public void EnsureMutableFile(string path)
-        {
-            BreakHardLink(path, knownHardLink: false);
-        }
-
-        private bool ImportCanMutate(BookFile bookFile)
-        {
-            if (_configService.FileDate != FileDateType.None ||
-                OsInfo.IsWindows ||
-                _configService.SetPermissionsLinux)
-            {
-                return true;
-            }
-
-            var extension = Path.GetExtension(bookFile?.Path);
-            if (MediaFileExtensions.CanWriteAudioTags(extension))
-            {
-                return _configService.WriteAudioTags != WriteAudioTagsType.No;
-            }
-
-            // Ebook writes are delegated to Calibre. Calibre-backed files have a durable CalibreId;
-            // non-Calibre ebook files are not mutated by MetadataTagService.
-            return bookFile?.CalibreId > 0;
-        }
-
-        private void BreakHardLink(string path, bool knownHardLink)
+        public bool EnsureMutableFile(string path)
         {
             if (path.IsNullOrWhiteSpace() || !_diskProvider.FileExists(path))
             {
-                return;
+                return false;
             }
 
-            if (!knownHardLink)
+            // A write through a file symlink modifies its target, even when the target
+            // has one hardlink. A copy can also preserve the symlink.
+            if (IsFileSymlink(path))
             {
-                var linkCount = _diskProvider.GetFileLinkCount(path);
-                if (!linkCount.HasValue)
-                {
-                    throw new IOException($"Cannot safely mutate '{path}' because its hardlink count could not be determined.");
-                }
-
-                if (linkCount.Value <= 1)
-                {
-                    return;
-                }
+                throw new FileSymlinkMutationException(path);
             }
 
-            var temporaryPath = $"{path}.chaptarr-mutable~{Guid.NewGuid():N}";
+            var linkCount = _diskProvider.GetFileLinkCount(path);
+            if (!linkCount.HasValue)
+            {
+                throw new IOException($"Cannot safely mutate '{path}' because its hardlink count could not be determined.");
+            }
+
+            if (linkCount.Value <= 1)
+            {
+                return false;
+            }
+
+            var temporaryPath = Path.Combine(Path.GetDirectoryName(path), $".{Guid.NewGuid():N}.chaptarr-tmp");
+            var timer = Stopwatch.StartNew();
+            var size = _diskProvider.GetFileSize(path);
             try
             {
-                _logger.Info("Breaking destination hardlink before mutating file metadata: {0}", path);
-                _diskProvider.CopyFile(path, temporaryPath, overwrite: false);
+                _diskTransferService.TransferFile(path, temporaryPath, TransferMode.Copy);
 
                 // The temporary copy is in the same directory. Replacing the directory entry keeps
                 // the original hardlinked inode intact for the download client while Chaptarr gets
                 // an independent inode to mutate.
                 File.Move(temporaryPath, path, overwrite: true);
+                _mediaFileAttributeService.SetFilePermissions(path);
+                _logger.Info("Separated hardlinked file {0}: {1} bytes in {2} ms", path, size, timer.ElapsedMilliseconds);
+                return true;
             }
             catch
             {

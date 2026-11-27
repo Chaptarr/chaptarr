@@ -80,7 +80,7 @@ namespace Chaptarr.Core.Test.Books
                 if (source == null && !h.WorkReady) throw new BookNotFoundException(work);
                 return Tuple.Create(h.Author.HardcoverAuthorId, new Book { HardcoverBookId = work, MediaType = media, Author = h.Author }, new List<Author> { h.Author });
             });
-            new ProcessPendingImportsCommandHandler(pending ?? h.Pending, library, books ?? h.BookService, info, queue ?? h.Queue,
+            new ProcessPendingImportsCommandHandler(pending ?? h.Pending, library, books ?? h.BookService, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue ?? h.Queue,
                 h.EventAggregator, LogManager.GetCurrentClassLogger(), h.Aliases).Execute(new ProcessPendingImportsCommand());
         }
 
@@ -709,7 +709,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     return method.Invoke(stored.Queue, args);
                 });
                 var workInfo = Proxy<IProvideBookInfo>((_, _) => throw new AssertionException("The existing requested work should resolve from the native catalog"));
-                var handler = new ProcessPendingImportsCommandHandler(stored.Pending, library, stored.Books, workInfo, queue, stored.Events, stored.Logger, stored.Aliases);
+                var handler = new ProcessPendingImportsCommandHandler(stored.Pending, library, stored.Books, workInfo, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue, stored.Events, stored.Logger, stored.Aliases);
                 handler.Execute(new ProcessPendingImportsCommand());
                 Assert.That(stored.Requests.Get(item.Id).IsActive(), Is.True);
                 var acknowledged = stored.Requests.Get(item.Id);

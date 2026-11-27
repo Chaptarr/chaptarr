@@ -149,7 +149,7 @@ namespace Chaptarr.Core.Test.PendingImport
                 repository.SetFields(active, row => row.NextAttemptAt);
                 retained.AddRange(new[] { freshSuccess.Id, undatedSuccess.Id, active.Id });
                 commands.Reset();
-                new ProcessPendingImportsCommandHandler(service, null, null, null, null, null, LogManager.GetCurrentClassLogger())
+                new ProcessPendingImportsCommandHandler(service, null, null, null, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  null, null, LogManager.GetCurrentClassLogger())
                     .Execute(new ProcessPendingImportsCommand());
                 Assert.That((commands.Readers, commands.Scalars, commands.Writes), Is.EqualTo((1, 0, 1)));
                 TestContext.Progress.WriteLine($"PENDING_RETENTION_BACKGROUND {(postgres ? "PG" : "SQLite")}: refused {count}, partial 1, cancelled 1, due-reader1/scalar0/delete1");
@@ -355,7 +355,7 @@ namespace Chaptarr.Core.Test.PendingImport
                     ? new List<Book>() : throw new NotImplementedException(method.Name));
                 var eventsProxy = InterfaceProxy.Proxy<IEventAggregator>((method, args) => { events.Add(args[0]); return null; });
                 var handler = new ProcessPendingImportsCommandHandler(service, library, books,
-                    InterfaceProxy.Proxy<IProvideBookInfo>((method, args) => throw new NotImplementedException(method.Name)),
+                    InterfaceProxy.Proxy<IProvideBookInfo>((method, args) => throw new NotImplementedException(method.Name)), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     InterfaceProxy.Proxy<IManageCommandQueue>((method, args) => throw new NotImplementedException(method.Name)), eventsProxy, LogManager.GetCurrentClassLogger());
                 handler.Execute(new ProcessPendingImportsCommand());
                 Assert.That(repository.Find(item.Id), Is.Null);

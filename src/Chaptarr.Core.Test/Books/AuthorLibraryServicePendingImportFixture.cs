@@ -251,7 +251,7 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(saved.RequestedBy, Is.EqualTo("UserInterface"));
                 Assert.That(saved.AudiobookRequestedBy, Is.EqualTo("UserInterface"));
                 Assert.That(saved.EbookRequestedBy, Is.EqualTo("ImportList:Favorites"));
-                var handler = new ProcessPendingImportsCommandHandler(pending, null, null, null, null, events, LogManager.GetCurrentClassLogger());
+                var handler = new ProcessPendingImportsCommandHandler(pending, null, null, null, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  null, events, LogManager.GetCurrentClassLogger());
                 var config = (MonitoringConfig)typeof(ProcessPendingImportsCommandHandler).GetMethod("BuildMonitoringConfig", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(handler, new object[] { saved });
                 config.QueueIfUnavailable = true;
                 var exclusions = new StubImportListExclusionService();

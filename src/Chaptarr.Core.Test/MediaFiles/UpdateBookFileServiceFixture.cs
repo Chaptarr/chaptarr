@@ -81,18 +81,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
-        private class FileMutationSafetyProxy : DispatchProxy
-        {
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                if (targetMethod?.Name == nameof(IFileMutationSafetyService.EnsureMutableFile))
-                {
-                    return null;
-                }
 
-                throw new NotImplementedException($"Unexpected call to IFileMutationSafetyService.{targetMethod?.Name}");
-            }
-        }
 
         private List<string> _callLog;
         private DiskProviderProxy _diskProxy;
@@ -129,7 +118,6 @@ namespace Chaptarr.Core.Test.MediaFiles
                 _configService,
                 _bookService,
                 _watcher,
-                DispatchProxy.Create<IFileMutationSafetyService, FileMutationSafetyProxy>(),
                 LogManager.GetCurrentClassLogger());
         }
 
@@ -146,7 +134,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(_callLog, Is.EqualTo(new[] { "announce", "write" }));
             Assert.That(_watcherProxy.AnnouncedPaths, Is.EqualTo(new[] { bookFile.Path }));
             Assert.That(_diskProxy.SetPath, Is.EqualTo(bookFile.Path));
-            Assert.That(_diskProxy.SetDate, Is.EqualTo(book.ReleaseDate.Value));
+            Assert.That(_diskProxy.SetDate.Value.ToUniversalTime(), Is.EqualTo(book.ReleaseDate.Value));
         }
 
         [Test]
@@ -179,7 +167,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             BuildService().ChangeFileDateForFile(bookFile, new Author(), book);
 
             Assert.That(_callLog, Is.EqualTo(new[] { "announce", "write" }));
-            Assert.That(_diskProxy.SetDate, Is.EqualTo(Epoch));
+            Assert.That(_diskProxy.SetDate.Value.ToUniversalTime(), Is.EqualTo(Epoch));
         }
 
         [Test]
@@ -197,6 +185,25 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             BuildService().ChangeFileDateForFile(bookFile, new Author(), book);
 
+            Assert.That(_callLog, Is.Empty);
+        }
+
+        [TestCase(DateTimeKind.Local)]
+        [TestCase(DateTimeKind.Unspecified)]
+        [TestCase(DateTimeKind.Utc)]
+        public void should_preserve_subseconds_and_converge_on_the_utc_instant(DateTimeKind kind)
+        {
+            var release = new DateTime(2020, 5, 1, 0, 0, 0, kind);
+            var file = new BookFile { Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "date.m4b") };
+            var book = new Book { ReleaseDate = release };
+            _diskProxy.LastWrite = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddTicks(1234567);
+            var service = BuildService();
+            service.ChangeFileDateForFile(file, new Author(), book);
+            var written = _diskProxy.SetDate.Value.ToUniversalTime();
+            Assert.That(written, Is.EqualTo((kind == DateTimeKind.Local ? release.ToUniversalTime() : DateTime.SpecifyKind(release, DateTimeKind.Utc)).AddTicks(1234567)));
+            _diskProxy.LastWrite = written;
+            _callLog.Clear();
+            service.ChangeFileDateForFile(file, new Author(), book);
             Assert.That(_callLog, Is.Empty);
         }
 

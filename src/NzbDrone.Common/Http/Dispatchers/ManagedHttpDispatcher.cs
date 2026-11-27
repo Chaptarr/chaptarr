@@ -17,6 +17,7 @@ namespace NzbDrone.Common.Http.Dispatchers
         private const string NO_PROXY_KEY = "no-proxy";
         private const string TransmissionSessionHeader = "X-Transmission-Session-Id";
 
+        private readonly Logger _logger;
         private readonly IHttpProxySettingsProvider _proxySettingsProvider;
         private readonly ICreateManagedSocketsHttpHandler _socketsHttpHandlerFactory;
         private readonly IUserAgentBuilder _userAgentBuilder;
@@ -30,6 +31,7 @@ namespace NzbDrone.Common.Http.Dispatchers
             ICacheManager cacheManager,
             Logger logger)
         {
+            _logger = logger;
             _proxySettingsProvider = proxySettingsProvider;
             _socketsHttpHandlerFactory = socketsHttpHandlerFactory;
             _userAgentBuilder = userAgentBuilder;
@@ -74,7 +76,7 @@ namespace NzbDrone.Common.Http.Dispatchers
                 }
             }
 
-            using var cts = new CancellationTokenSource();
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(request.CancellationToken);
             if (request.RequestTimeout != TimeSpan.Zero)
             {
                 cts.CancelAfter(request.RequestTimeout);
@@ -95,7 +97,12 @@ namespace NzbDrone.Common.Http.Dispatchers
                 AddRequestHeaders(requestMessage, request.Headers);
             }
 
-            var httpClient = GetClient(request.Url);
+            var httpClient = request.TargetPolicy == null ? GetClient(request.Url) : GetClient(request);
+            var dns = request.TargetPolicy == null ? null : new HttpRequestTargetPolicy.DnsResolution();
+            if (dns != null)
+            {
+                requestMessage.Options.Set(HttpRequestTargetPolicy.DnsResolutionKey, dns);
+            }
 
             try
             {
@@ -125,6 +132,10 @@ namespace NzbDrone.Common.Http.Dispatchers
                         data = await responseMessage.Content.ReadAsByteArrayAsync(cts.Token);
                     }
                 }
+                catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     throw new WebException("Failed to read complete http response", ex, WebExceptionStatus.ReceiveFailure, null);
@@ -135,10 +146,30 @@ namespace NzbDrone.Common.Http.Dispatchers
 
                 return new HttpResponse(request, new HttpHeader(headers), data, responseMessage.StatusCode, responseMessage.Version);
             }
+            catch (Exception ex) when (dns?.Host is string host)
+            {
+                throw dns.Failure(host, ex, _logger);
+            }
+            catch (HttpRequestException ex) when (request.TargetPolicy != null && ex.InnerException is WebException)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+                throw;
+            }
+            catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (OperationCanceledException ex) when (cts.IsCancellationRequested)
             {
                 throw new WebException("Http request timed out", ex, WebExceptionStatus.Timeout, null);
             }
+        }
+
+        private System.Net.Http.HttpClient GetClient(HttpRequest request)
+        {
+            var proxySettings = _proxySettingsProvider.GetProxySettings(request.Url);
+            var key = (proxySettings?.Key ?? NO_PROXY_KEY) + "|target-policy:" + request.TargetPolicy.Key;
+            return _httpClientCache.Get(key, () => CreateHttpClient(proxySettings, request.TargetPolicy));
         }
 
         protected virtual System.Net.Http.HttpClient GetClient(HttpUri uri)
@@ -151,12 +182,18 @@ namespace NzbDrone.Common.Http.Dispatchers
 
         protected virtual System.Net.Http.HttpClient CreateHttpClient(HttpProxySettings proxySettings)
         {
+            return CreateHttpClient(proxySettings, null);
+        }
+
+        private System.Net.Http.HttpClient CreateHttpClient(HttpProxySettings proxySettings, HttpRequestTargetPolicy policy)
+        {
             var handler = _socketsHttpHandlerFactory.CreateHandler(proxySettings,
                 allowAutoRedirect: false,
                 useCookies: false,
                 credentials: GetCredentialCache(),
                 preAuthenticate: true,
-                maxConnectionsPerServer: 12);
+                maxConnectionsPerServer: 12,
+                targetPolicy: policy);
 
             var client = new System.Net.Http.HttpClient(handler)
             {

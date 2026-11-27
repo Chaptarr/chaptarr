@@ -7,7 +7,6 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
-using NzbDrone.Core.MetadataSource.Goodreads;
 
 namespace NzbDrone.Core.MediaCover
 {
@@ -23,9 +22,7 @@ namespace NzbDrone.Core.MediaCover
     public class MediaCoverProxy : IMediaCoverProxy
     {
         private const int MaxCacheEntries = 20000;
-        private const int MaxImageRedirects = 5;
         private const int MaxImageBytes = 20 * 1024 * 1024;
-        private static readonly TimeSpan ImageRequestTimeout = TimeSpan.FromSeconds(30);
 
         private readonly IHttpClient _httpClient;
         private readonly IConfigFileProvider _configFileProvider;
@@ -109,71 +106,20 @@ namespace NzbDrone.Core.MediaCover
 
         public byte[] GetImageFromUrl(string url)
         {
-            if (!TryGetSafeImageUrl(url, out var currentUrl, out var reason))
+            using var responseStream = new SizeLimitedMemoryStream(MaxImageBytes);
+            var response = MediaCoverHttpRequest.Get(_httpClient, _configService, url,
+                responseStream: responseStream, logHttpError: false);
+            var imageData = responseStream.Length > 0
+                ? responseStream.ToArray()
+                : response.ResponseData ?? Array.Empty<byte>();
+
+            MediaCoverRendition.ValidateImageResponse(imageData, response.Headers?.ContentType);
+            if (MediaCoverRendition.InspectDownloadedImage(url, imageData, out var contentHash))
             {
-                throw new WebException($"Blocked unsafe image URL '{url}': {reason}", WebExceptionStatus.ProtocolError);
+                throw new PlaceholderImageException(url, contentHash);
             }
 
-            // Never leak app identity via default User-Agent when proxying remote images.
-            // Goodreads in particular is sensitive to non-browser headers.
-            var userAgent = ExternalImageRequestHeaders.IsGoodreadsUrl(currentUrl)
-                ? GoodreadsAndroidUserAgent.GetRandom()
-                : ExternalImageRequestHeaders.GetRandomUserAgent();
-
-            for (var i = 0; i <= MaxImageRedirects; i++)
-            {
-                using var responseStream = new SizeLimitedMemoryStream(MaxImageBytes);
-                var request = new HttpRequest(currentUrl)
-                {
-                    AllowAutoRedirect = false,
-                    LogHttpError = false,
-                    RequestTimeout = ImageRequestTimeout,
-                    ResponseStream = responseStream
-                };
-
-                ExternalImageRequestHeaders.ApplyExternalImageRequestHeaders(request, currentUrl, userAgent, rangeRequest: false);
-
-                var response = _httpClient.Get(request);
-
-                if (!response.HasHttpRedirect)
-                {
-                    var imageData = responseStream.Length > 0
-                        ? responseStream.ToArray()
-                        : response.ResponseData ?? Array.Empty<byte>();
-
-                    MediaCoverRendition.ValidateImageResponse(imageData, response.Headers?.ContentType);
-
-                    if (MediaCoverRendition.InspectDownloadedImage(url, imageData, out var contentHash))
-                    {
-                        throw new PlaceholderImageException(url, contentHash);
-                    }
-
-                    return imageData;
-                }
-
-                var location = response.Headers.GetSingleValue("Location");
-                if (location.IsNullOrWhiteSpace())
-                {
-                    throw new WebException($"Redirect response from {currentUrl} is missing a Location header.", WebExceptionStatus.ProtocolError);
-                }
-
-                Uri nextUri;
-                try
-                {
-                    nextUri = new Uri(new Uri(currentUrl), location);
-                }
-                catch (Exception ex)
-                {
-                    throw new WebException($"Invalid redirect location '{location}' from '{currentUrl}'.", ex, WebExceptionStatus.ProtocolError, null);
-                }
-
-                if (!TryGetSafeImageUrl(nextUri.ToString(), out currentUrl, out var nextReason))
-                {
-                    throw new WebException($"Blocked unsafe image redirect target '{nextUri}': {nextReason}", WebExceptionStatus.ProtocolError);
-                }
-            }
-
-            throw new WebException($"Too many redirects while downloading image from '{url}'.", WebExceptionStatus.ProtocolError);
+            return imageData;
         }
 
         private sealed class SizeLimitedMemoryStream : MemoryStream
@@ -211,12 +157,6 @@ namespace NzbDrone.Core.MediaCover
                 }
             }
         }
-
-        private bool TryGetSafeImageUrl(string url, out string safeUrl, out string reason)
-        {
-            return MediaCoverUrlSafetyPolicy.TryGetSafeImageUrl(url, _configService, out safeUrl, out reason);
-        }
-
 
     }
 }

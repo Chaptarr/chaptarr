@@ -182,7 +182,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     return Tuple.Create(h.Author.GoodreadsAuthorId, source, new List<Author> { h.Author });
                 });
                 void Sync() => new ImportListSyncService(factory, new ImportListExclusionService(new ImportListExclusionRepository(h.Database, h.Events), h.Logger),
-                    fetcher, metadata, h.AuthorService, books, h.Editions, pending, h.Roots, new RootFolderSettingsResolver(h.Roots), h.Events, h.Queue, h.Logger,
+                    fetcher, metadata, h.AuthorService, books, h.Editions, pending, h.Roots, new RootFolderSettingsResolver(h.Roots), h.Events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Queue, h.Logger,
                     new ImportListBookIdentityCacheRepository(h.Database, h.Events)).Execute(new ImportListSyncCommand(1));
                 Sync();
                 Assert.Multiple(() =>
@@ -330,7 +330,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 { nameof(IImportListFactory.Get) => definition, nameof(IImportListFactory.GetInstance) => provider, _ => throw new AssertionException(method.Name) }),
                 new ImportListExclusionService(new ImportListExclusionRepository(h.Database, h.Events), h.Logger),
                 Proxy<IFetchAndParseImportList>((_, _) => reports), Proxy<IProvideBookInfo>((method, _) => throw new AssertionException(method.Name)),
-                h.AuthorService, books, h.Editions, pending, h.Roots, new RootFolderSettingsResolver(h.Roots), h.Events, h.Queue, h.Logger,
+                h.AuthorService, books, h.Editions, pending, h.Roots, new RootFolderSettingsResolver(h.Roots), h.Events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Queue, h.Logger,
                 new ImportListBookIdentityCacheRepository(h.Database, h.Events));
         }
     }

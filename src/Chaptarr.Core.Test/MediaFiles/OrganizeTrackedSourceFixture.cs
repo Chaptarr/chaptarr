@@ -133,7 +133,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<IRootFolderWatchingService>((m, a) => null),
                     Proxy<IMediaFileAttributeService>((m, a) => null), events,
                     Proxy<IConfigService>((m, a) => false),
-                    Proxy<IFileMutationSafetyService>((m, a) => null), logger);
+                    logger);
                 Renamer = new RenameBookFileService(authors, media, Mover, events, disk, logger, null);
             }
 

@@ -149,7 +149,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     {
                         readers.Clear();
                         new ImportListSyncService(factory, exclusions, fetcher, metadata, authors, books, editions, pending, roots,
-                            new RootFolderSettingsResolver(roots), events, queue, logger,
+                            new RootFolderSettingsResolver(roots), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue, logger,
                             new ImportListBookIdentityCacheRepository(database, events)).Execute(new ImportListSyncCommand(1));
                         costs.Add(readers.Count);
                     }

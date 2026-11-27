@@ -106,6 +106,7 @@ namespace Chaptarr.Core.Test.Books
             public int CatalogLoads { get; private set; }
             public bool IgnoreMonitoringUpdates { get; set; }
             public bool ReplaceRowsOnMonitoringUpdate { get; set; }
+            public bool FailAddOptions { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -114,6 +115,7 @@ namespace Chaptarr.Core.Test.Books
                     case nameof(IBookService.AddWantedEditions):
                         return WantedEditions((List<Edition>)args[0], Books);
                     case nameof(IBookService.SetAddOptions):
+                        if (FailAddOptions) throw new InvalidOperationException("Injected post-selection options failure");
                         return null;
                     case nameof(IBookService.GetBooksByAuthor):
                         CatalogLoads++;
@@ -312,7 +314,7 @@ namespace Chaptarr.Core.Test.Books
                 pendingImportService,
                 authorLibraryService,
                 bookService,
-                bookInfo,
+                bookInfo, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueue,
                 eventAggregator,
                 LogManager.GetCurrentClassLogger());
@@ -382,7 +384,7 @@ namespace Chaptarr.Core.Test.Books
                 pendingImportService,
                 authorLibrary,
                 bookService,
-                bookInfo,
+                bookInfo, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueue,
                 eventAggregator,
                 LogManager.GetCurrentClassLogger());
@@ -414,7 +416,7 @@ namespace Chaptarr.Core.Test.Books
                 pendingImportService,
                 authorLibrary,
                 DispatchProxy.Create<IBookService, BookServiceProxy>(),
-                DispatchProxy.Create<IProvideBookInfo, BookInfoProxy>(),
+                DispatchProxy.Create<IProvideBookInfo, BookInfoProxy>(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueue,
                 eventAggregator,
                 LogManager.GetCurrentClassLogger());
@@ -444,7 +446,7 @@ namespace Chaptarr.Core.Test.Books
                 pendingImportService,
                 authorLibrary,
                 DispatchProxy.Create<IBookService, BookServiceProxy>(),
-                DispatchProxy.Create<IProvideBookInfo, BookInfoProxy>(),
+                DispatchProxy.Create<IProvideBookInfo, BookInfoProxy>(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueue,
                 eventAggregator,
                 LogManager.GetCurrentClassLogger());
@@ -477,7 +479,7 @@ namespace Chaptarr.Core.Test.Books
                 pendingImportService,
                 authorLibrary,
                 bookService,
-                DispatchProxy.Create<IProvideBookInfo, BookInfoProxy>(),
+                DispatchProxy.Create<IProvideBookInfo, BookInfoProxy>(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueue,
                 eventAggregator,
                 LogManager.GetCurrentClassLogger());
@@ -1147,7 +1149,8 @@ namespace Chaptarr.Core.Test.Books
         [TestCase(true, "ImportList:Narrations")]
         [TestCase(true, "Seerr")]
         [TestCase(false, "UserInterface")]
-        public void queued_narration_should_use_the_shared_writer_and_search_its_selected_copy(bool authorMonitored, string requestedBy)
+        [TestCase(false, "UserInterface", true)]
+        public void queued_narration_should_use_the_shared_writer_and_search_its_selected_copy(bool authorMonitored, string requestedBy, bool failAddOptions = false)
         {
             var pendingService = new StubPendingAuthorImportService();
             var pending = Pending(181);
@@ -1165,6 +1168,7 @@ namespace Chaptarr.Core.Test.Books
             var second = new Book { Id = 102, AuthorId = 42, HardcoverBookId = "hc:1001", MediaType = BookMediaType.Audiobook };
             var books = DispatchProxy.Create<IBookService, BookServiceProxy>();
             var proxy = (BookServiceProxy)books;
+            proxy.FailAddOptions = failAddOptions;
             proxy.Books = new List<Book> { first, second };
             var calls = 0;
             proxy.WantedEditions = (editions, candidates) =>
@@ -1173,12 +1177,23 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(editions.Select(edition => edition.Id), Is.EqualTo(new[] { 301 }));
                 Assert.That(candidates.Select(book => book.Id), Is.EquivalentTo(new[] { 101, 102 }));
                 second.SetMonitored(true);
+                second.Editions = new List<Edition> { new() { Id = 302, BookId = second.Id, HardcoverEditionId = "hc:202", ReadingFormatId = 2, Narrator = "Stephen Fry", Monitored = true } };
                 return new Dictionary<int, Book> { [301] = second };
             };
             var queue = new RecordingCommandQueue();
             BuildHandler(pendingService, queue, new RecordingEventAggregator(), author: author, bookService: books)
                 .Execute(new ProcessPendingImportsCommand());
             Assert.That(calls, Is.GreaterThan(0), pending.LastError);
+            var coverCommands = queue.Pushed.OfType<NzbDrone.Core.MediaCover.Commands.DownloadBookMediaCommand>().ToList();
+            Assert.That(coverCommands, Has.Count.EqualTo(1));
+            Assert.That(coverCommands[0].BookIds, Is.EqualTo(new[] { second.Id }));
+            Assert.That(coverCommands[0].BookId, Is.Zero);
+            if (failAddOptions)
+            {
+                Assert.That(pendingService.DeletedIds, Does.Not.Contain(pending.Id));
+                Assert.That(pending.LastError, Does.Contain("Injected post-selection options failure"));
+                return;
+            }
             Assert.That(pendingService.DeletedIds, Does.Contain(pending.Id));
             Assert.That(queue.Pushed.OfType<BookSearchCommand>().Single().BookIds, Is.EqualTo(new[] { 102 }));
             Assert.That(first.IsMonitored(), Is.False);

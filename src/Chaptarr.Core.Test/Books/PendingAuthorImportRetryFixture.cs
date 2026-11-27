@@ -154,7 +154,7 @@ namespace Chaptarr.Core.Test.Books
                         null, null, LogManager.GetCurrentClassLogger());
                 var before = DateTime.UtcNow;
                 new ProcessPendingImportsCommandHandler(pending, library,
-                    Proxy<IBookService>((method, args) => new List<Book>()), metadata, queue, events,
+                    Proxy<IBookService>((method, args) => new List<Book>()), metadata, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue, events,
                     LogManager.GetCurrentClassLogger()).Execute(new ProcessPendingImportsCommand());
                 var reloaded = new PendingAuthorImportService(new PendingAuthorImportRepository(database, events),
                     authors, events, LogManager.GetCurrentClassLogger());

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO.Abstractions;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
 using NLog;
 using NUnit.Framework;
@@ -10,7 +11,9 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaFiles.BookImport.Manual;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
 using NzbDrone.Core.MetadataSource.BookInfo.V5;
@@ -47,7 +50,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
 
             public MetadataProfile Upsert(MetadataProfile model) => throw new NotImplementedException();
 
-            public void SetFields(MetadataProfile model, params System.Linq.Expressions.Expression<Func<MetadataProfile, object>>[] properties) => throw new NotImplementedException();
+            public void SetFields(MetadataProfile model, params Expression<Func<MetadataProfile, object>>[] properties) => throw new NotImplementedException();
 
             public void Delete(MetadataProfile model) => throw new NotImplementedException();
 
@@ -61,7 +64,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
 
             public void UpdateMany(IList<MetadataProfile> model) => throw new NotImplementedException();
 
-            public void SetFields(IList<MetadataProfile> models, params System.Linq.Expressions.Expression<Func<MetadataProfile, object>>[] properties) => throw new NotImplementedException();
+            public void SetFields(IList<MetadataProfile> models, params Expression<Func<MetadataProfile, object>>[] properties) => throw new NotImplementedException();
 
             public void DeleteMany(List<MetadataProfile> model) => throw new NotImplementedException();
 
@@ -107,7 +110,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
-            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
+            public Author UpdateAuthor(Author author, Action<IDbConnection, IDbTransaction> beforeSave) => throw new NotSupportedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
@@ -161,7 +164,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public List<Book> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => throw new NotImplementedException();
             public List<Book> GetAllBooks() => throw new NotImplementedException();
-            public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated = null) => throw new System.NotSupportedException();
+            public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, Action<IDbConnection, IDbTransaction> writeRelated = null) => throw new NotSupportedException();
             public Book UpdateBook(Book book) => throw new NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
@@ -173,7 +176,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public void InsertMany(List<Book> books) => throw new NotImplementedException();
             public void InsertMany(List<Book> books, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Book> books) => throw new NotImplementedException();
-            public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<NzbDrone.Core.MediaFiles.BookFile> deletedBookFiles = null) => throw new NotImplementedException();
+            public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<BookFile> deletedBookFiles = null) => throw new NotImplementedException();
             public void SetAddOptions(IEnumerable<Book> books) => throw new NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
@@ -210,11 +213,11 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public Edition GetEditionByGoogleBooksEditionId(string googleBooksEditionId) => throw new NotImplementedException();
             public Edition GetEditionByOpenLibraryEditionId(string openLibraryEditionId) => throw new NotImplementedException();
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => throw new NotImplementedException();
-            public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
+            public List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new List<Edition>();
             public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
-            public void UpdateMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, Edition selectedEdition = null) => throw new System.NotSupportedException();
+            public void UpdateMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction, Edition selectedEdition = null) => throw new NotSupportedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
@@ -231,14 +234,16 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
 
         private sealed class StubMediaFileService : IMediaFileService
         {
-            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
-                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
-                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+            public List<BookFile> GetExisting(IEnumerable<int> ids) => throw new NotImplementedException();
 
-            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
-                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
-                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
-                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+            public void ValidateReplacementFiles(List<BookFile> replacedFiles,
+                IReadOnlyCollection<ManualImportReplacementFile> confirmedFiles)
+                => throw new NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(List<BookFile> bookFiles, List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, IReadOnlyCollection<ManualImportReplacementFile> confirmedFiles,
+                Action<Action<IDbConnection, IDbTransaction>> persist)
+                => throw new NotSupportedException("This test adapter does not support transactional replacement.");
 
             public int CatalogReads { get; private set; }
 
@@ -258,7 +263,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Update(BookFile bookFile) => throw new NotImplementedException();
-            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, BookMediaType mediaType, AudioProductionCorrection correction, IDbConnection connection, IDbTransaction transaction) => throw new NotSupportedException();
 
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -1174,7 +1179,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
         {
             var logger = LogManager.GetCurrentClassLogger();
             var mapper = new BookInfoProxy(null, null, null, null, null, null, null, null, null, null,
-                logger, new CacheManager(), new MetadataServerHealthGate(null, new MetadataServerHealthService(logger), logger));
+                logger, new CacheManager(), new MetadataServerHealthGate(null, new HttpServiceHealth(logger), logger));
             var convert = typeof(BookInfoProxy).GetMethod("ConvertV5BookToDomain", BindingFlags.Instance | BindingFlags.NonPublic);
             var author = new Author { Name = "Test Author" };
             author.Books = Enumerable.Range(0, bookCount).Select(index => (Book)convert.Invoke(mapper, new object[]

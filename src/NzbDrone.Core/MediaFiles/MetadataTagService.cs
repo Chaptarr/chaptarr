@@ -4,11 +4,14 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Abstractions;
+using System.Linq;
 using Newtonsoft.Json;
 using NLog;
 using NzbDrone.Common;
+using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Localization;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.MediaFiles.TagExtraction;
 using NzbDrone.Core.Messaging.Commands;
@@ -23,8 +26,8 @@ namespace NzbDrone.Core.MediaFiles
         string ReadAllTagsAsJson(IFileInfo file);
         void WriteTags(BookFile trackfile, bool newDownload, bool force = false);
         void SyncTags(List<Edition> books);
-        List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId);
-        List<RetagBookFilePreview> GetRetagPreviewsByBook(int authorId);
+        List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId, BookMediaType? mediaType = null);
+        List<RetagBookFilePreview> GetRetagPreviewsByBook(int authorId, BookMediaType? mediaType = null);
     }
 
     public class MetadataTagService : IMetadataTagService,
@@ -39,10 +42,18 @@ namespace NzbDrone.Core.MediaFiles
         private readonly ConcurrentDictionary<string, TagCacheEntry> _tagCache = new ConcurrentDictionary<string, TagCacheEntry>(PathEqualityComparer.Instance);
         private readonly IFileTagCacheRepository _fileTagCache;
         private readonly Logger _logger;
+        private readonly ILocalizationService _localizationService;
+        private readonly ICommandResultReporter _commandResultReporter;
+        private readonly IMediaFileService _mediaFileService;
+        private readonly IAuthorService _authorService;
 
         public MetadataTagService(IAudioTagService audioTagService,
             IEBookTagService eBookTagService,
             Logger logger,
+            ILocalizationService localizationService,
+            ICommandResultReporter commandResultReporter,
+            IMediaFileService mediaFileService,
+            IAuthorService authorService,
             IFileTagCacheRepository fileTagCache = null)
         {
             _audioTagService = audioTagService;
@@ -50,6 +61,10 @@ namespace NzbDrone.Core.MediaFiles
             _fileTagCache = fileTagCache;
 
             _logger = logger;
+            _localizationService = localizationService;
+            _commandResultReporter = commandResultReporter ?? throw new ArgumentNullException(nameof(commandResultReporter));
+            _mediaFileService = mediaFileService;
+            _authorService = authorService;
         }
 
         // Removed ReadTags (ParsedTrackInfo) path; use ReadAllTags for field-agnostic tags
@@ -429,32 +444,181 @@ namespace NzbDrone.Core.MediaFiles
             _eBookTagService.SyncTags(editions);
         }
 
-        public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId)
+        public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId, BookMediaType? mediaType = null)
         {
-            var previews = _audioTagService.GetRetagPreviewsByAuthor(authorId);
-            previews.AddRange(_eBookTagService.GetRetagPreviewsByAuthor(authorId));
+            var previews = mediaType != BookMediaType.Ebook
+                ? _audioTagService.GetRetagPreviewsByAuthor(authorId)
+                : new List<RetagBookFilePreview>();
+            if (mediaType != BookMediaType.Audiobook)
+            {
+                previews.AddRange(_eBookTagService.GetRetagPreviewsByAuthor(authorId));
+            }
 
-            return previews;
+            return previews.OrderBy(preview => preview.Title).ThenBy(preview => preview.Path).ToList();
         }
 
-        public List<RetagBookFilePreview> GetRetagPreviewsByBook(int bookId)
+        public List<RetagBookFilePreview> GetRetagPreviewsByBook(int bookId, BookMediaType? mediaType = null)
         {
-            var previews = _audioTagService.GetRetagPreviewsByBook(bookId);
-            previews.AddRange(_eBookTagService.GetRetagPreviewsByBook(bookId));
+            var previews = mediaType != BookMediaType.Ebook
+                ? _audioTagService.GetRetagPreviewsByBook(bookId)
+                : new List<RetagBookFilePreview>();
+            if (mediaType != BookMediaType.Audiobook)
+            {
+                previews.AddRange(_eBookTagService.GetRetagPreviewsByBook(bookId));
+            }
 
-            return previews;
+            return previews.OrderBy(preview => preview.Title).ThenBy(preview => preview.Path).ToList();
         }
 
         public void Execute(RetagFilesCommand message)
         {
-            _eBookTagService.RetagFiles(message);
-            _audioTagService.RetagFiles(message);
+            var ids = (message.Files ?? new List<int>()).Distinct().ToList();
+            var files = _mediaFileService.GetExisting(ids);
+            var selection = new TagBatch();
+            selection.MissingFiles.UnionWith(ids.Except(files.Select(file => file.Id)));
+            var ebook = RunRetag(batch => _eBookTagService.RetagFiles(message, files, batch), true);
+            var audio = RunRetag(batch => _audioTagService.RetagFiles(message, files, batch), false);
+            ReportRetagResults(message, ebook, audio, selection);
         }
 
         public void Execute(RetagAuthorCommand message)
         {
-            _eBookTagService.RetagAuthor(message);
-            _audioTagService.RetagAuthor(message);
+            var mediaType = BookMediaTypeParser.ParseOptional(message.MediaType);
+            var ids = (message.AuthorIds ?? new List<int>()).Distinct().ToList();
+            var authors = _authorService.GetExistingAuthors(ids);
+            var selection = new TagBatch();
+            selection.MissingAuthors.UnionWith(ids.Except(authors.Select(author => author.Id)));
+            var ebook = mediaType == BookMediaType.Audiobook ? null
+                : RunRetag(batch => _eBookTagService.RetagAuthor(message, authors, batch), true);
+            var audio = mediaType == BookMediaType.Ebook ? null
+                : RunRetag(batch => _audioTagService.RetagAuthor(message, authors, batch), false);
+            ReportRetagResults(message, ebook, audio, selection);
+        }
+
+        private void ReportRetagResults(RetagCommand command, TagBatch ebook, TagBatch audio, TagBatch selection)
+        {
+            var results = new[] { ebook, audio, selection }.Where(batch => batch != null).ToList();
+            var messages = new List<string>();
+            if (ebook != null)
+            {
+                AddSummary(messages, "RetagEbookPass", ebook);
+            }
+            if (audio != null)
+            {
+                AddSummary(messages, "RetagAudioPass", audio);
+            }
+            AddCountMessage(messages, "RetagMissingFiles", selection.MissingFiles.Count);
+            AddCountMessage(messages, "RetagMissingAuthors", selection.MissingAuthors.Count);
+            AddCountMessage(messages, "RetagUnlinkedFiles", results.SelectMany(batch => batch.UnlinkedFiles).Distinct().Count());
+            AddCountMessage(messages, "RetagEbookRequiresCalibre", ebook?.NotInCalibre ?? 0);
+            AddCountMessage(messages, "RetagUnsupportedFiles", audio?.Unsupported ?? 0);
+            AddCountMessage(messages, "RetagRootNotLinkedToCalibre", ebook?.RootNotLinkedToCalibre ?? 0);
+            AddCountMessage(messages, "RetagMissingRootFolder", ebook?.MissingRootFolder ?? 0);
+            if (ebook != null)
+            {
+                foreach (var (root, count) in ebook.InvalidCalibreSettings)
+                {
+                    messages.Add(_localizationService.GetLocalizedString("RetagInvalidCalibreSettings", new Dictionary<string, object> { ["rootFolderPath"] = root, ["count"] = count }));
+                }
+
+                foreach (var (library, count) in ebook.MissingCalibreBooks)
+                {
+                    messages.Add(_localizationService.GetLocalizedString("RetagMissingCalibreBook", new Dictionary<string, object> { ["library"] = LibraryLabel(library), ["count"] = count }));
+                }
+            }
+            AddCountMessage(messages, "RetagSkippedSymlinkWrites", results.SelectMany(batch => batch.SkippedSymlinkPaths).Distinct(PathEqualityComparer.Instance).Count());
+            var now = DateTime.UtcNow;
+            foreach (var batch in results)
+            {
+                if (batch.Stopped)
+                {
+                    messages.Add(_localizationService.GetLocalizedString(batch.CurrentAuthor == null ? "RetagFilePassStopped" : "RetagAuthorPassStopped", new Dictionary<string, object>
+                    {
+                        ["pass"] = _localizationService.GetLocalizedString(batch == ebook ? "RetagEbookPass" : "RetagAudioPass"),
+                        ["author"] = batch.CurrentAuthor,
+                    }));
+                    AddCountMessage(messages, "RetagLaterAuthorsNotAttempted", batch.UnattemptedAuthors);
+                }
+
+                foreach (var library in batch.UnavailableLibraries)
+                {
+                    messages.Add(_localizationService.GetLocalizedString(library.Value.RetryAfter <= now ? "RetagCalibreRetryNow" : "RetagCalibreBackoff", new Dictionary<string, object>
+                    {
+                        ["library"] = LibraryLabel(library.Key), ["count"] = library.Value.Count,
+                        ["retryAfter"] = library.Value.RetryAfter.ToString("u")
+                    }));
+                    if (library.Value.TriggerFile != null)
+                    {
+                        messages.Add(_localizationService.GetLocalizedString("RetagBackoffTrigger", new Dictionary<string, object> { ["file"] = library.Value.TriggerFile }));
+                    }
+                }
+            }
+
+            if (results.Any(batch => batch.UnavailableLibraries.Values.Any(library => library.RetryAfter > now)))
+            {
+                messages.Add(_localizationService.GetLocalizedString("RetagRunAgain"));
+            }
+            command.ResultMessage = messages.Count > 0 ? string.Join(" ", messages) : _localizationService.GetLocalizedString("SuccessMyWorkIsDoneNoFilesToRetag");
+            if (results.Any(batch => batch.Unsuccessful))
+            {
+                _commandResultReporter.Report(CommandResult.Unsuccessful);
+                _logger.ProgressWarn(command.ResultMessage);
+            }
+            else
+            {
+                _logger.ProgressInfo(command.ResultMessage);
+            }
+        }
+
+        private TagBatch RunRetag(Func<TagBatch, TagBatch> retag, bool ebook)
+        {
+            var batch = new TagBatch();
+            try
+            {
+                return retag(batch);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Unable to complete {0} Retag pass; continuing other selected media", ebook ? "ebook" : "audio");
+                batch.Stopped = true;
+                return batch;
+            }
+            finally
+            {
+                batch.Timer.Stop();
+            }
+        }
+
+        private void AddSummary(List<string> messages, string pass, TagBatch batch)
+        {
+            var parts = new List<string>();
+            AddCountMessage(parts, "RetagWrittenCount", batch.Written);
+            AddCountMessage(parts, "RetagFailedCount", batch.Failed);
+            AddCountMessage(parts, "RetagUnconfirmedCount", batch.Unconfirmed);
+            AddCountMessage(parts, "RetagAudioIncompleteCount", batch.AudioIncomplete);
+            AddCountMessage(parts, "RetagCalibreIncompleteCount", batch.CalibreIncomplete);
+            AddCountMessage(parts, "RetagCalibreDetailsIncompleteCount", batch.CalibreDetailsIncomplete);
+            AddCountMessage(parts, "RetagSkippedCount", batch.Skipped);
+            AddCountMessage(parts, "RetagRestoredTotalsCount", batch.RestoredTotals);
+            if (parts.Count > 0)
+            {
+                messages.Add(_localizationService.GetLocalizedString("RetagPassSummary", new Dictionary<string, object>
+                {
+                    ["pass"] = _localizationService.GetLocalizedString(pass),
+                    ["outcomes"] = string.Join(_localizationService.GetLocalizedString("RetagOutcomeSeparator"), parts),
+                    ["elapsed"] = batch.Timer.ElapsedMilliseconds
+                }));
+            }
+        }
+
+        private string LibraryLabel(string library) => _localizationService.GetLocalizedString("RetagCalibreLibrary", new Dictionary<string, object> { ["library"] = library });
+
+        private void AddCountMessage(List<string> messages, string key, int count)
+        {
+            if (count > 0)
+            {
+                messages.Add(_localizationService.GetLocalizedString(key, new Dictionary<string, object> { ["count"] = count }));
+            }
         }
     }
 }

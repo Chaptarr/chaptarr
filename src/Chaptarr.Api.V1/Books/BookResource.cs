@@ -189,6 +189,12 @@ namespace Chaptarr.Api.V1.Books
 
     public static class BookResourceMapper
     {
+        public static void MapCoversToLocal(this IMapCoversToLocal mapper, IEnumerable<BookResource> resources)
+        {
+            mapper.ConvertBookCoversToLocalUrls(resources.Select(book =>
+                new KeyValuePair<int, List<MediaCover>>(book.Id, book.Images)));
+        }
+
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
         private static List<MediaCover> CloneImages(IEnumerable<MediaCover> images)
@@ -218,7 +224,7 @@ namespace Chaptarr.Api.V1.Books
 
             options ??= BookResourceMappingOptions.Rich();
 
-            var selectedEdition = SelectMonitoredEdition(model.Editions);
+            var selectedEdition = BookEditionIdentity.GetMonitoredEdition(model);
 
             var seriesLabels = BookSeries.GetLinks(model).Select(BookSeries.Label).ToList();
             var headerSeries = BookSeries.GetHeaderLink(model);
@@ -626,7 +632,7 @@ namespace Chaptarr.Api.V1.Books
                     return null;
                 }
 
-                var selectedEdition = SelectMonitoredEdition(model.Editions);
+                var selectedEdition = BookEditionIdentity.GetMonitoredEdition(model);
 
                 return new BookLocalInstanceResource
                 {
@@ -639,14 +645,6 @@ namespace Chaptarr.Api.V1.Books
                     Monitored = model.IsMonitored(),
                     HasFiles = model.HasFiles
                 };
-            }
-
-            private static Edition SelectMonitoredEdition(IEnumerable<Edition> editions)
-            {
-                return editions?
-                    .Where(e => e != null && e.Monitored)
-                    .OrderBy(e => e.Id)
-                    .FirstOrDefault();
             }
 
             public static List<Book> ToModel(this IEnumerable<BookResource> resources)
@@ -1084,7 +1082,7 @@ namespace Chaptarr.Api.V1.Books
             }
             if (Logger.IsDebugEnabled)
             {
-                var selected = SelectMonitoredEdition(book.Editions);
+                var selected = BookEditionIdentity.GetMonitoredEdition(book);
                 var ignored = new List<string>();
                 if (resource.ReleaseDateSpecified && resource.ReleaseDate != (selected?.ReleaseDate ?? book.ReleaseDate)) ignored.Add("releaseDate");
                 if (resource.RatingsSpecified && !Equals(resource.Ratings, selected?.Ratings ?? book.Ratings ?? new Ratings())) ignored.Add("ratings");
@@ -1094,7 +1092,7 @@ namespace Chaptarr.Api.V1.Books
 
             // Round-tripped display metadata does not express a manual narrator choice.
             var shouldUpdateNarrator = resource.NarratorSpecified && !string.Equals(resource.Narrator,
-                GetNarratorDisplay(book, SelectMonitoredEdition(book.Editions), book.HasFiles), StringComparison.Ordinal);
+                GetNarratorDisplay(book, BookEditionIdentity.GetMonitoredEdition(book), book.HasFiles), StringComparison.Ordinal);
             if (resource.AnyEditionOkSpecified)
             {
                 book.AnyEditionOk = resource.AnyEditionOk;

@@ -975,6 +975,27 @@ namespace NzbDrone.Common.Disk
             }
         }
 
+        public const string TemporaryWritePrefix = ".write-";
+        // A run-specific prefix lets cover cleanup remove crash leftovers without touching active writes.
+        public static readonly string CurrentTemporaryWritePrefix = TemporaryWritePrefix + Guid.NewGuid().ToString("N") + "-";
+
+        // Publish a complete generated file in one same-folder rename. Keep its extension
+        // for format-selecting writers; do not use MoveFile, which deletes the destination first.
+        public void WriteFileAtomically(string path, Action<string> write)
+        {
+            Ensure.That(path, () => path).IsValidPath(PathValidationType.CurrentOs);
+            var temporaryPath = Path.Combine(Path.GetDirectoryName(path), $"{CurrentTemporaryWritePrefix}{Guid.NewGuid():N}{Path.GetExtension(path)}");
+            try
+            {
+                write(temporaryPath);
+                _fileSystem.File.Move(temporaryPath, path, overwrite: true);
+            }
+            finally
+            {
+                _fileSystem.File.Delete(temporaryPath);
+            }
+        }
+
         public virtual bool IsValidFolderPermissionMask(string mask)
         {
             throw new NotSupportedException();

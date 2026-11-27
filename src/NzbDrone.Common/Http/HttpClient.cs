@@ -19,6 +19,7 @@ namespace NzbDrone.Common.Http
     {
         HttpResponse Execute(HttpRequest request);
         void DownloadFile(string url, string fileName, string userAgent = null);
+        void DownloadFile(HttpRequest request, string fileName);
         HttpResponse Get(HttpRequest request);
         HttpResponse<T> Get<T>(HttpRequest request)
             where T : new();
@@ -69,7 +70,7 @@ namespace NzbDrone.Common.Http
         public virtual async Task<HttpResponse> ExecuteAsync(HttpRequest request)
         {
             EnsureHttpOrHttps(request.Url);
-            if (IsCloudMetadataTarget(request.Url))
+            if (request.TargetPolicy == null && IsCloudMetadataTarget(request.Url))
             {
                 throw new WebException($"Request target '{request.GetLogUrl()}' is not allowed.", WebExceptionStatus.ProtocolError);
             }
@@ -90,9 +91,23 @@ namespace NzbDrone.Common.Http
                         throw new WebException($"Redirect response from {request.GetLogUrl()} is missing a Location header.", WebExceptionStatus.ProtocolError);
                     }
 
-                    var nextUrl = request.Url + new HttpUri(location);
+                    HttpUri nextUrl;
+                    if (request.TargetPolicy != null)
+                    {
+                        if (!Uri.TryCreate((Uri)request.Url, location, out var destination))
+                        {
+                            throw new WebException("Invalid image redirect location.", WebExceptionStatus.ProtocolError);
+                        }
 
-                    EnsureSafeRedirectTarget(nextUrl, request.GetLogUrl(nextUrl));
+                        request.TargetPolicy.ValidateUrl(destination);
+                        nextUrl = new HttpUri(destination.AbsoluteUri);
+                    }
+                    else
+                    {
+                        nextUrl = request.Url + new HttpUri(location);
+                    }
+
+                    EnsureSafeRedirectTarget(nextUrl, request.GetLogUrl(nextUrl), request.TargetPolicy);
 
                     // 302 or 303 should default to GET on redirect even if POST on original
                     if (RequestRequiresForceGet(response.StatusCode, response.Request.Method))
@@ -103,11 +118,12 @@ namespace NzbDrone.Common.Http
                     }
 
                     request.Url = nextUrl;
+                    request.OnRedirect?.Invoke(request);
                     autoRedirectChain.Add(request.GetLogUrl());
 
                     _logger.Trace("Redirected to {0}", request.GetLogUrl());
 
-                    if (autoRedirectChain.Count > MaxRedirects)
+                    if (autoRedirectChain.Count > (request.RedirectLimit.HasValue ? request.RedirectLimit.Value + 1 : MaxRedirects))
                     {
                         throw new WebException($"Too many automatic redirections were attempted for {autoRedirectChain.Join(" -> ")}", WebExceptionStatus.ProtocolError);
                     }
@@ -162,11 +178,11 @@ namespace NzbDrone.Common.Http
                    scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
         }
 
-        private static void EnsureSafeRedirectTarget(HttpUri url, string logUrl)
+        private static void EnsureSafeRedirectTarget(HttpUri url, string logUrl, HttpRequestTargetPolicy policy)
         {
             EnsureHttpOrHttps(url);
 
-            if (IsCloudMetadataTarget(url))
+            if (policy == null && IsCloudMetadataTarget(url))
             {
                 throw new WebException($"Redirect target '{logUrl}' is not allowed.", WebExceptionStatus.ProtocolError);
             }
@@ -198,6 +214,9 @@ namespace NzbDrone.Common.Http
             {
                 request = interceptor.PreRequest(request);
             }
+
+            request.CancellationToken.ThrowIfCancellationRequested();
+            request.TargetPolicy?.ValidateUrl((Uri)request.Url);
 
             if (request.RateLimit != TimeSpan.Zero)
             {
@@ -324,8 +343,19 @@ namespace NzbDrone.Common.Http
             }
         }
 
-        public async Task DownloadFileAsync(string url, string fileName, string userAgent = null)
+        public Task DownloadFileAsync(string url, string fileName, string userAgent = null)
         {
+            return DownloadFileAsync(new HttpRequest(url) { AllowAutoRedirect = true, RequestTimeout = TimeSpan.FromSeconds(300) }, fileName);
+        }
+
+        public void DownloadFile(HttpRequest request, string fileName)
+        {
+            Task.Run(() => DownloadFileAsync(request, fileName)).GetAwaiter().GetResult();
+        }
+
+        private async Task DownloadFileAsync(HttpRequest request, string fileName)
+        {
+            var url = request.Url;
             var fileNamePart = fileName + ".part";
 
             try
@@ -341,10 +371,7 @@ namespace NzbDrone.Common.Http
                 var stopWatch = Stopwatch.StartNew();
                 await using (var fileStream = new FileStream(fileNamePart, FileMode.Create, FileAccess.ReadWrite))
                 {
-                    var request = new HttpRequest(url);
-                    request.AllowAutoRedirect = true;
                     request.ResponseStream = fileStream;
-                    request.RequestTimeout = TimeSpan.FromSeconds(300);
                     var response = await GetAsync(request);
 
                     if (response.Headers.ContentType != null && response.Headers.ContentType.Contains("text/html"))

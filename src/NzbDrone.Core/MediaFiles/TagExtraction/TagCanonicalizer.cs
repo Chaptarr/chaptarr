@@ -17,30 +17,32 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 ["ARTIST"] = new[] { "ID3v2:TPE1", "MP4:©ART", "XIPH:ARTIST", "APE:Artist" },
                 ["ALBUMARTIST"] = new[] { "ID3v2:TPE2", "MP4:aART", "XIPH:ALBUMARTIST", "ASF:WM/AlbumArtist", "APE:AlbumArtist" },
                 ["COMPOSER"] = new[] { "ID3v2:TCOM", "MP4:©wrt", "XIPH:COMPOSER", "ASF:WM/Composer", "APE:Composer" },
-                ["PUBLISHER"] = new[] { "ID3v2:TPUB", "MP4:©pub", "XIPH:PUBLISHER", "ASF:WM/Publisher", "APE:Publisher" },
+                ["PUBLISHER"] = new[] { "ID3v2:TPUB", "MP4:----:com.apple.iTunes:publisher", "MP4:©pub", "XIPH:PUBLISHER", "XIPH:ORGANIZATION", "XIPH:LABEL", "ASF:WM/Publisher", "APE:Publisher" },
                 ["GENRE"] = new[] { "ID3v2:TCON", "MP4:©gen", "XIPH:GENRE", "APE:Genre" },
                 ["DATE"] = new[] { "ID3v2:TDRC", "ID3v2:TYER", "ID3v2:TDAT", "MP4:©day", "XIPH:DATE", "APE:Year" },
                 ["ORIGINALDATE"] = new[] { "ID3v2:TDOR", "XIPH:ORIGINALDATE", "ASF:WM/OriginalReleaseTime" },
                 ["ORIGINALYEAR"] = new[] { "ASF:WM/OriginalReleaseYear" },
                 ["COMMENT"] = new[] { "ID3v2:COMM:*", "MP4:©cmt", "XIPH:COMMENT" },
                 ["TRACKNUMBER"] = new[] { "ID3v2:TRCK", "XIPH:TRACKNUMBER", "ASF:WM/TrackNumber", "APE:Track" },
-                ["TOTALTRACKS"] = new[] { "ID3v2:TRCK", "XIPH:TOTALTRACKS" },
+                ["TOTALTRACKS"] = new[] { "ID3v2:TRCK", "XIPH:TOTALTRACKS", "XIPH:TRACKTOTAL" },
                 ["DISCNUMBER"] = new[] { "ID3v2:TPOS", "XIPH:DISCNUMBER" },
                 ["TOTALDISCS"] = new[] { "ID3v2:TPOS", "XIPH:TOTALDISCS" },
                 ["NARRATOR"] = new[] { "ID3v2:TXXX:NARRATOR", "XIPH:NARRATOR", "ASF:WM/Narrator", "APE:Narrator" },
-                ["SERIES"] = new[] { "ID3v2:TXXX:SERIES", "XIPH:SERIES" },
+                ["SERIES"] = new[] { "ID3v2:TXXX:SERIES", "MP4:----:com.apple.iTunes:SERIES", AppleTagFields.ToneSeriesKey, "XIPH:SERIES", "APE:SERIES", "ASF:SERIES" },
+                ["SERIES-PART"] = new[] { "ID3v2:TXXX:SERIES-PART", "MP4:----:com.apple.iTunes:SERIES-PART", AppleTagFields.TonePartKey, "XIPH:SERIES-PART", "APE:SERIES-PART", "ASF:SERIES-PART" },
                 ["LANGUAGE"] = new[] { "XIPH:LANGUAGE", "ASF:WM/Language", "APE:Language" },
-                ["ISBN"] = new[] { "ID3v2:TXXX:ISBN", "XIPH:ISBN", "ASF:WM/ISBN", "APE:ISBN" },
+                ["ISBN"] = new[] { AppleTagFields.ToneIsbnKey, "ID3v2:TXXX:ISBN", "XIPH:ISBN", "ASF:WM/ISBN", "APE:ISBN" },
                 ["AUDIBLE_ASIN"] = new[]
                 {
-                    "MP4:----:com.pilabor.tone:AUDIBLE_ASIN",
+                    AppleTagFields.ToneAsinKey,
                     "----:com.pilabor.tone:AUDIBLE_ASIN",
                     "ID3v2:TXXX:AUDIBLE_ASIN"
                 },
                 ["ASIN"] = new[]
                 {
                     "AUDIBLE_ASIN",
-                    "MP4:----:com.pilabor.tone:AUDIBLE_ASIN",
+                    "ID3v2:TXXX:ASIN",
+                    AppleTagFields.ToneAsinKey,
                     "----:com.pilabor.tone:AUDIBLE_ASIN",
                     "ID3v2:TXXX:AUDIBLE_ASIN",
                     "XIPH:ASIN",
@@ -85,6 +87,21 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             }
 
             return false;
+        }
+
+        internal static IReadOnlyList<string> AudioIdentityKeys(TagLib.TagTypes type, string canonical)
+        {
+            var prefix = type switch
+            {
+                TagLib.TagTypes.Xiph => "XIPH:",
+                TagLib.TagTypes.Apple => "MP4:----:",
+                TagLib.TagTypes.Asf => "ASF:",
+                TagLib.TagTypes.Id3v2 => "ID3v2:TXXX:",
+                TagLib.TagTypes.Ape => "APE:",
+                _ => throw new ArgumentOutOfRangeException(nameof(type))
+            };
+            return CanonicalAliasSources[canonical].Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Select(key => key[prefix.Length..]).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         }
 
         private static bool SourceKeyMatches(string pattern, string key)
@@ -153,21 +170,29 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             // Common TXXX custom fields
             Add("NARRATOR", Get("ID3v2:TXXX:NARRATOR"));
             Add("SERIES", Get("ID3v2:TXXX:SERIES"));
+            Add("SERIES-PART", Get("ID3v2:TXXX:SERIES-PART"));
             Add("ISBN", Get("ID3v2:TXXX:ISBN"));
             Add("ASIN", Get("ID3v2:TXXX:ASIN"));
 
             // MP4 (prefix MP4:)
+            Add("SERIES", Get("MP4:----:com.apple.iTunes:SERIES"));
+            Add("SERIES", Get(AppleTagFields.ToneSeriesKey));
+            Add("SERIES-PART", Get(AppleTagFields.TonePartKey));
+            Add("SERIES-PART", Get("MP4:----:com.apple.iTunes:SERIES-PART"));
             Add("TITLE", Get("MP4:©nam"));
             Add("ALBUM", Get("MP4:©alb"));
             Add("ARTIST", Get("MP4:©ART"));
             Add("ALBUMARTIST", Get("MP4:aART"));
             Add("COMPOSER", Get("MP4:©wrt"));
-            Add("PUBLISHER", Get("MP4:©pub"));
+            // Prefer the field we write and ffprobe reads; retain legacy ©pub as raw evidence.
+            var applePublisher = Get("MP4:----:com.apple.iTunes:publisher").ToList();
+            Add("PUBLISHER", applePublisher.Any() ? applePublisher : Get("MP4:©pub"));
             Add("GENRE", Get("MP4:©gen"));
             Add("DATE", Get("MP4:©day"));
             Add("COMMENT", Get("MP4:©cmt"));
+            Add("ISBN", Get(AppleTagFields.ToneIsbnKey));
             // Vendor atoms (custom): surface Audible ASIN
-            Add("AUDIBLE_ASIN", Get("MP4:----:com.pilabor.tone:AUDIBLE_ASIN"));
+            Add("AUDIBLE_ASIN", Get(AppleTagFields.ToneAsinKey));
             Add("AUDIBLE_ASIN", Get("----:com.pilabor.tone:AUDIBLE_ASIN"));
             // Mirror into ASIN for convenience
             Add("ASIN", Get("AUDIBLE_ASIN"));
@@ -178,7 +203,8 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             Add("ARTIST", Get("XIPH:ARTIST"));
             Add("ALBUMARTIST", Get("XIPH:ALBUMARTIST"));
             Add("COMPOSER", Get("XIPH:COMPOSER"));
-            Add("PUBLISHER", Get("XIPH:PUBLISHER"));
+            var xiphPublisher = Get("XIPH:PUBLISHER").Where(value => !string.IsNullOrWhiteSpace(value)).ToList();
+            Add("PUBLISHER", xiphPublisher.Any() ? xiphPublisher : Get("XIPH:ORGANIZATION").Concat(Get("XIPH:LABEL")));
             Add("GENRE", Get("XIPH:GENRE"));
             Add("DATE", Get("XIPH:DATE"));
             Add("ORIGINALDATE", Get("XIPH:ORIGINALDATE"));
@@ -188,12 +214,16 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             Add("ISBN", Get("XIPH:ISBN"));
             Add("ASIN", Get("XIPH:ASIN"));
             Add("SERIES", Get("XIPH:SERIES"));
+            Add("SERIES-PART", Get("XIPH:SERIES-PART"));
             Add("TRACKNUMBER", Get("XIPH:TRACKNUMBER"));
             Add("DISCNUMBER", Get("XIPH:DISCNUMBER"));
             Add("TOTALDISCS", Get("XIPH:TOTALDISCS"));
             Add("TOTALTRACKS", Get("XIPH:TOTALTRACKS"));
+            Add("TOTALTRACKS", Get("XIPH:TRACKTOTAL"));
 
             // ASF (prefix ASF:)
+            Add("SERIES", Get("ASF:SERIES"));
+            Add("SERIES-PART", Get("ASF:SERIES-PART"));
             Add("ALBUM", Get("ASF:WM/AlbumTitle"));
             Add("ALBUMARTIST", Get("ASF:WM/AlbumArtist"));
             Add("COMPOSER", Get("ASF:WM/Composer"));
@@ -207,12 +237,14 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             Add("ORIGINALYEAR", Get("ASF:WM/OriginalReleaseYear"));
 
             // APE (prefix APE:)
+            Add("SERIES", Get("APE:SERIES"));
+            Add("SERIES-PART", Get("APE:SERIES-PART"));
             Add("TITLE", Get("APE:Title"));
             Add("ALBUM", Get("APE:Album"));
             Add("ARTIST", Get("APE:Artist"));
             Add("ALBUMARTIST", Get("APE:AlbumArtist"));
             Add("COMPOSER", Get("APE:Composer"));
-            Add("PUBLISHER", Get("APE:Publisher"));
+            if (!Get("ID3v2:TPUB").Any()) Add("PUBLISHER", Get("APE:Publisher"));
             Add("GENRE", Get("APE:Genre"));
             Add("DATE", Get("APE:Year"));
             Add("NARRATOR", Get("APE:Narrator"));

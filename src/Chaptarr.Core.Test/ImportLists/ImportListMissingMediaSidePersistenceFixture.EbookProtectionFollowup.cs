@@ -41,7 +41,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 return Tuple.Create(h.Author.GoodreadsAuthorId, requested, new List<Author> { owner });
             });
             new ProcessPendingImportsCommandHandler(h.Pending, FollowupLibrary(h, catalog, profiles), h.Books,
-                metadata, h.Queue, h.Events, h.Logger, h.Aliases).Execute(new ProcessPendingImportsCommand());
+                metadata, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Queue, h.Events, h.Logger, h.Aliases).Execute(new ProcessPendingImportsCommand());
         }
 
         [TestCase(false, BookMediaType.Audiobook)]

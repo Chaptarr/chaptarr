@@ -49,6 +49,9 @@ namespace NzbDrone.Core.Books
         List<Author> GetAllAuthors(bool bypassCache = false);
         Dictionary<int, List<int>> GetAllAuthorTags();
         List<Author> AllForTag(int tagId);
+        bool RemoveImageUrls(int authorId, IReadOnlyCollection<string> urls) => throw new NotSupportedException();
+        bool RemoveKnownPlaceholderImages(Author author) => throw new NotSupportedException();
+        bool UpdateSelectedPosterHash(int authorId, string hash, string expectedHash = null) => throw new NotSupportedException();
         Author UpdateAuthor(Author author);
         Author UpdateAuthor(Author author, Action<IDbConnection, IDbTransaction> beforeSave);
         Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId,
@@ -760,6 +763,31 @@ namespace NzbDrone.Core.Books
 	            _authorByIdCache.Remove(author.Id.ToString());
 	        }
 
+        public bool RemoveKnownPlaceholderImages(Author author)
+        {
+            var rejected = author?.Images?.Where(image => image != null && NzbDrone.Core.MediaCover.MediaCoverRendition.IsKnownPlaceholderImageUrl(image.Url))
+                .Select(image => image.Url).ToArray();
+            if (rejected == null || rejected.Length == 0) return false;
+            try { return RemoveImageUrls(author.Id, rejected); }
+            finally { author.Images = author.Images.Where(image => image == null || !rejected.Contains(image.Url)).ToList(); }
+        }
+
+        public bool RemoveImageUrls(int authorId, IReadOnlyCollection<string> urls)
+        {
+            if (!_authorRepository.RemoveImageUrls(authorId, urls)) return false;
+            InvalidateAuthorCatalog();
+            _authorByIdCache.Remove(authorId.ToString());
+            return true;
+        }
+
+        public bool UpdateSelectedPosterHash(int authorId, string hash, string expectedHash = null)
+        {
+            if (!_authorRepository.UpdateSelectedPosterHash(authorId, hash, expectedHash)) return false;
+            InvalidateAuthorCatalog();
+            _authorByIdCache.Remove(authorId.ToString());
+            return true;
+        }
+
         public Author UpdateAuthor(Author author) => UpdateAuthor(author, null);
 
         public Author UpdateAuthor(Author author, Action<IDbConnection, IDbTransaction> beforeSave)
@@ -770,6 +798,8 @@ namespace NzbDrone.Core.Books
 
             // Never update AddOptions when updating an author, keep it the same as the existing stored author.
             author.AddOptions = storedAuthor.AddOptions;
+            // Whole-row saves do not own the photo choice, but their events must carry it.
+            author.SelectedPosterHash = storedAuthor.SelectedPosterHash;
 
                 var rootFolders = _rootFolderService?.All();
                 if (beforeSave == null && rootFolders != null && rootFolders.Count > 0)

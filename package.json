@@ -14,6 +14,7 @@
     "check-translations": "node --test frontend/build/check-missing-translation-keys.test.cjs && node frontend/build/check-missing-translation-keys.js",
     "check-jsx-literals": "eslint --no-eslintrc --config frontend/.eslintrc.user-text.cjs --ignore-path frontend/.eslintignore --ext js,jsx,ts,tsx frontend/src",
     "check-author-photo": "node frontend/build/check-author-photo.cjs",
+    "check-retag-preview": "node frontend/build/check-retag-preview.cjs",
     "check-author-delete": "node frontend/build/check-author-delete.cjs",
     "check-author-search": "node frontend/build/check-author-search.cjs",
     "check-author-entry": "node frontend/build/check-author-entry.cjs",

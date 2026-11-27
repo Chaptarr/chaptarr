@@ -17,6 +17,7 @@ namespace NzbDrone.Core.MediaFiles
     public interface IMediaFileRepository : IBasicRepository<BookFile>
     {
         List<BookFile> GetFilesByAuthor(int authorId);
+        List<BookFile> GetExisting(IEnumerable<int> ids);
         List<BookFile> GetFilePathOwnership(IReadOnlyCollection<int> authorIds, IReadOnlyCollection<string> folders);
         List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType);
         List<BookFile> GetFilesByBook(int bookId);
@@ -42,6 +43,8 @@ namespace NzbDrone.Core.MediaFiles
             : base(database, eventAggregator)
         {
         }
+
+        public List<BookFile> GetExisting(IEnumerable<int> ids) => FindMany(ids);
 
         // always join with all the other good stuff
         // needed more often than not so better to load it all now

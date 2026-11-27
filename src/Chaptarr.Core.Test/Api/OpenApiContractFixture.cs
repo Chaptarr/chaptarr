@@ -19,6 +19,12 @@ namespace Chaptarr.Core.Test.Api
             return text.ToString();
         }
 
+        [Test, Explicit("Used by scripts/docs.sh to export through Startup without starting the application")]
+        public void export_current_contract()
+        {
+            File.WriteAllText(Path.Combine(TestContext.CurrentContext.WorkDirectory, "openapi.generated.json"), Generate());
+        }
+
         [Test]
         public void published_contract_must_match_current_api()
         {

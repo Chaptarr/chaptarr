@@ -101,7 +101,7 @@ namespace Chaptarr.Core.Test.Books
                 var library = InterfaceProxy.Proxy<IAuthorLibraryService>((method, _) =>
                     method.Name == nameof(IAuthorLibraryService.AddAuthorAsync) ? Task.FromResult(authors.Get(author.Id)) :
                     throw new NotImplementedException(method.Name));
-                var handler = new ProcessPendingImportsCommandHandler(pending, library, books, null, queue, events, logger);
+                var handler = new ProcessPendingImportsCommandHandler(pending, library, books, null, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue, events, logger);
                 handler.Execute(new ProcessPendingImportsCommand());
                 var retry = pendingRepository.GetActiveByProviderId("hc:9001");
                 Assert.That(retry, Is.Not.Null, $"Status={pendingRepository.GetByProviderId("hc:9001")?.OverallStatus}; error={pendingRepository.GetByProviderId("hc:9001")?.LastError}; accepted={accepted.Count}");
@@ -367,7 +367,7 @@ namespace Chaptarr.Core.Test.Books
                     rescueLookups++;
                     throw new InvalidOperationException("The requested narration exists in the supplied author catalog and must not require a metadata rescue.");
                 });
-                var handler = new ProcessPendingImportsCommandHandler(pendingService, library, books, rescue, queue, events, logger);
+                var handler = new ProcessPendingImportsCommandHandler(pendingService, library, books, rescue, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue, events, logger);
                 rejectSearch = alreadyStuck;
                 handler.Execute(new ProcessPendingImportsCommand());
                 if (alreadyStuck)

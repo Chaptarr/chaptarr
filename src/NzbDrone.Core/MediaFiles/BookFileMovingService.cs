@@ -64,7 +64,6 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IMediaFileAttributeService _mediaFileAttributeService;
         private readonly IEventAggregator _eventAggregator;
         private readonly IConfigService _configService;
-        private readonly IFileMutationSafetyService _fileMutationSafetyService;
         private readonly Logger _logger;
 
         public BookFileMovingService(IEditionService editionService,
@@ -80,7 +79,6 @@ namespace NzbDrone.Core.MediaFiles
                                       IMediaFileAttributeService mediaFileAttributeService,
                                       IEventAggregator eventAggregator,
                                       IConfigService configService,
-                                      IFileMutationSafetyService fileMutationSafetyService,
                                       Logger logger)
         {
             _editionService = editionService;
@@ -96,7 +94,6 @@ namespace NzbDrone.Core.MediaFiles
             _mediaFileAttributeService = mediaFileAttributeService;
             _eventAggregator = eventAggregator;
             _configService = configService;
-            _fileMutationSafetyService = fileMutationSafetyService;
             _logger = logger;
         }
 
@@ -505,10 +502,9 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             _rootFolderWatchingService.ReportFileSystemChangeBeginning(bookFilePath, destinationFilePath);
-            var actualTransferMode = _diskTransferService.TransferFile(bookFilePath, destinationFilePath, mode);
+            _diskTransferService.TransferFile(bookFilePath, destinationFilePath, mode);
 
             bookFile.Path = destinationFilePath;
-            _fileMutationSafetyService.PrepareImportDestination(bookFile, actualTransferMode);
 
             _updateBookFileService.ChangeFileDateForFile(bookFile, author, book);
 
