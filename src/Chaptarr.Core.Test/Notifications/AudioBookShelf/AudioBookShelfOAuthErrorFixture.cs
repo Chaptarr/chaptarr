@@ -96,6 +96,9 @@ namespace Chaptarr.Core.Test.Notifications.AudioBookShelf
                 pendingProviderSecretService: new PendingProviderSecretService(new CacheManager()),
                 cacheManager: new CacheManager(),
                 rootFolderService: null,
+                bookService: null,
+                editionService: null,
+                editionPinService: null,
                 logger: LogManager.GetCurrentClassLogger())
             {
                 Definition = new NotificationDefinition

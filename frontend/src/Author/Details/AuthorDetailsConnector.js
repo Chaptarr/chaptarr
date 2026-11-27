@@ -18,6 +18,7 @@ import { cancelFetchReleases, clearReleases } from 'Store/Actions/releaseActions
 import { clearSeries, fetchSeries } from 'Store/Actions/seriesActions';
 import { fetchRootFolders } from 'Store/Actions/settingsActions';
 import createAllAuthorSelector from 'Store/Selectors/createAllAuthorsSelector';
+import createAudioBookShelfKeeperSelector from 'Store/Selectors/createAudioBookShelfKeeperSelector';
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createSortedSectionSelector from 'Store/Selectors/createSortedSectionSelector';
@@ -125,7 +126,8 @@ function createMapStateToProps() {
     (state) => state.books.items,
     (state) => state.bookFiles.items,
     (state) => state.authorDetails.filterValue,
-    (authorId, books, series, bookFiles, allAuthors, commands, dimensions, rootFoldersState, hideUnmonitoredMissing = false, globalSelectedMediaType, allBookItems, allBookFileItems, filterValue) => {
+    createAudioBookShelfKeeperSelector(),
+    (authorId, books, series, bookFiles, allAuthors, commands, dimensions, rootFoldersState, hideUnmonitoredMissing = false, globalSelectedMediaType, allBookItems, allBookFileItems, filterValue, audioBookShelfKeepsMetadata) => {
       try {
         const sortedAuthor = _.orderBy(allAuthors, 'sortNameLastFirst');
         const authorIndex = _.findIndex(sortedAuthor, { id: authorId });
@@ -192,6 +194,21 @@ function createMapStateToProps() {
         isRenamingAuthorCommand.body.authorIds &&
         isRenamingAuthorCommand.body.authorIds.indexOf(author.id) > -1
         );
+
+        // Syncs for several authors can be queued at once, so check every running one. A sync
+        // started from one of this author's books lists only that book.
+        const isSyncingFromAudioBookShelf = commands.some((command) => {
+          const body = command.body;
+
+          return command.name === commandNames.AUDIOBOOKSHELF_EDITION_SYNC &&
+            isCommandExecuting(command) &&
+            !!body &&
+            (
+              ((body.authorIds || []).length === 0 && (body.bookIds || []).length === 0) ||
+              (body.authorIds || []).indexOf(author.id) > -1 ||
+              (Array.isArray(allBookItems) && allBookItems.some((book) => book && book.authorId === author.id && (body.bookIds || []).indexOf(book.id) > -1))
+            );
+        });
 
         const isFetching = isBooksFetching || isSeriesFetching || isBookFilesFetching;
         const isPopulated = isBooksPopulated && isSeriesPopulated && isBookFilesPopulated;
@@ -356,6 +373,8 @@ function createMapStateToProps() {
           isSearching,
           isRenamingFiles,
           isRenamingAuthor,
+          audioBookShelfKeepsMetadata,
+          isSyncingFromAudioBookShelf,
           isFetching,
           isPopulated,
           booksError,
@@ -475,6 +494,7 @@ class AuthorDetailsConnector extends Component {
       allAuthorRefreshing,
       isRenamingFiles,
       isRenamingAuthor,
+      isSyncingFromAudioBookShelf,
       hideUnmonitoredMissing,
       selectedMediaType,
       rootFoldersPopulated
@@ -503,7 +523,8 @@ class AuthorDetailsConnector extends Component {
       (prevProps.isAuthorRefreshing && !isAuthorRefreshing) ||
       (prevProps.allAuthorRefreshing && !allAuthorRefreshing) ||
       (prevProps.isRenamingFiles && !isRenamingFiles) ||
-      (prevProps.isRenamingAuthor && !isRenamingAuthor)
+      (prevProps.isRenamingAuthor && !isRenamingAuthor) ||
+      (prevProps.isSyncingFromAudioBookShelf && !isSyncingFromAudioBookShelf)
     ) {
       this.populate();
     }
@@ -635,6 +656,13 @@ class AuthorDetailsConnector extends Component {
     this.setState({ pendingSearch: null });
   };
 
+  onSyncFromAudioBookShelfPress = () => {
+    this.props.executeCommand({
+      name: commandNames.AUDIOBOOKSHELF_EDITION_SYNC,
+      authorIds: [this.props.id]
+    });
+  };
+
   onSaveSelected = (payload) => {
     this.props.saveBookEditor(payload);
   };
@@ -668,6 +696,7 @@ class AuthorDetailsConnector extends Component {
           {...this.props}
           onRefreshPress={this.onRefreshPress}
           onSearchPress={this.onSearchPress}
+          onSyncFromAudioBookShelfPress={this.onSyncFromAudioBookShelfPress}
           onSaveSelected={this.onSaveSelected}
           onMediaTypeChange={this.onMediaTypeChange}
           onAuthorAdded={this.onAuthorAdded}
@@ -693,6 +722,7 @@ AuthorDetailsConnector.propTypes = {
   isRefreshing: PropTypes.bool,
   isRenamingFiles: PropTypes.bool,
   isRenamingAuthor: PropTypes.bool,
+  isSyncingFromAudioBookShelf: PropTypes.bool,
   selectedMediaType: PropTypes.string,
   authorHasAudiobookConfig: PropTypes.bool,
   authorHasEbookConfig: PropTypes.bool,

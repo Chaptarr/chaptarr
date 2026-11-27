@@ -8,6 +8,7 @@ import withScrollPosition from 'Components/withScrollPosition';
 import { saveAuthorEditor, setAuthorFilter, setAuthorMediaType, setAuthorSort, setAuthorTableOption, setAuthorView } from 'Store/Actions/authorIndexActions';
 import { executeCommand } from 'Store/Actions/commandActions';
 import scrollPositions from 'Store/scrollPositions';
+import createAudioBookShelfKeeperSelector from 'Store/Selectors/createAudioBookShelfKeeperSelector';
 import createAuthorClientSideCollectionItemsSelector from 'Store/Selectors/createAuthorClientSideCollectionItemsSelector';
 import createCommandExecutingSelector from 'Store/Selectors/createCommandExecutingSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
@@ -20,6 +21,8 @@ function createMapStateToProps() {
     createCommandExecutingSelector(commandNames.RSS_SYNC),
     createCommandExecutingSelector(commandNames.RENAME_AUTHOR),
     createCommandExecutingSelector(commandNames.RETAG_AUTHOR),
+    createCommandExecutingSelector(commandNames.AUDIOBOOKSHELF_EDITION_SYNC),
+    createAudioBookShelfKeeperSelector(),
     createDimensionsSelector(),
     (
       author,
@@ -27,6 +30,8 @@ function createMapStateToProps() {
       isRssSyncExecuting,
       isOrganizingAuthor,
       isRetaggingAuthor,
+      isSyncingFromAudioBookShelf,
+      audioBookShelfKeepsMetadata,
       dimensionsState
     ) => {
       return {
@@ -35,6 +40,8 @@ function createMapStateToProps() {
         isRssSyncExecuting,
         isOrganizingAuthor,
         isRetaggingAuthor,
+        isSyncingFromAudioBookShelf,
+        audioBookShelfKeepsMetadata,
         isSmallScreen: dimensionsState.isSmallScreen
       };
     }
@@ -79,6 +86,13 @@ function createMapDispatchToProps(dispatch, props) {
     onRssSyncPress() {
       dispatch(executeCommand({
         name: commandNames.RSS_SYNC
+      }));
+    },
+
+    onSyncFromAudioBookShelfPress(authorIds) {
+      dispatch(executeCommand({
+        name: commandNames.AUDIOBOOKSHELF_EDITION_SYNC,
+        authorIds
       }));
     }
   };

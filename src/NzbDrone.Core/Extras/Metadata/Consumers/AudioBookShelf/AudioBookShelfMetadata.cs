@@ -8,6 +8,7 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Extras.Metadata.Files;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Notifications.AudioBookShelf;
 using NzbDrone.Core.RootFolders;
 using MediaCoverModel = NzbDrone.Core.MediaCover.MediaCover;
 
@@ -26,14 +27,20 @@ namespace NzbDrone.Core.Extras.Metadata.Consumers.AudioBookShelf
         private readonly IRootFolderService _rootFolderService;
         private readonly IBookService _bookService;
         private readonly IEditionService _editionService;
+        private readonly IAudioBookShelfKeeperLookup _keeperLookup;
+        private readonly IMediaFileService _mediaFileService;
 
         public AudioBookShelfMetadata(IRootFolderService rootFolderService,
                                       IBookService bookService,
-                                      IEditionService editionService)
+                                      IEditionService editionService,
+                                      IAudioBookShelfKeeperLookup keeperLookup,
+                                      IMediaFileService mediaFileService)
         {
             _rootFolderService = rootFolderService;
             _bookService = bookService;
             _editionService = editionService;
+            _keeperLookup = keeperLookup;
+            _mediaFileService = mediaFileService;
         }
 
         public override string Name => "AudioBookShelf Sidecars";
@@ -190,7 +197,60 @@ namespace NzbDrone.Core.Extras.Metadata.Consumers.AudioBookShelf
                 ? rootFolder.GetEbookSettings()
                 : rootFolder.GetAudiobookSettings();
 
-            return settings != null && isEnabled(settings);
+            if (settings == null || !isEnabled(settings))
+            {
+                return false;
+            }
+
+            if (_keeperLookup == null)
+            {
+                return true;
+            }
+
+            // AudioBookShelf owns the metadata for this folder; writing ours would overwrite its match.
+            var mediaType = IsEbook(bookFile) ? "ebook" : "audiobook";
+            if (_keeperLookup.AudioBookShelfKeepsMetadata(rootFolder.Id, mediaType))
+            {
+                return false;
+            }
+
+            // The sidecars are per folder. In a mixed root an ebook can share its folder with an
+            // audiobook whose metadata AudioBookShelf owns; writing them for the ebook would overwrite it.
+            var otherMediaType = mediaType == "ebook" ? "audiobook" : "ebook";
+            return !_keeperLookup.AudioBookShelfKeepsMetadata(rootFolder.Id, otherMediaType) ||
+                   !FolderHoldsMediaType(Path.GetDirectoryName(bookFile.Path), otherMediaType);
+        }
+
+        // Unknown counts as shared: skipping a sidecar is safe, overwriting AudioBookShelf's is not.
+        private bool FolderHoldsMediaType(string folder, string mediaType)
+        {
+            if (_mediaFileService == null || folder.IsNullOrWhiteSpace())
+            {
+                return true;
+            }
+
+            try
+            {
+                return _mediaFileService.GetFilesWithBasePath(folder, mediaType).Any() ||
+                       FolderHoldsMediaTypeOnDisk(folder, mediaType);
+            }
+            catch (Exception)
+            {
+                return true;
+            }
+        }
+
+        // GetFilesWithBasePath matches a file's primary path only. A replica (a second copy of an
+        // ebook whose primary file is elsewhere) is in the folder too, so also look at what is on disk.
+        private static bool FolderHoldsMediaTypeOnDisk(string folder, string mediaType)
+        {
+            if (!Directory.Exists(folder))
+            {
+                return false;
+            }
+
+            var extensions = mediaType == "ebook" ? MediaFileExtensions.TextExtensions : MediaFileExtensions.AudioExtensions;
+            return Directory.EnumerateFiles(folder).Any(file => extensions.Contains(Path.GetExtension(file)));
         }
 
         private (Edition Edition, Book Book) ResolveBook(Author author, BookFile bookFile)
