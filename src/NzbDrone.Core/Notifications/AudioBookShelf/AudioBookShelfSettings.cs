@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Serialization;
 using FluentValidation;
 using Newtonsoft.Json;
@@ -43,6 +44,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
             Port = 13378;
             UseSsl = false;
             SignIn = "startOAuth";
+            IgnoreTags = Array.Empty<string>();
         }
 
         // Legacy property (no longer exposed in the UI). When present in older configs, it will be migrated
@@ -70,6 +72,25 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
 
         [FieldDefinition(5, Type = FieldType.Textbox, Hidden = HiddenType.Hidden)]
         public string LibraryMappingsJson { get; set; }
+
+        [FieldDefinition(6, Label = "Remove Missing Items After Delete", Type = FieldType.Checkbox, HelpText = "AudioBookShelf marks deleted books as missing instead of removing them. When Chaptarr deletes books or files, also remove library items whose files are gone")]
+        public bool RemoveMissingItems { get; set; }
+
+        [FieldDefinition(7, Label = "Push Library Edits", Type = FieldType.Checkbox, HelpText = "When Chaptarr changes a book - a calibre push, a retag, or an edit - send the current title, description, publisher, series and cover to the matching AudioBookShelf item. AudioBookShelf only re-reads an item when its files are renamed, so without this it keeps whatever it was first scanned with")]
+        public bool PushLibraryEdits { get; set; }
+
+        [FieldDefinition(8, Label = "Ignore AudioBookShelf Tags", Type = FieldType.Tag, HelpText = "Tags set on the item in AudioBookShelf, not Chaptarr tags, e.g. Processed. Automatic pushes leave AudioBookShelf items that carry any of these tags untouched. A manual push from Chaptarr still updates them")]
+        public IEnumerable<string> IgnoreTags { get; set; }
+
+        public bool HasIgnoreTag(IEnumerable<string> tags)
+        {
+            var ignored = (IgnoreTags ?? Enumerable.Empty<string>())
+                .Where(t => t.IsNotNullOrWhiteSpace())
+                .Select(t => t.Trim())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            return ignored.Count > 0 && (tags ?? Enumerable.Empty<string>()).Any(t => t != null && ignored.Contains(t.Trim()));
+        }
 
         [FieldDefinition(9, Label = "Authenticate with AudioBookShelf (OIDC)", Type = FieldType.OAuth, Hidden = HiddenType.Hidden, HelpText = "Uses AudioBookShelf OpenID Connect (SSO) to generate an API key automatically. This will open a browser popup to the configured AudioBookShelf URL, so it must be reachable from your browser. Your AudioBookShelf server must allow this app's callback URL under OpenID Connect → Mobile Redirect URIs.")]
         public string SignIn { get; set; }
