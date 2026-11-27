@@ -30,6 +30,11 @@ namespace NzbDrone.Core.MediaFiles
         List<ConversionJobRequest> GetCompletedConversions(IEnumerable<string> downloadIds);
         List<ConversionJob> Get(IEnumerable<string> downloadIds);
         ConversionJob Enqueue(ConversionJobRequest request);
+        ConversionJob GetLibraryJob(int editionId);
+        List<ConversionJob> GetLibraryJobs(IEnumerable<int> editionIds);
+        List<ConversionJob> GetActiveLibraryJobs();
+        ConversionJob EnqueueLibrary(ConversionJobRequest request);
+        bool CancelLibrary(int editionId, ConversionRemovalOrigin origin);
         bool IsActive(string downloadId);
         bool IsRunning(string downloadId);
         bool Cancel(string downloadId, ConversionRemovalOrigin origin);
@@ -140,12 +145,38 @@ namespace NzbDrone.Core.MediaFiles
             return _repository.ByDownloadIds(downloadIds);
         }
 
+        public ConversionJob GetLibraryJob(int editionId) => _repository.FindLibraryJob(editionId);
+
+        public List<ConversionJob> GetLibraryJobs(IEnumerable<int> editionIds) => _repository.LibraryJobs(editionIds);
+
+        public List<ConversionJob> GetActiveLibraryJobs() =>
+            new[] { ConversionJobStatus.Queued, ConversionJobStatus.Converting, ConversionJobStatus.Cancelling, ConversionJobStatus.ReadyToImport }
+                .SelectMany(_repository.LibraryJobsByStatus).OrderBy(job => job.CreatedAt).ThenBy(job => job.Id).ToList();
+
+        // A library job is owned by its book and edition. Its key comes from the edition, so the
+        // caller cannot hand it a download ID, and it never carries a download client.
+        public ConversionJob EnqueueLibrary(ConversionJobRequest request)
+        {
+            if (request == null || request.BookId <= 0 || request.EditionId <= 0)
+            {
+                throw new ArgumentException("A library conversion job requires a persisted book and edition.", nameof(request));
+            }
+
+            request.Origin = ConversionJobOrigin.Library;
+            request.DownloadId = LibraryConversionJob.Key(request.EditionId);
+            request.DownloadClientId = 0;
+            request.QueuedAtUtc = DateTime.UtcNow;
+            return Enqueue(request);
+        }
+
         public void Handle(BookGrabbedEvent message)
         {
             ConversionJob previous;
             lock (_sync)
             {
                 previous = Get(message.DownloadId);
+                // A grab belongs to the download lifecycle; it never retires a library job.
+                if (previous?.IsLibrary == true) return;
                 // A real new grab starts a lifecycle; an owned encoder is never retired underneath its worker.
                 if (previous == null || IsInFlight(previous.Status) || _activeConversions.ContainsKey(message.DownloadId)) return;
             }
@@ -191,7 +222,15 @@ namespace NzbDrone.Core.MediaFiles
                     };
                 }
 
+                if (job.Id > 0 && job.Origin != request.Origin)
+                {
+                    throw new InvalidOperationException($"Conversion job {job.Id} belongs to a {job.Origin.ToString().ToLowerInvariant()} and cannot be reused for a {request.Origin.ToString().ToLowerInvariant()} conversion.");
+                }
+
                 job.DownloadClientId = request.DownloadClientId;
+                job.Origin = request.Origin;
+                job.BookId = request.BookId;
+                job.EditionId = request.EditionId;
                 job.Status = ConversionJobStatus.Queued;
                 job.RequestJson = requestJson;
                 job.WorkRoot = request.WorkRoot;
@@ -251,7 +290,15 @@ namespace NzbDrone.Core.MediaFiles
                 _ => true
             };
 
-        public bool Cancel(string downloadId, ConversionRemovalOrigin origin)
+        public bool Cancel(string downloadId, ConversionRemovalOrigin origin) => Cancel(downloadId, origin, onlyBeforeOutput: false);
+
+        // Cancels a library conversion only while it is still queued or encoding. The check runs under
+        // the same gate as the worker's ready transition, so a conversion that has just finished is left
+        // for its import instead of having its output removed while the import starts.
+        public bool CancelLibrary(int editionId, ConversionRemovalOrigin origin) =>
+            editionId > 0 && Cancel(LibraryConversionJob.Key(editionId), origin, onlyBeforeOutput: true);
+
+        private bool Cancel(string downloadId, ConversionRemovalOrigin origin, bool onlyBeforeOutput)
         {
             if (downloadId.IsNullOrWhiteSpace())
             {
@@ -265,6 +312,11 @@ namespace NzbDrone.Core.MediaFiles
             {
                 job = _repository.FindByDownloadId(downloadId);
                 if (job == null || !IsInFlight(job.Status))
+                {
+                    return false;
+                }
+
+                if (onlyBeforeOutput && job.Status is not (ConversionJobStatus.Queued or ConversionJobStatus.Converting))
                 {
                     return false;
                 }
@@ -530,7 +582,9 @@ namespace NzbDrone.Core.MediaFiles
                 !(IsAbsentConversionPath(job?.WorkFolder) && IsAbsentConversionPath(job?.OutputPath))) return () => { };
             downloadId = job?.DownloadId ?? downloadId;
             if (currentAttemptOnly && job == null) return () => { };
-            var history = currentAttemptOnly ? new List<EntityHistory>()
+            // A library job has no download history. Its job row and artifact receipts are the
+            // only ownership records, so cleanup never consults history for it.
+            var history = currentAttemptOnly || job?.IsLibrary == true ? new List<EntityHistory>()
                 : _historyService?.FindByDownloadId(downloadId) ?? new List<EntityHistory>();
             var outputPaths = history
                 .Where(row => row.EventType == EntityHistoryEventType.BookFileConverted || row.EventType == EntityHistoryEventType.BookFileConversionFailed)
@@ -926,6 +980,7 @@ namespace NzbDrone.Core.MediaFiles
                     passSucceeded &= RunSchedulerStep("lease recovery", RecoverExpiredLeases);
                     passSucceeded &= RunSchedulerStep("discard cleanup", RetryDiscardCleanup);
                     passSucceeded &= RunSchedulerStep("dispatch", DispatchQueuedJobs);
+                    passSucceeded &= RunSchedulerStep("library import", QueueLibraryImports);
 
                     if (!passSucceeded)
                     {
@@ -1543,13 +1598,27 @@ namespace NzbDrone.Core.MediaFiles
             if (request.BookId > 0)
             {
                 var sources = request.Sources.Select(source => source.Path).ToHashSet(PathEqualityComparer.Instance);
+
+                // Every attempt for a library edition shares one key and usually the same source paths,
+                // so a file kept from an earlier conversion would otherwise pass for this attempt's import.
+                // Whole seconds, because a stored DateAdded may not keep sub-second precision.
+                var attemptQueued = job.IsLibrary ? request.QueuedAtUtc : null;
+                var notBefore = attemptQueued.HasValue
+                    ? new DateTime(attemptQueued.Value.Ticks - attemptQueued.Value.Ticks % TimeSpan.TicksPerSecond, DateTimeKind.Utc)
+                    : (DateTime?)null;
+                if (job.IsLibrary && !notBefore.HasValue) return false;
+
                 var imported = _mediaFileService.GetFilesByBook(request.BookId).Any(file =>
+                    (!notBefore.HasValue || file.DateAdded.ToUniversalTime() >= notBefore.Value) &&
                     file.Quality?.Quality == Qualities.Quality.M4B && File.Exists(file.Path) &&
                     string.Equals(file.MatchProvenance?.ImportDownloadId, job.DownloadId, StringComparison.OrdinalIgnoreCase) &&
                     file.MatchProvenance?.ImportSourcePaths?.Count > 0 &&
                     sources.SetEquals(file.MatchProvenance.ImportSourcePaths));
                 if (imported) return true;
             }
+
+            // A library import is committed only through the BookFile proof above.
+            if (job.IsLibrary) return false;
 
             // Legacy requests lack BookId, and an approved additional-copy import may create a new
             // book row. Its committed conversion history identifies the actual managed destination.
@@ -1745,6 +1814,36 @@ namespace NzbDrone.Core.MediaFiles
             catch (Exception ex)
             {
                 _logger.Warn(ex, "Unable to queue completed-download import after conversion state changed");
+            }
+
+            QueueLibraryImports();
+        }
+
+        // The download queue only imports downloads. A finished library job is imported by its
+        // own command, one per edition; pushing an identical command again is a no-op while one
+        // is queued or running.
+        private void QueueLibraryImports()
+        {
+            try
+            {
+                foreach (var job in _repository.LibraryJobsByStatus(ConversionJobStatus.ReadyToImport))
+                {
+                    if (job.EditionId <= 0 || IsRunning(job.DownloadId)) continue;
+                    _commandQueue.Push(new Commands.ImportLibraryConversionCommand(job.EditionId), CommandPriority.High);
+                }
+
+                // After a restart nothing is showing library conversions that are still queued, running
+                // or waiting to import. One progress task covers them all; a duplicate push joins the running one.
+                if (_repository.LibraryJobsByStatus(ConversionJobStatus.Queued).Count > 0 ||
+                    _repository.LibraryJobsByStatus(ConversionJobStatus.Converting).Count > 0 ||
+                    _repository.LibraryJobsByStatus(ConversionJobStatus.ReadyToImport).Count > 0)
+                {
+                    _commandQueue.Push(new Commands.LibraryConversionProgressCommand());
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Unable to queue library conversion import");
             }
         }
 
