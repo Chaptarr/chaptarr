@@ -377,7 +377,7 @@ namespace NzbDrone.Core.Extras.Metadata.Consumers.AudioBookShelf
             }
 
             return names
-                .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                .Split(new[] { ",", ";", " + " }, StringSplitOptions.RemoveEmptyEntries)
                 .Select(n => n.Trim())
                 .Where(n => n.IsNotNullOrWhiteSpace())
                 .ToList();
