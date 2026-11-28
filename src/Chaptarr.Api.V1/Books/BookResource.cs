@@ -230,6 +230,7 @@ namespace Chaptarr.Api.V1.Books
             var hasFiles = options.Statistics != null
                 ? options.Statistics.BookFileCount > 0
                 : model.HasFiles;
+            var mediaType = model.MediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
 
             // Readarr facade compatibility: foreignBookId is bare only inside a path-declared
             // provider dialect. Native Chaptarr responses keep provider prefixes.
@@ -290,7 +291,7 @@ namespace Chaptarr.Api.V1.Books
                     : (options.IncludeOverview ? (model.Overview ?? string.Empty) : null),
                 Images = CloneImages(selectedEdition != null ? selectedEdition.Images : model.Images),
                 Links = links,
-                Statistics = options.Statistics?.ToResource(),
+                Statistics = options.Statistics?.ToResource(reportFileAvailability: options.FacadeContext?.MediaType == mediaType),
                 AddOptions = model.AddOptions,
                 RemoteCover = string.Empty,
                 Grabbed = false,
@@ -299,7 +300,7 @@ namespace Chaptarr.Api.V1.Books
                 NarratorNames = GetNarratorNamesForDisplay(model, selectedEdition),
                 Duration = GetDuration(model, selectedEdition),
                 DurationMinutes = GetDurationMinutes(model, selectedEdition),
-                MediaType = model.MediaType == BookMediaType.Audiobook ? "audiobook" : "ebook",
+                MediaType = mediaType,
                 HasFiles = hasFiles,
                 IsOmnibus = model.IsOmnibus
             };
